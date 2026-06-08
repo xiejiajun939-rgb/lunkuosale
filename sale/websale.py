@@ -1,7 +1,15 @@
 # -*- coding: utf-8 -*-
 """
-订单业绩统计工具 - 商品分析双表关联（图片+分类）
+订单业绩统计工具 - 最终版（商品分析单表实现，含图片和分类）
 访问密码：94949468
+需在 Supabase 中执行以下 SQL 以添加字段（如未执行）：
+ALTER TABLE product_sales ADD COLUMN IF NOT EXISTS image_url TEXT;
+ALTER TABLE product_sales ADD COLUMN IF NOT EXISTS master_category TEXT;
+-- 回填历史数据（示例，请根据实际调整）
+UPDATE product_sales ps
+SET image_url = pm.image_url, master_category = pm.category
+FROM product_master pm
+WHERE LEFT(ps.product_code, 8) = pm.product_code;
 """
 
 import streamlit as st
@@ -59,10 +67,8 @@ if "target_dict" not in st.session_state:
     st.session_state.target_dict = {}
 if "latest_date" not in st.session_state:
     st.session_state.latest_date = None
-if "processed_order" not in st.session_state:
-    st.session_state.processed_order = None
-if "processed_target" not in st.session_state:
-    st.session_state.processed_target = None
+if "order_upload_key" not in st.session_state:
+    st.session_state.order_upload_key = 0
 
 # ========== 店铺业绩数据函数 ==========
 def load_daily_sales():
@@ -128,7 +134,7 @@ def clear_targets():
     st.session_state.target_dict = {}
     st.rerun()
 
-# ========== 商品相关函数 ==========
+# ========== 商品相关函数（含图片和分类自动填充） ==========
 SEASON_MAP = {"1": "春", "2": "夏", "3": "秋", "4": "冬"}
 SIZE_MAP = {"001": "S", "002": "M", "003": "L", "004": "XL", "008": "均码"}
 
@@ -163,20 +169,53 @@ def parse_product_code(remark):
     except:
         return None
 
+# 加载商品库（用于填充图片和分类）
+@st.cache_data(ttl=3600)
+def load_product_master():
+    if supabase is None:
+        return pd.DataFrame()
+    try:
+        resp = supabase.table("product_master").select("*").execute()
+        if resp.data:
+            df = pd.DataFrame(resp.data)
+            # 统一列名
+            if "product_code" in df.columns:
+                df = df.rename(columns={"product_code": "master_code"})
+            return df
+        else:
+            return pd.DataFrame()
+    except Exception:
+        return pd.DataFrame()
+
 def save_product_sales(df_orders):
+    """将原始订单逐行保存到 product_sales 表，并自动填充图片和主分类"""
     if supabase is None:
         return
+    # 预先加载商品库，构建短码到图片和分类的映射
+    master_df = load_product_master()
+    master_map = {}
+    if not master_df.empty:
+        for _, row in master_df.iterrows():
+            code = row["master_code"]
+            master_map[code] = {
+                "image_url": row.get("image_url", None),
+                "master_category": row.get("category", None)  # 注意列名可能是 category
+            }
     records = []
     for _, row in df_orders.iterrows():
         parsed = parse_product_code(row["备注"])
         if parsed is None:
             continue
         amount = float(row["金额/时间"])
+        short_code = parsed["style_code"]
+        # 从映射中获取图片和分类（如果没有则为 None）
+        img = master_map.get(short_code, {}).get("image_url")
+        cat = master_map.get(short_code, {}).get("master_category")
         records.append({
             "sale_date": row["日期"].strftime("%Y-%m-%d"),
             "shop_name": row["店铺名称"],
             "product_code": parsed["product_code"],
-            "style_code": parsed["style_code"],
+            "style_code": short_code,
             "brand": parsed["brand"],
             "year": parsed["year"],
             "season": parsed["season"],
@@ -186,7 +225,9 @@ def save_product_sales(df_orders):
             "size_code": parsed["size"],
             "ship_amount": max(amount, 0),
             "return_amount": max(-amount, 0),
-            "net_amount": amount
+            "net_amount": amount,
+            "image_url": img,
+            "master_category": cat
         })
     if records:
         supabase.table("product_sales").upsert(records, on_conflict="sale_date,product_code,shop_name").execute()
@@ -200,33 +241,11 @@ def load_product_sales():
         if resp.data:
             df = pd.DataFrame(resp.data)
             df["sale_date"] = pd.to_datetime(df["sale_date"])
-            # 确保 style_code 存在（历史数据可能缺失）
-            if "style_code" not in df.columns:
-                df["style_code"] = df["product_code"].str[:8]
-            else:
-                df["style_code"] = df["style_code"].fillna(df["product_code"].str[:8])
             return df
         else:
             return pd.DataFrame()
     except Exception as e:
         st.error(f"加载商品销售数据失败：{e}")
-        return pd.DataFrame()
-
-@st.cache_data(ttl=600)
-def load_product_master():
-    if supabase is None:
-        return pd.DataFrame()
-    try:
-        resp = supabase.table("product_master").select("*").execute()
-        if resp.data:
-            df = pd.DataFrame(resp.data)
-            # 确保列名统一
-            if "product_code" in df.columns:
-                df = df.rename(columns={"product_code": "master_code"})
-            return df
-        else:
-            return pd.DataFrame()
-    except Exception:
         return pd.DataFrame()
 
 # ========== 订单文件处理 ==========
@@ -248,8 +267,10 @@ def process_uploaded_file(uploaded_file):
         df["金额/时间"] = pd.to_numeric(df["金额/时间"], errors="coerce")
         df = df.dropna(subset=["金额/时间"])
 
+        # 保存商品明细（自动填充图片和主分类）
         save_product_sales(df)
 
+        # 店铺业绩汇总
         daily = df.groupby(["日期", "店铺名称"])["金额/时间"].sum().reset_index()
         daily = daily.sort_values(["店铺名称", "日期"])
         daily["月累计金额"] = daily.groupby("店铺名称")["金额/时间"].cumsum().round(2)
@@ -299,23 +320,23 @@ if st.session_state.target_dict == {}:
 # ========== 侧边栏 ==========
 with st.sidebar:
     st.header("📂 数据加载")
-    uploaded_order = st.file_uploader("选择订单文件 (Excel)", type=["xlsx", "xls"], key="order_uploader")
-    if uploaded_order is not None and st.session_state.processed_order != uploaded_order.name:
+    # 使用动态 key 避免重复上传错误
+    order_key = f"order_upload_{st.session_state.order_upload_key}"
+    uploaded_order = st.file_uploader("选择订单文件 (Excel)", type=["xlsx", "xls"], key=order_key)
+    if uploaded_order is not None:
         ok, msg = process_uploaded_file(uploaded_order)
         if ok:
             st.success(msg)
-            st.session_state.processed_order = uploaded_order.name
+            st.session_state.order_upload_key += 1
             st.rerun()
         else:
             st.error(msg)
 
-    uploaded_target = st.file_uploader("选择目标文件 (Excel)", type=["xlsx", "xls"], key="target_uploader")
-    if uploaded_target is not None and st.session_state.processed_target != uploaded_target.name:
-        ok, msg = load_target_file(uploaded_target)
+    target_file = st.file_uploader("选择目标文件 (Excel)", type=["xlsx", "xls"], key="target_upload")
+    if target_file is not None:
+        ok, msg = load_target_file(target_file)
         if ok:
             st.success(msg)
-            st.session_state.processed_target = uploaded_target.name
-            st.rerun()
         else:
             st.error(msg)
 
@@ -433,31 +454,27 @@ with tab5:
     else:
         st.info("暂无历史数据")
 
-# ========== 商品分析（双表关联，确保显示） ==========
+# ========== 商品分析（直接从 product_sales 读取 image_url 和 master_category） ==========
 with tab6:
-    st.subheader("📊 商品销售分析")
+    st.subheader("📊 商品销售分析（按品牌+产品）")
     prod_df = load_product_sales()
+    
     if prod_df.empty:
         st.warning("暂无商品销售数据，请先上传订单文件。")
     else:
-        st.info(f"📊 商品销售明细总记录数：{len(prod_df)}")
-        
-        # 补全 brand（如果为空则从 product_code 第一位取）
-        if "brand" not in prod_df.columns or prod_df["brand"].isnull().all():
+        # 确保有必要的列
+        required_cols = ["brand", "style_code", "ship_amount", "return_amount", "net_amount", "image_url", "master_category"]
+        for col in required_cols:
+            if col not in prod_df.columns:
+                # 如果缺失，添加空列（兼容旧数据）
+                prod_df[col] = None
+        # 补全缺失的 brand（从 product_code 第一位取）
+        if prod_df["brand"].isnull().all():
             prod_df["brand"] = prod_df["product_code"].str[0]
         else:
             prod_df["brand"] = prod_df["brand"].fillna(prod_df["product_code"].str[0])
         
-        # 加载商品库
-        master_df = load_product_master()
-        if not master_df.empty:
-            # 左连接商品库（使用 style_code 关联 master_code）
-            prod_df = prod_df.merge(master_df, left_on="style_code", right_on="master_code", how="left")
-        else:
-            prod_df["category"] = None
-            prod_df["image_url"] = None
-        
-        # 日期筛选（默认全选）
+        # 日期筛选
         min_date = prod_df["sale_date"].min().date()
         max_date = prod_df["sale_date"].max().date()
         col1, col2 = st.columns(2)
@@ -466,21 +483,21 @@ with tab6:
         with col2:
             end_date = st.date_input("结束日期", max_date, key="prod_end", min_value=min_date, max_value=max_date)
         
-        # 品牌筛选
-        brands = ["全部"] + sorted(prod_df["brand"].unique())
-        selected_brand = st.selectbox("选择品牌", brands)
-        
-        # 应用筛选
         mask = (prod_df["sale_date"] >= pd.to_datetime(start_date)) & (prod_df["sale_date"] <= pd.to_datetime(end_date))
         filtered = prod_df[mask].copy()
+        
+        # 品牌筛选
+        brands = ["全部"] + sorted(filtered["brand"].dropna().unique())
+        selected_brand = st.selectbox("选择品牌", brands)
+        
         if selected_brand != "全部":
             filtered = filtered[filtered["brand"] == selected_brand]
         
         if filtered.empty:
             st.warning("所选条件下无销售数据")
         else:
-            # 按品牌、货号、分类、图片聚合
-            grouped = filtered.groupby(["brand", "style_code", "category", "image_url"]).agg(
+            # 按品牌、货号、主分类、图片聚合
+            grouped = filtered.groupby(["brand", "style_code", "master_category", "image_url"]).agg(
                 发货金额=("ship_amount", "sum"),
                 退货金额=("return_amount", "sum"),
                 净销售金额=("net_amount", "sum")
@@ -494,7 +511,7 @@ with tab6:
                 column_config={
                     "brand": "品牌",
                     "货号": "货号",
-                    "category": "细分品类",
+                    "master_category": "商品分类",
                     "发货金额": st.column_config.NumberColumn("发货金额", format="%.2f"),
                     "退货金额": st.column_config.NumberColumn("退货金额", format="%.2f"),
                     "净销售金额": st.column_config.NumberColumn("净销售金额", format="%.2f"),
@@ -509,3 +526,22 @@ with tab6:
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
                 export_df.to_excel(writer, index=False)
             st.download_button("💾 导出分析结果", data=output.getvalue(), file_name="商品分析.xlsx")
+
+# ========== 建表 SQL 参考 ==========
+"""
+-- 若尚未添加字段，请执行：
+ALTER TABLE product_sales ADD COLUMN IF NOT EXISTS image_url TEXT;
+ALTER TABLE product_sales ADD COLUMN IF NOT EXISTS master_category TEXT;
+
+-- 回填历史数据（根据 product_master 中的分类和图片）
+UPDATE product_sales ps
+SET 
+    image_url = pm.image_url,
+    master_category = pm.category
+FROM product_master pm
+WHERE LEFT(ps.product_code, 8) = pm.product_code;
+
+-- 确保 product_sales 有 style_code 字段（8位货号）
+ALTER TABLE product_sales ADD COLUMN IF NOT EXISTS style_code TEXT;
+UPDATE product_sales SET style_code = LEFT(product_code, 8) WHERE style_code IS NULL;
+"""
