@@ -1,8 +1,12 @@
 # -*- coding: utf-8 -*-
 """
-订单业绩统计工具 - 完整版
-包含店铺业绩、商品分析（按品牌款式展示发货/退货/净额，支持排序）
+订单业绩统计工具 - 完整版（店铺业绩+商品分析）
 访问密码：94949468
+需要 Supabase 中创建以下表：
+1. daily_sales（店铺每日业绩）
+2. shop_targets（店铺目标金额）
+3. product_sales（商品销售明细，包含发货/退货/净额）
+建表 SQL 见本文件底部注释。
 """
 
 import streamlit as st
@@ -68,74 +72,7 @@ if "latest_date" not in st.session_state:
 if "data_loaded" not in st.session_state:
     st.session_state.data_loaded = False
 
-# ========== 商品编码解析函数（带映射） ==========
-SEASON_MAP = {
-    "1": "春", "2": "夏", "3": "秋", "4": "冬"
-}
-SIZE_MAP = {
-    "001": "S", "002": "M", "003": "L", "004": "XL", "008": "均码"
-}
-
-def parse_product_code(remark):
-    try:
-        parts = remark.split('_')
-        if len(parts) < 2:
-            return None
-        product_code = parts[1]
-        if len(product_code) < 14:
-            return None
-        brand = product_code[0]
-        year_season = product_code[1:4]
-        year = year_season[:2]
-        season_code = year_season[2]
-        category = product_code[4]
-        style = product_code[5:8]
-        color_code = product_code[8:11]
-        size_code = product_code[11:14]
-
-        season_name = SEASON_MAP.get(season_code, season_code)
-        size_name = SIZE_MAP.get(size_code, size_code)
-
-        return {
-            "product_code": product_code,
-            "brand": brand,
-            "year": year,
-            "season": season_name,
-            "category": category,
-            "style": style,
-            "color_code": color_code,
-            "size": size_name,
-            "amount": None
-        }
-    except Exception:
-        return None
-
-def save_product_sales_to_supabase(df_orders):
-    if supabase is None:
-        return
-    for _, row in df_orders.iterrows():
-        parsed = parse_product_code(row["备注"])
-        if parsed is None:
-            continue
-        data = {
-            "sale_date": row["日期"].strftime("%Y-%m-%d"),
-            "shop_name": row["店铺名称"],
-            "product_code": parsed["product_code"],
-            "brand": parsed["brand"],
-            "year": parsed["year"],
-            "season": parsed["season"],
-            "category": parsed["category"],
-            "style": parsed["style"],
-            "color_code": parsed["color_code"],
-            "size_code": parsed["size"],
-            "amount": float(row["金额/时间"])   # 正数为发货，负数为退货
-        }
-        # 避免重复（同一天同一商品同一店铺）
-        existing = supabase.table("product_sales").select("*").eq("sale_date", data["sale_date"]).eq("product_code", data["product_code"]).eq("shop_name", data["shop_name"]).execute()
-        if not existing.data:
-            supabase.table("product_sales").insert(data).execute()
-
-# ========== 店铺业绩相关函数 ==========
+# ========== 店铺业绩数据函数 ==========
 def load_from_supabase():
     if supabase is None:
         return pd.DataFrame()
@@ -215,8 +152,10 @@ def process_order_file(uploaded_file):
                 raise ValueError(f"表格缺少列: {col}")
 
         df["日期"] = pd.to_datetime(df["日期"])
+        # 提取店铺名称（从备注最后一部分"商店:xxx"）
         df["店铺名称"] = df["备注"].astype(str).str.split("_").str[-1]
         df["店铺名称"] = df["店铺名称"].str.replace(r'^商店[：:]', '', regex=True).str.strip()
+        df["店铺名称"] = df["店铺名称"].str.strip()
 
         df = df[df["店铺名称"].notna() & (df["店铺名称"] != "")].copy()
         if df.empty:
@@ -225,10 +164,10 @@ def process_order_file(uploaded_file):
         df["金额/时间"] = pd.to_numeric(df["金额/时间"], errors="coerce")
         df = df.dropna(subset=["金额/时间"])
 
-        # 保存商品级别数据
+        # ---- 商品明细入库（新增）----
         save_product_sales_to_supabase(df)
 
-        # 店铺汇总
+        # ---- 店铺业绩汇总 ----
         daily = df.groupby(["日期", "店铺名称"])["金额/时间"].sum().reset_index()
         daily = daily.sort_values(["店铺名称", "日期"])
         daily["月累计金额"] = daily.groupby("店铺名称")["金额/时间"].cumsum().round(2)
@@ -237,7 +176,7 @@ def process_order_file(uploaded_file):
         df_all_new = daily[["日期", "店铺名称", "当日金额", "月累计金额"]].copy()
         latest_date = daily["日期"].max()
 
-        # 发货退货明细
+        # 发货退货明细（店铺维度）
         df['发货金额'] = df['金额/时间'].clip(lower=0)
         df['退货金额'] = df['金额/时间'].clip(upper=0).abs()
         ship_refund_daily = df.groupby(["日期", "店铺名称"])[["发货金额", "退货金额"]].sum().reset_index()
@@ -255,7 +194,10 @@ def process_order_file(uploaded_file):
         latest_ship_refund['日期'] = latest_ship_refund['日期'].fillna(latest_date)
         df_ship = latest_ship_refund[["日期", "店铺名称", "当日发货", "月累计发货", "当日退货", "月累计退货"]]
 
+        # 保存店铺业绩到 Supabase
         save_to_supabase(df_all_new)
+
+        # 重新加载全部历史
         history_df = load_from_supabase()
         df_all, daily_latest, monthly_actual, latest_date_updated = rebuild_from_history(history_df)
 
@@ -314,7 +256,75 @@ def download_target_template():
     template = pd.DataFrame({"店铺名称": ["示例店铺A", "示例店铺B"], "目标金额": [100000, 200000]})
     return to_excel_download(template, "目标模板.xlsx")
 
-# ========== 商品分析数据加载 ==========
+# ========== 商品分析相关函数 ==========
+SEASON_MAP = {"1": "春", "2": "夏", "3": "秋", "4": "冬"}
+SIZE_MAP = {"001": "S", "002": "M", "003": "L", "004": "XL", "008": "均码"}
+
+def parse_product_code(remark):
+    """从备注中提取商品编码并解析属性"""
+    try:
+        parts = remark.split('_')
+        if len(parts) < 2:
+            return None
+        product_code = parts[1]
+        if len(product_code) < 14:
+            return None
+        brand = product_code[0]
+        year_season = product_code[1:4]
+        year = year_season[:2]
+        season_code = year_season[2]
+        category = product_code[4]
+        style = product_code[5:8]
+        color_code = product_code[8:11]
+        size_code = product_code[11:14]
+        season_name = SEASON_MAP.get(season_code, season_code)
+        size_name = SIZE_MAP.get(size_code, size_code)
+        return {
+            "product_code": product_code,
+            "brand": brand,
+            "year": year,
+            "season": season_name,
+            "category": category,
+            "style": style,
+            "color_code": color_code,
+            "size": size_name
+        }
+    except Exception:
+        return None
+
+def save_product_sales_to_supabase(df_orders):
+    """将原始订单逐行保存到 product_sales 表，区分发货/退货"""
+    if supabase is None:
+        return
+    inserted = 0
+    for _, row in df_orders.iterrows():
+        parsed = parse_product_code(row["备注"])
+        if parsed is None:
+            continue
+        amount = float(row["金额/时间"])
+        ship_amount = max(amount, 0)
+        return_amount = max(-amount, 0)
+        data = {
+            "sale_date": row["日期"].strftime("%Y-%m-%d"),
+            "shop_name": row["店铺名称"],
+            "product_code": parsed["product_code"],
+            "brand": parsed["brand"],
+            "year": parsed["year"],
+            "season": parsed["season"],
+            "category": parsed["category"],
+            "style": parsed["style"],
+            "color_code": parsed["color_code"],
+            "size_code": parsed["size"],
+            "ship_amount": ship_amount,
+            "return_amount": return_amount,
+            "net_amount": amount
+        }
+        existing = supabase.table("product_sales").select("*").eq("sale_date", data["sale_date"]).eq("product_code", data["product_code"]).eq("shop_name", data["shop_name"]).execute()
+        if not existing.data:
+            supabase.table("product_sales").insert(data).execute()
+            inserted += 1
+    # 可静默或输出信息，这里不打印避免干扰
+
 @st.cache_data(ttl=3600)
 def load_product_sales():
     if supabase is None:
@@ -331,7 +341,7 @@ def load_product_sales():
         st.error(f"加载商品数据失败：{e}")
         return pd.DataFrame()
 
-# ========== 启动时加载数据 ==========
+# ========== 启动时加载店铺业绩数据 ==========
 if not st.session_state.get("data_loaded", False):
     with st.spinner("正在加载数据..."):
         history_df = load_from_supabase()
@@ -405,7 +415,8 @@ with tab1:
         df_display = df_display[["日期", "店铺名称", "当日金额", "月累计金额", "目标金额", "达成率"]]
         st.subheader(f"最新日：{st.session_state.latest_date.strftime('%Y-%m-%d')}")
         st.dataframe(df_display, use_container_width=True, hide_index=True)
-        # 合计部分
+
+        # 合计卡片
         df_sales = st.session_state.daily_latest.copy()
         douyin_df = df_sales[df_sales["店铺名称"].str.contains("抖音", case=False, na=False)]
         video_df = df_sales[df_sales["店铺名称"].str.contains("视频号", case=False, na=False)]
@@ -419,6 +430,7 @@ with tab1:
         douyin_rate = f"{(douyin_cum / douyin_target * 100):.2f}%" if douyin_target > 0 else "未设目标"
         video_rate = f"{(video_cum / video_target * 100):.2f}%" if video_target > 0 else "未设目标"
         total_rate = f"{(total_cum / total_target * 100):.2f}%" if total_target > 0 else "未设目标"
+
         col1, col2, col3 = st.columns(3)
         with col1:
             st.metric(label="📱 抖音合计", value=f"当日: {douyin_df['当日金额'].sum():,.2f}", delta=f"月累: {douyin_cum:,.2f}")
@@ -429,6 +441,7 @@ with tab1:
         with col3:
             st.metric(label="📊 总业绩合计", value=f"当日: {df_sales['当日金额'].sum():,.2f}", delta=f"月累: {total_cum:,.2f}")
             st.caption(f"📈 月完成率: {total_rate}")
+
         excel_data = to_excel_download(df_display, "最新日明细.xlsx")
         st.download_button("💾 导出为 Excel", data=excel_data, file_name="最新日明细.xlsx")
     else:
@@ -500,86 +513,95 @@ with tab5:
         st.info("暂无历史数据")
 
 with tab6:
-    st.subheader("📊 商品销售分析（按品牌+款式汇总）")
+    st.subheader("📊 商品销售分析（按品牌+产品）")
     product_df = load_product_sales()
     if product_df.empty:
-        st.info("暂无商品数据，请先上传包含商品编码的订单文件（备注中需包含商品编码）")
+        st.warning("暂无商品数据。请确保上传的订单文件备注中包含商品编码（如 ..._G252Y005407003_...），且 Supabase 中 product_sales 表已创建。")
+        with st.expander("查看帮助"):
+            st.markdown("""
+            - 备注格式示例：`16060711769280_G252Y005407003_交易号:..._商店:抖音...`
+            - 程序自动提取商品编码并解析品牌、年份、尺码、季节。
+            - 如已上传订单文件但仍无数据，请检查 Supabase 中 product_sales 表是否存在（建表 SQL 见代码文件末尾）。
+            """)
     else:
-        # 筛选控件
-        st.markdown("### 筛选条件")
-        col1, col2, col3, col4 = st.columns(4)
+        col1, col2 = st.columns(2)
         with col1:
-            brands = ["全部"] + sorted(product_df["brand"].dropna().unique())
-            selected_brand = st.selectbox("品牌", brands, key="brand_filter")
+            start_date = st.date_input("开始日期", value=date.today().replace(day=1), key="prod_start")
         with col2:
-            years = ["全部"] + sorted(product_df["year"].dropna().unique())
-            selected_year = st.selectbox("年份", years, key="year_filter")
-        with col3:
-            seasons = ["全部"] + sorted(product_df["season"].dropna().unique())
-            selected_season = st.selectbox("季节", seasons, key="season_filter")
-        with col4:
-            sizes = ["全部"] + sorted(product_df["size_code"].dropna().unique())
-            selected_size = st.selectbox("尺码", sizes, key="size_filter")
-        
-        date_col1, date_col2 = st.columns(2)
-        with date_col1:
-            start_date = st.date_input("开始日期", value=date.today().replace(day=1), key="product_start")
-        with date_col2:
-            end_date = st.date_input("结束日期", value=date.today(), key="product_end")
-        
-        # 过滤数据
+            end_date = st.date_input("结束日期", value=date.today(), key="prod_end")
+
+        all_brands = ["全部"] + sorted(product_df["brand"].dropna().unique())
+        selected_brands = st.multiselect("选择品牌（可多选）", all_brands, default="全部")
+
         mask = (product_df["sale_date"] >= pd.to_datetime(start_date)) & (product_df["sale_date"] <= pd.to_datetime(end_date))
         filtered = product_df[mask].copy()
-        if selected_brand != "全部":
-            filtered = filtered[filtered["brand"] == selected_brand]
-        if selected_year != "全部":
-            filtered = filtered[filtered["year"] == selected_year]
-        if selected_season != "全部":
-            filtered = filtered[filtered["season"] == selected_season]
-        if selected_size != "全部":
-            filtered = filtered[filtered["size_code"] == selected_size]
-        
+        if "全部" not in selected_brands:
+            filtered = filtered[filtered["brand"].isin(selected_brands)]
+
         if filtered.empty:
             st.warning("所选条件下无销售数据")
         else:
-            # 按品牌+款式（style）汇总，计算发货金额（正数）、退货金额（绝对值）、净销售额
-            # 需要分别计算：发货 = sum(amount where amount>0), 退货 = sum(abs(amount) where amount<0)
-            def agg_func(group):
-                ship = group[group["amount"] > 0]["amount"].sum()
-                refund = group[group["amount"] < 0]["amount"].abs().sum()
-                net = ship - refund
-                return pd.Series({
-                    "发货金额": ship,
-                    "退货金额": refund,
-                    "净销售额": net
-                })
-            
-            # 先按品牌和款式分组
-            summary = filtered.groupby(["brand", "style"]).apply(agg_func).reset_index()
-            # 添加一个产品标识列
-            summary["产品"] = summary["brand"] + "-" + summary["style"]
-            # 选择要显示的列
-            summary_display = summary[["brand", "style", "发货金额", "退货金额", "净销售额"]]
-            
-            # 排序选项
-            sort_by = st.radio("排序依据", ["净销售额", "发货金额", "退货金额"], horizontal=True)
-            ascending = st.checkbox("升序", value=False)
-            summary_sorted = summary_display.sort_values(by=sort_by, ascending=ascending)
-            
-            st.markdown(f"#### 按品牌+款式汇总（按 {sort_by} 排序）")
-            # 格式化金额
-            def format_money(x):
-                return f"{x:,.2f}"
+            # 按品牌+产品编码分组
+            grouped = filtered.groupby(["brand", "product_code"]).agg(
+                发货金额=("ship_amount", "sum"),
+                退货金额=("return_amount", "sum"),
+                最终销售金额=("net_amount", "sum")
+            ).reset_index()
+            grouped = grouped.sort_values("最终销售金额", ascending=False)
+
             st.dataframe(
-                summary_sorted.style.format({"发货金额": format_money, "退货金额": format_money, "净销售额": format_money}),
-                use_container_width=True,
-                hide_index=True
+                grouped,
+                column_config={
+                    "brand": "品牌",
+                    "product_code": "产品编码",
+                    "发货金额": st.column_config.NumberColumn("发货金额", format="%.2f"),
+                    "退货金额": st.column_config.NumberColumn("退货金额", format="%.2f"),
+                    "最终销售金额": st.column_config.NumberColumn("最终销售金额", format="%.2f")
+                },
+                hide_index=True,
+                use_container_width=True
             )
-            
-            # 可选：展示所有明细表
-            with st.expander("查看原始明细数据"):
-                st.dataframe(filtered, use_container_width=True)
-            
-            # 导出汇总结果
-            excel_data = to_excel_download(summary_sorted, "商品销售汇总.xlsx")
-            st.download_button("💾 导出汇总结果", data=excel_data, file_name="商品销售汇总.xlsx")
+            excel_data = to_excel_download(grouped, "品牌产品销售汇总.xlsx")
+            st.download_button("💾 导出当前汇总", data=excel_data, file_name="品牌产品销售汇总.xlsx")
+
+# ========== 建表 SQL（供参考，需在 Supabase SQL Editor 中执行） ==========
+# 以下 SQL 请手动在 Supabase 中运行以创建所需的表。
+"""
+-- 店铺每日业绩表
+CREATE TABLE IF NOT EXISTS daily_sales (
+    id SERIAL PRIMARY KEY,
+    sale_date DATE NOT NULL,
+    shop_name TEXT NOT NULL,
+    amount DECIMAL(10,2) NOT NULL,
+    cumulative_amount DECIMAL(10,2),
+    created_at TIMESTAMPTZ DEFAULT now(),
+    UNIQUE(sale_date, shop_name)
+);
+
+-- 店铺目标表
+CREATE TABLE IF NOT EXISTS shop_targets (
+    id SERIAL PRIMARY KEY,
+    shop_name TEXT NOT NULL UNIQUE,
+    target_amount DECIMAL(10,2) NOT NULL,
+    updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- 商品销售明细表（发货/退货/净额）
+CREATE TABLE IF NOT EXISTS product_sales (
+    id SERIAL PRIMARY KEY,
+    sale_date DATE NOT NULL,
+    shop_name TEXT,
+    product_code TEXT,
+    brand TEXT,
+    year TEXT,
+    season TEXT,
+    category TEXT,
+    style TEXT,
+    color_code TEXT,
+    size_code TEXT,
+    ship_amount DECIMAL(10,2) DEFAULT 0,
+    return_amount DECIMAL(10,2) DEFAULT 0,
+    net_amount DECIMAL(10,2) DEFAULT 0,
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+"""
