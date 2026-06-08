@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-订单业绩统计工具 - 带 Supabase 持久化（支持历史数据自动加载）
-启动时自动从数据库加载所有历史业绩，无需每次上传文件即可查询
+订单业绩统计工具 - 带 Supabase 持久化（支持历史业绩+目标金额跨设备保存）
+启动时自动从数据库加载历史业绩和已存储的目标金额
 """
 
 import streamlit as st
@@ -17,9 +17,9 @@ st.markdown("---")
 
 # ========== 初始化 session_state ==========
 if "df_all_daily" not in st.session_state:
-    st.session_state.df_all_daily = None          # 所有日期的明细（日期、店铺、当日金额、月累计）
+    st.session_state.df_all_daily = None
 if "df_ship_refund" not in st.session_state:
-    st.session_state.df_ship_refund = None        # 发货退货明细（仅来自最后一次上传）
+    st.session_state.df_ship_refund = None
 if "target_dict" not in st.session_state:
     st.session_state.target_dict = {}
 if "target_file_name" not in st.session_state:
@@ -43,15 +43,15 @@ def init_supabase():
 
 supabase = init_supabase()
 
-# ========== 数据库操作函数 ==========
+# ========== 业绩数据相关函数 ==========
 def load_from_supabase():
-    """从 Supabase 加载所有历史业绩数据，返回 DataFrame（日期,店铺,当日金额,月累计金额）"""
+    """从 Supabase 加载所有历史业绩数据"""
     if supabase is None:
         return pd.DataFrame()
     try:
         response = supabase.table("daily_sales").select("*").execute()
     except Exception as e:
-        st.error(f"读取历史数据失败：{e}")
+        st.error(f"读取历史业绩失败：{e}")
         return pd.DataFrame()
     if response.data:
         df = pd.DataFrame(response.data)
@@ -82,18 +82,45 @@ def rebuild_from_history(history_df):
     """根据历史业绩 DataFrame 重建 df_all_daily, daily_latest, monthly_actual"""
     if history_df.empty:
         return None, None, None, None
-    # 所有日明细
     df_all = history_df.sort_values(["店铺名称", "日期"])
-    # 最新日期
     latest_date = df_all["日期"].max()
-    # 最新日明细（每个店铺最新一条记录）
     daily_latest = df_all.loc[df_all.groupby("店铺名称")["日期"].idxmax()].copy()
     daily_latest = daily_latest[["日期", "店铺名称", "当日金额", "月累计金额"]]
-    # 月度累计（按店铺汇总当日金额）
     monthly_actual = df_all.groupby("店铺名称")["当日金额"].sum().reset_index()
     monthly_actual["月累计金额"] = monthly_actual["当日金额"].round(2)
     monthly_actual = monthly_actual[["店铺名称", "月累计金额"]].sort_values("店铺名称")
     return df_all, daily_latest, monthly_actual, latest_date
+
+# ========== 目标数据持久化函数 ==========
+def load_targets_from_supabase():
+    """从 Supabase 加载所有已保存的目标金额"""
+    if supabase is None:
+        return {}
+    try:
+        response = supabase.table("shop_targets").select("*").execute()
+    except Exception as e:
+        st.error(f"读取目标数据失败：{e}")
+        return {}
+    if response.data:
+        return {row["shop_name"]: row["target_amount"] for row in response.data}
+    else:
+        return {}
+
+def save_targets_to_supabase(target_dict):
+    """将目标金额保存到 Supabase（upsert）"""
+    if supabase is None:
+        return
+    for shop_name, amount in target_dict.items():
+        supabase.table("shop_targets").upsert({
+            "shop_name": shop_name,
+            "target_amount": amount
+        }, on_conflict="shop_name").execute()
+
+def clear_targets_in_supabase():
+    """删除所有目标金额记录"""
+    if supabase is None:
+        return
+    supabase.table("shop_targets").delete().neq("id", 0).execute()
 
 # ========== 订单文件处理函数（保留，并追加到数据库） ==========
 def process_order_file(uploaded_file):
@@ -142,26 +169,26 @@ def process_order_file(uploaded_file):
         latest_ship_refund['日期'] = latest_ship_refund['日期'].fillna(latest_date)
         df_ship = latest_ship_refund[["日期", "店铺名称", "当日发货", "月累计发货", "当日退货", "月累计退货"]]
 
-        # 保存到数据库
+        # 保存业绩到数据库
         save_to_supabase(df_all_new)
 
         # 重新从数据库加载所有历史数据并重建
         history_df = load_from_supabase()
-        df_all, daily_latest, monthly_actual, latest_date = rebuild_from_history(history_df)
+        df_all, daily_latest, monthly_actual, latest_date_updated = rebuild_from_history(history_df)
 
         return {
             "df_all": df_all,
             "daily_latest": daily_latest,
             "monthly_actual": monthly_actual,
             "df_ship": df_ship,
-            "latest_date": latest_date,
+            "latest_date": latest_date_updated,
             "success": True,
-            "message": f"处理完成并已保存！最新日期：{latest_date.strftime('%Y-%m-%d')}"
+            "message": f"处理完成并已保存！最新日期：{latest_date_updated.strftime('%Y-%m-%d')}"
         }
     except Exception as e:
         return {"success": False, "message": f"处理失败：{str(e)}"}
 
-# ========== 目标文件处理（保持不变） ==========
+# ========== 目标文件处理（带持久化） ==========
 def load_target_file(uploaded_file):
     try:
         df_target = pd.read_excel(uploaded_file, header=None)
@@ -176,7 +203,11 @@ def load_target_file(uploaded_file):
         for name, val in zip(shop_names, target_vals):
             if pd.notna(val) and name not in ["", "nan", "None"]:
                 target_dict[name] = val
-        return {"success": True, "target_dict": target_dict, "count": len(target_dict), "message": f"成功加载 {len(target_dict)} 个店铺目标"}
+
+        # 保存目标到数据库
+        save_targets_to_supabase(target_dict)
+
+        return {"success": True, "target_dict": target_dict, "count": len(target_dict), "message": f"成功加载并保存 {len(target_dict)} 个店铺目标"}
     except Exception as e:
         return {"success": False, "message": f"加载目标文件失败：{str(e)}"}
 
@@ -204,7 +235,7 @@ def download_target_template():
     template = pd.DataFrame({"店铺名称": ["示例店铺A", "示例店铺B"], "目标金额": [100000, 200000]})
     return to_excel_download(template, "目标模板.xlsx")
 
-# ========== 页面启动时自动加载历史数据 ==========
+# ========== 页面启动时自动加载历史数据和目标数据 ==========
 if not st.session_state.data_loaded:
     with st.spinner("正在加载历史业绩数据..."):
         history_df = load_from_supabase()
@@ -214,11 +245,14 @@ if not st.session_state.data_loaded:
             st.session_state.daily_latest = daily_latest
             st.session_state.monthly_actual = monthly_actual
             st.session_state.latest_date = latest_date
-            # 注意：发货退货数据仅来自上传，历史无法重建，置空
-            st.session_state.df_ship_refund = None
-            st.session_state.data_loaded = True
         else:
-            st.session_state.data_loaded = True  # 避免重复加载
+            st.session_state.df_all_daily = None
+            st.session_state.daily_latest = None
+            st.session_state.monthly_actual = None
+            st.session_state.latest_date = None
+        # 加载目标数据
+        st.session_state.target_dict = load_targets_from_supabase()
+        st.session_state.data_loaded = True
 
 # ========== 侧边栏：文件上传与工具 ==========
 with st.sidebar:
@@ -260,9 +294,11 @@ with st.sidebar:
     template_data = download_target_template()
     st.download_button("📄 下载目标模板", data=template_data, file_name="目标模板.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
     if st.button("🗑️ 清除目标记忆"):
+        # 清除数据库中的目标数据
+        clear_targets_in_supabase()
         st.session_state.target_dict = {}
         st.session_state.target_file_name = None
-        st.success("目标已清除")
+        st.success("目标已清除（包括数据库）")
         st.rerun()
 
 # ========== 主选项卡 ==========
