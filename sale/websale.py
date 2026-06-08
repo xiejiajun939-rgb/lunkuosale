@@ -462,17 +462,17 @@ with tab6:
     if prod_df.empty:
         st.warning("暂无商品销售数据，请先上传订单文件。")
     else:
-        # 确保有必要的列
-        required_cols = ["brand", "style_code", "ship_amount", "return_amount", "net_amount", "image_url", "master_category"]
-        for col in required_cols:
-            if col not in prod_df.columns:
-                # 如果缺失，添加空列（兼容旧数据）
-                prod_df[col] = None
-        # 补全缺失的 brand（从 product_code 第一位取）
-        if prod_df["brand"].isnull().all():
+        # 确保 brand 列存在且非空
+        if "brand" not in prod_df.columns or prod_df["brand"].isnull().all():
             prod_df["brand"] = prod_df["product_code"].str[0]
         else:
             prod_df["brand"] = prod_df["brand"].fillna(prod_df["product_code"].str[0])
+        
+        # 生成货号（如果没有 style_code，则从 product_code 取前8位）
+        if "style_code" not in prod_df.columns:
+            prod_df["style_code"] = prod_df["product_code"].str[:8]
+        else:
+            prod_df["style_code"] = prod_df["style_code"].fillna(prod_df["product_code"].str[:8])
         
         # 日期筛选
         min_date = prod_df["sale_date"].min().date()
@@ -489,15 +489,14 @@ with tab6:
         # 品牌筛选
         brands = ["全部"] + sorted(filtered["brand"].dropna().unique())
         selected_brand = st.selectbox("选择品牌", brands)
-        
         if selected_brand != "全部":
             filtered = filtered[filtered["brand"] == selected_brand]
         
         if filtered.empty:
             st.warning("所选条件下无销售数据")
         else:
-            # 按品牌、货号、主分类、图片聚合
-            grouped = filtered.groupby(["brand", "style_code", "master_category", "image_url"]).agg(
+            # 只按品牌和货号分组（先保证有数据）
+            grouped = filtered.groupby(["brand", "style_code"]).agg(
                 发货金额=("ship_amount", "sum"),
                 退货金额=("return_amount", "sum"),
                 净销售金额=("net_amount", "sum")
@@ -505,26 +504,11 @@ with tab6:
             grouped = grouped.sort_values("净销售金额", ascending=False)
             grouped.rename(columns={"style_code": "货号"}, inplace=True)
             
-            # 显示表格（含图片列）
-            st.dataframe(
-                grouped,
-                column_config={
-                    "brand": "品牌",
-                    "货号": "货号",
-                    "master_category": "商品分类",
-                    "发货金额": st.column_config.NumberColumn("发货金额", format="%.2f"),
-                    "退货金额": st.column_config.NumberColumn("退货金额", format="%.2f"),
-                    "净销售金额": st.column_config.NumberColumn("净销售金额", format="%.2f"),
-                    "image_url": st.column_config.ImageColumn("商品图片", help="点击放大")
-                },
-                hide_index=True,
-                use_container_width=True
-            )
-            # 导出（去掉图片列）
-            export_df = grouped.drop(columns=["image_url"])
+            st.dataframe(grouped, use_container_width=True, hide_index=True)
+            # 导出
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                export_df.to_excel(writer, index=False)
+                grouped.to_excel(writer, index=False)
             st.download_button("💾 导出分析结果", data=output.getvalue(), file_name="商品分析.xlsx")
 
 # ========== 建表 SQL 参考 ==========
