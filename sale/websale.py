@@ -524,42 +524,40 @@ with tab6:
         if filtered.empty:
             st.warning("所选条件下无销售数据")
         else:
-            # 按商品分类汇总（饼图）
+            # ---- 按商品分类汇总 ----
             cat_summary = filtered.groupby("master_category").agg(
                 发货金额=("ship_amount", "sum"),
                 退货金额=("return_amount", "sum"),
                 净销售金额=("net_amount", "sum")
             ).reset_index()
-            cat_summary = cat_summary[cat_summary["master_category"].notna()]
+            cat_summary = cat_summary[cat_summary["master_category"].notna()]  # 过滤空分类
             
             if not cat_summary.empty:
                 st.subheader("📊 按商品分类统计")
-                plt.rcParams['font.sans-serif'] = ['SimHei', 'DejaVu Sans']
-                plt.rcParams['axes.unicode_minus'] = False
-                
+                # 三列饼图
                 col_pie1, col_pie2, col_pie3 = st.columns(3)
                 with col_pie1:
-                    fig1, ax1 = plt.subplots(figsize=(4, 4))
-                    ax1.pie(cat_summary["发货金额"], labels=cat_summary["master_category"], autopct='%1.1f%%', startangle=90)
-                    ax1.set_title("发货金额分布")
-                    st.pyplot(fig1)
-                    plt.close(fig1)
+                    fig_ship = px.pie(cat_summary, names="master_category", values="发货金额", 
+                                      title="发货金额分布", hole=0.3,
+                                      color_discrete_sequence=px.colors.qualitative.Set3)
+                    fig_ship.update_traces(textposition='inside', textinfo='percent+label')
+                    st.plotly_chart(fig_ship, use_container_width=True)
                 with col_pie2:
-                    fig2, ax2 = plt.subplots(figsize=(4, 4))
-                    ax2.pie(cat_summary["退货金额"], labels=cat_summary["master_category"], autopct='%1.1f%%', startangle=90)
-                    ax2.set_title("退货金额分布")
-                    st.pyplot(fig2)
-                    plt.close(fig2)
+                    fig_return = px.pie(cat_summary, names="master_category", values="退货金额", 
+                                        title="退货金额分布", hole=0.3,
+                                        color_discrete_sequence=px.colors.qualitative.Set2)
+                    fig_return.update_traces(textposition='inside', textinfo='percent+label')
+                    st.plotly_chart(fig_return, use_container_width=True)
                 with col_pie3:
-                    fig3, ax3 = plt.subplots(figsize=(4, 4))
-                    ax3.pie(cat_summary["净销售金额"], labels=cat_summary["master_category"], autopct='%1.1f%%', startangle=90)
-                    ax3.set_title("净销售金额分布")
-                    st.pyplot(fig3)
-                    plt.close(fig3)
+                    fig_net = px.pie(cat_summary, names="master_category", values="净销售金额", 
+                                     title="净销售金额分布", hole=0.3,
+                                     color_discrete_sequence=px.colors.qualitative.Pastel)
+                    fig_net.update_traces(textposition='inside', textinfo='percent+label')
+                    st.plotly_chart(fig_net, use_container_width=True)
             else:
                 st.info("当前筛选条件下无有效商品分类数据")
             
-            # 商品销售明细表格
+            # ---- 原有表格（品牌+货号） ----
             st.subheader("📋 商品销售明细（按品牌+货号）")
             grouped = filtered.groupby(["brand", "style_code", "master_category", "image_url"]).agg(
                 发货金额=("ship_amount", "sum"),
@@ -583,6 +581,7 @@ with tab6:
                 hide_index=True,
                 use_container_width=True
             )
+            # 导出
             export_df = grouped.drop(columns=["image_url"])
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
