@@ -515,19 +515,36 @@ with tab6:
         if filtered.empty:
             st.warning("所选条件下无销售数据")
         else:
-            # ---- 按商品分类汇总净收入 ----
-            cat_summary = filtered.groupby("master_category")["net_amount"].sum().reset_index()
+            # ---- 按商品分类汇总 ----
+            cat_summary = filtered.groupby("master_category").agg(
+                发货金额=("ship_amount", "sum"),
+                退货金额=("return_amount", "sum"),
+                净销售金额=("net_amount", "sum")
+            ).reset_index()
             cat_summary = cat_summary[cat_summary["master_category"].notna()]  # 过滤空分类
+            
             if not cat_summary.empty:
-                st.subheader("📊 各商品分类净收入占比")
-                # 使用 Plotly 绘制饼图
-                fig = px.pie(cat_summary, names="master_category", values="net_amount", 
-                             title="净收入按商品分类分布",
-                             hole=0.3,  # 环形图效果，可改为0成为标准饼图
-                             color_discrete_sequence=px.colors.qualitative.Pastel)
-                fig.update_traces(textposition='inside', textinfo='percent+label')
-                fig.update_layout(showlegend=True, height=500)
-                st.plotly_chart(fig, use_container_width=True)
+                st.subheader("📊 按商品分类统计")
+                # 三列饼图
+                col_pie1, col_pie2, col_pie3 = st.columns(3)
+                with col_pie1:
+                    fig_ship = px.pie(cat_summary, names="master_category", values="发货金额", 
+                                      title="发货金额分布", hole=0.3,
+                                      color_discrete_sequence=px.colors.qualitative.Set3)
+                    fig_ship.update_traces(textposition='inside', textinfo='percent+label')
+                    st.plotly_chart(fig_ship, use_container_width=True)
+                with col_pie2:
+                    fig_return = px.pie(cat_summary, names="master_category", values="退货金额", 
+                                        title="退货金额分布", hole=0.3,
+                                        color_discrete_sequence=px.colors.qualitative.Set2)
+                    fig_return.update_traces(textposition='inside', textinfo='percent+label')
+                    st.plotly_chart(fig_return, use_container_width=True)
+                with col_pie3:
+                    fig_net = px.pie(cat_summary, names="master_category", values="净销售金额", 
+                                     title="净销售金额分布", hole=0.3,
+                                     color_discrete_sequence=px.colors.qualitative.Pastel)
+                    fig_net.update_traces(textposition='inside', textinfo='percent+label')
+                    st.plotly_chart(fig_net, use_container_width=True)
             else:
                 st.info("当前筛选条件下无有效商品分类数据")
             
