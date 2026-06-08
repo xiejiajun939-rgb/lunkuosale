@@ -1,18 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-订单业绩统计工具 - 完整版（店铺业绩 + 商品分析 + 图片/分类）
+订单业绩统计工具 - 完整版（店铺业绩 + 商品分析 + 图片/分类 + 最新日明细合计）
 访问密码：94949468
-需提前在 Supabase 中创建表：daily_sales, shop_targets, product_sales, product_master
-并执行以下 SQL 确保 product_sales 有 image_url 和 master_category 字段：
-ALTER TABLE product_sales ADD COLUMN IF NOT EXISTS image_url TEXT;
-ALTER TABLE product_sales ADD COLUMN IF NOT EXISTS master_category TEXT;
-ALTER TABLE product_sales ADD COLUMN IF NOT EXISTS style_code TEXT;
-UPDATE product_sales SET style_code = LEFT(product_code, 8) WHERE style_code IS NULL;
--- 从 product_master 回填图片和分类
-UPDATE product_sales ps
-SET image_url = pm.image_url, master_category = pm.category
-FROM product_master pm
-WHERE ps.style_code = pm.product_code;
 """
 
 import streamlit as st
@@ -172,7 +161,6 @@ def parse_product_code(remark):
     except:
         return None
 
-# 加载商品库（用于填充图片和分类）
 @st.cache_data(ttl=3600)
 def load_product_master():
     if supabase is None:
@@ -190,10 +178,8 @@ def load_product_master():
         return pd.DataFrame()
 
 def save_product_sales(df_orders):
-    """将原始订单逐行保存到 product_sales 表，并自动填充图片和主分类"""
     if supabase is None:
         return
-    # 预先加载商品库，构建短码到图片和分类的映射
     master_df = load_product_master()
     master_map = {}
     if not master_df.empty:
@@ -268,10 +254,8 @@ def process_uploaded_file(uploaded_file):
         df["金额/时间"] = pd.to_numeric(df["金额/时间"], errors="coerce")
         df = df.dropna(subset=["金额/时间"])
 
-        # 保存商品明细（自动填充图片和分类）
         save_product_sales(df)
 
-        # 店铺业绩汇总
         daily = df.groupby(["日期", "店铺名称"])["金额/时间"].sum().reset_index()
         daily = daily.sort_values(["店铺名称", "日期"])
         daily["月累计金额"] = daily.groupby("店铺名称")["金额/时间"].cumsum().round(2)
@@ -356,6 +340,7 @@ tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["📅 最新日明细", "🏪 日�
 with tab1:
     if st.session_state.get("daily_latest") is not None and not st.session_state.daily_latest.empty:
         df = st.session_state.daily_latest.copy()
+        # 添加目标金额和达成率
         df["目标金额"] = df["店铺名称"].map(st.session_state.target_dict).fillna(0).round(2)
         def calc_rate(row):
             actual = row["月累计金额"]
@@ -366,6 +351,40 @@ with tab1:
         df["达成率"] = df.apply(calc_rate, axis=1)
         cols = ["日期", "店铺名称", "当日金额", "月累计金额", "目标金额", "达成率"]
         st.dataframe(df[cols], use_container_width=True, hide_index=True)
+        
+        # ===== 3个合计卡片（抖音、视频号、总计）及月完成率 =====
+        df_sales = st.session_state.daily_latest.copy()
+        douyin_df = df_sales[df_sales["店铺名称"].str.contains("抖音", case=False, na=False)]
+        video_df = df_sales[df_sales["店铺名称"].str.contains("视频号", case=False, na=False)]
+        target_dict = st.session_state.target_dict
+        
+        # 抖音合计
+        douyin_target = sum(target_dict.get(shop, 0) for shop in douyin_df["店铺名称"])
+        douyin_cum = douyin_df["月累计金额"].sum()
+        douyin_rate = f"{(douyin_cum / douyin_target * 100):.2f}%" if douyin_target > 0 else "未设目标"
+        
+        # 视频号合计
+        video_target = sum(target_dict.get(shop, 0) for shop in video_df["店铺名称"])
+        video_cum = video_df["月累计金额"].sum()
+        video_rate = f"{(video_cum / video_target * 100):.2f}%" if video_target > 0 else "未设目标"
+        
+        # 总业绩合计
+        total_target = sum(target_dict.values())
+        total_cum = df_sales["月累计金额"].sum()
+        total_rate = f"{(total_cum / total_target * 100):.2f}%" if total_target > 0 else "未设目标"
+        
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric(label="📱 抖音合计", value=f"当日: {douyin_df['当日金额'].sum():,.2f}", delta=f"月累: {douyin_cum:,.2f}")
+            st.caption(f"📈 月完成率: {douyin_rate}")
+        with col2:
+            st.metric(label="📺 视频号合计", value=f"当日: {video_df['当日金额'].sum():,.2f}", delta=f"月累: {video_cum:,.2f}")
+            st.caption(f"📈 月完成率: {video_rate}")
+        with col3:
+            st.metric(label="📊 总业绩合计", value=f"当日: {df_sales['当日金额'].sum():,.2f}", delta=f"月累: {total_cum:,.2f}")
+            st.caption(f"📈 月完成率: {total_rate}")
+        
+        # 导出按钮
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             df[cols].to_excel(writer, index=False)
@@ -454,31 +473,24 @@ with tab5:
     else:
         st.info("暂无历史数据")
 
-# ========== 商品分析（直接从 product_sales 读取 image_url 和 master_category） ==========
 with tab6:
     st.subheader("📊 商品销售分析（按品牌+产品）")
     prod_df = load_product_sales()
     
-    # 调试信息（部署后可注释掉）
-    st.write(f"商品数据行数: {len(prod_df)}")
-    st.write(f"列名: {list(prod_df.columns)}")
-    
     if prod_df.empty:
         st.warning("暂无商品销售数据，请先上传订单文件。")
     else:
-        # 确保 brand 列存在且非空
+        # 确保必要列
         if "brand" not in prod_df.columns or prod_df["brand"].isnull().all():
             prod_df["brand"] = prod_df["product_code"].str[0]
         else:
             prod_df["brand"] = prod_df["brand"].fillna(prod_df["product_code"].str[0])
         
-        # 确保 style_code 列存在（货号）
         if "style_code" not in prod_df.columns:
             prod_df["style_code"] = prod_df["product_code"].str[:8]
         else:
             prod_df["style_code"] = prod_df["style_code"].fillna(prod_df["product_code"].str[:8])
         
-        # 确保图片和分类列存在，若不存在则创建空列
         if "image_url" not in prod_df.columns:
             prod_df["image_url"] = None
         if "master_category" not in prod_df.columns:
@@ -505,7 +517,6 @@ with tab6:
         if filtered.empty:
             st.warning("所选条件下无销售数据")
         else:
-            # 按品牌、货号、主分类、图片聚合
             grouped = filtered.groupby(["brand", "style_code", "master_category", "image_url"]).agg(
                 发货金额=("ship_amount", "sum"),
                 退货金额=("return_amount", "sum"),
@@ -514,7 +525,6 @@ with tab6:
             grouped = grouped.sort_values("净销售金额", ascending=False)
             grouped.rename(columns={"style_code": "货号"}, inplace=True)
             
-            # 显示表格（含图片列）
             st.dataframe(
                 grouped,
                 column_config={
@@ -529,79 +539,8 @@ with tab6:
                 hide_index=True,
                 use_container_width=True
             )
-            # 导出（去掉图片列）
             export_df = grouped.drop(columns=["image_url"])
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
                 export_df.to_excel(writer, index=False)
             st.download_button("💾 导出分析结果", data=output.getvalue(), file_name="商品分析.xlsx")
-
-# ========== 建表 SQL 参考（请在 Supabase SQL Editor 中执行） ==========
-"""
--- 店铺每日业绩表
-CREATE TABLE IF NOT EXISTS daily_sales (
-    id SERIAL PRIMARY KEY,
-    sale_date DATE NOT NULL,
-    shop_name TEXT NOT NULL,
-    amount DECIMAL(10,2) NOT NULL,
-    cumulative_amount DECIMAL(10,2),
-    created_at TIMESTAMPTZ DEFAULT now(),
-    UNIQUE(sale_date, shop_name)
-);
-
--- 店铺目标表
-CREATE TABLE IF NOT EXISTS shop_targets (
-    id SERIAL PRIMARY KEY,
-    shop_name TEXT NOT NULL UNIQUE,
-    target_amount DECIMAL(10,2) NOT NULL,
-    updated_at TIMESTAMPTZ DEFAULT now()
-);
-
--- 商品销售明细表
-CREATE TABLE IF NOT EXISTS product_sales (
-    id SERIAL PRIMARY KEY,
-    sale_date DATE NOT NULL,
-    shop_name TEXT,
-    product_code TEXT,
-    brand TEXT,
-    year TEXT,
-    season TEXT,
-    category TEXT,
-    style TEXT,
-    color_code TEXT,
-    size_code TEXT,
-    ship_amount DECIMAL(10,2) DEFAULT 0,
-    return_amount DECIMAL(10,2) DEFAULT 0,
-    net_amount DECIMAL(10,2) DEFAULT 0,
-    created_at TIMESTAMPTZ DEFAULT now()
-);
--- 为商品分析添加字段
-ALTER TABLE product_sales ADD COLUMN IF NOT EXISTS image_url TEXT;
-ALTER TABLE product_sales ADD COLUMN IF NOT EXISTS master_category TEXT;
-ALTER TABLE product_sales ADD COLUMN IF NOT EXISTS style_code TEXT;
-UPDATE product_sales SET style_code = LEFT(product_code, 8) WHERE style_code IS NULL;
-
--- 商品库表
-CREATE TABLE IF NOT EXISTS product_master (
-    id SERIAL PRIMARY KEY,
-    product_code TEXT NOT NULL UNIQUE,
-    image_url TEXT,
-    category TEXT,
-    created_at TIMESTAMPTZ DEFAULT now(),
-    updated_at TIMESTAMPTZ DEFAULT now()
-);
-
--- 回填历史商品图片和分类
-UPDATE product_sales ps
-SET 
-    image_url = pm.image_url,
-    master_category = pm.category
-FROM product_master pm
-WHERE ps.style_code = pm.product_code;
-
--- 禁用 RLS 简化权限（适合内部工具）
-ALTER TABLE daily_sales DISABLE ROW LEVEL SECURITY;
-ALTER TABLE shop_targets DISABLE ROW LEVEL SECURITY;
-ALTER TABLE product_sales DISABLE ROW LEVEL SECURITY;
-ALTER TABLE product_master DISABLE ROW LEVEL SECURITY;
-"""
