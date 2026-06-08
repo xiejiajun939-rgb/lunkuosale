@@ -263,12 +263,12 @@ def process_uploaded_file(uploaded_file):
         save_product_sales(df)
 
         # ---- 修复月累计：基于所有历史数据重新计算 ----
-        # 1. 加载已有的店铺每日业绩
+        # 1. 加载已有的店铺每日业绩（只取需要的列）
         existing = load_daily_sales()
         if existing.empty:
             existing = pd.DataFrame(columns=["sale_date", "shop_name", "amount"])
         else:
-            existing = existing.rename(columns={"sale_date": "日期", "shop_name": "店铺名称", "amount": "当日金额"})
+            existing = existing[["sale_date", "shop_name", "amount"]].rename(columns={"amount": "当日金额"})
         
         # 2. 汇总本次上传的每日业绩
         new_daily = df.groupby(["日期", "店铺名称"])["金额/时间"].sum().reset_index()
@@ -280,7 +280,7 @@ def process_uploaded_file(uploaded_file):
         merged = merged.sort_values(["店铺名称", "日期"])
         merged["月累计金额"] = merged.groupby("店铺名称")["当日金额"].cumsum().round(2)
         
-        # 4. 写入数据库（upsert 会覆盖已有记录，但累计值已正确计算）
+        # 4. 写入数据库（upsert 会覆盖已有记录，确保累计正确）
         records = []
         for _, row in merged.iterrows():
             records.append({
@@ -373,10 +373,10 @@ with tab1:
         cols = ["日期", "店铺名称", "当日金额", "月累计金额", "目标金额", "达成率"]
         st.dataframe(df[cols], use_container_width=True, hide_index=True)
         
-        # ===== 修复合计卡片的月累计（基于所有店铺的最新月累计） =====
+        # ===== 合计卡片：月累计基于所有店铺的最新累计 =====
         df_all = st.session_state.df_all_daily
         if df_all is not None and not df_all.empty:
-            # 每个店铺取最后一条记录的月累计（即到最新日期的累计）
+            # 每个店铺取最后一条记录的月累计
             latest_cum = df_all.groupby("店铺名称")["月累计金额"].last().reset_index()
             douyin_shops = latest_cum[latest_cum["店铺名称"].str.contains("抖音", case=False, na=False)]
             video_shops = latest_cum[latest_cum["店铺名称"].str.contains("视频号", case=False, na=False)]
@@ -388,7 +388,7 @@ with tab1:
             video_cum = 0
             total_cum = 0
         
-        # 当日金额合计（仍基于 daily_latest）
+        # 当日金额合计（基于 daily_latest）
         df_sales = st.session_state.daily_latest.copy()
         douyin_df = df_sales[df_sales["店铺名称"].str.contains("抖音", case=False, na=False)]
         video_df = df_sales[df_sales["店铺名称"].str.contains("视频号", case=False, na=False)]
