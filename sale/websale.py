@@ -262,14 +262,30 @@ def process_uploaded_file(uploaded_file):
         # 保存商品明细（直接插入）
         save_product_sales(df)
 
-        # 店铺业绩汇总
-        daily = df.groupby(["日期", "店铺名称"])["金额/时间"].sum().reset_index()
-        daily = daily.sort_values(["店铺名称", "日期"])
-        daily["月累计金额"] = daily.groupby("店铺名称")["金额/时间"].cumsum().round(2)
-        daily["当日金额"] = daily["金额/时间"].round(2)
-
+        # ---- 店铺业绩汇总（修复累计计算） ----
+        # 1. 从数据库加载已有的店铺每日业绩
+        existing = load_daily_sales()  # 返回 DataFrame，列: sale_date, shop_name, amount, cumulative_amount
+        if existing.empty:
+            existing = pd.DataFrame(columns=["sale_date", "shop_name", "amount", "cumulative_amount"])
+        else:
+            existing = existing.rename(columns={"sale_date": "日期", "shop_name": "店铺名称", "amount": "当日金额", "cumulative_amount": "月累计金额"})
+        
+        # 2. 汇总本次上传文件的每日业绩（按日期+店铺求和）
+        new_daily = df.groupby(["日期", "店铺名称"])["金额/时间"].sum().reset_index()
+        new_daily.columns = ["日期", "店铺名称", "当日金额"]
+        
+        # 3. 合并已有数据和本次新数据
+        merged = pd.concat([existing, new_daily], ignore_index=True)
+        # 对相同日期+店铺的当日金额求和（因为已有数据中可能已有该日期的记录，新数据可能是追加）
+        merged = merged.groupby(["日期", "店铺名称"])["当日金额"].sum().reset_index()
+        
+        # 4. 按店铺和日期排序，重新计算月累计金额
+        merged = merged.sort_values(["店铺名称", "日期"])
+        merged["月累计金额"] = merged.groupby("店铺名称")["当日金额"].cumsum().round(2)
+        
+        # 5. 准备写入数据库的记录
         records = []
-        for _, row in daily.iterrows():
+        for _, row in merged.iterrows():
             records.append({
                 "sale_date": row["日期"].strftime("%Y-%m-%d"),
                 "shop_name": row["店铺名称"],
@@ -278,9 +294,10 @@ def process_uploaded_file(uploaded_file):
             })
         save_daily_sales(records)
 
+        # 6. 重新加载全局数据以更新 session_state
         rebuild_daily_data()
         st.session_state.target_dict = load_targets()
-        return True, f"处理完成！最新日期：{daily['日期'].max().strftime('%Y-%m-%d')}"
+        return True, f"处理完成！最新日期：{merged['日期'].max().strftime('%Y-%m-%d')}"
     except Exception as e:
         return False, str(e)
 
