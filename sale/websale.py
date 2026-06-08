@@ -2,7 +2,7 @@
 """
 订单业绩统计工具 - 带密码保护 + 数据持久化（Supabase）
 访问密码：94949468
-包含最新日明细下方的平台合计（抖音/视频号/总计）
+包含最新日明细下方的平台合计（抖音/视频号/总计）及月完成率
 """
 
 import streamlit as st
@@ -321,33 +321,55 @@ with tab1:
         df_display = df_display[["日期", "店铺名称", "当日金额", "月累计金额", "目标金额", "达成率"]]
         st.subheader(f"最新日：{st.session_state.latest_date.strftime('%Y-%m-%d')}")
         st.dataframe(df_display, use_container_width=True, hide_index=True)
-        
-        # 计算合计（抖音、视频号、总计）
+
+        # 计算合计（抖音、视频号、总计）及达成率
         df_sales = st.session_state.daily_latest.copy()
         douyin_df = df_sales[df_sales["店铺名称"].str.contains("抖音", case=False, na=False)]
         video_df = df_sales[df_sales["店铺名称"].str.contains("视频号", case=False, na=False)]
+
+        # 获取目标字典
+        target_dict = st.session_state.target_dict
+
+        # 抖音合计目标金额（所有抖音店铺目标之和）
+        douyin_target = sum(target_dict.get(shop, 0) for shop in douyin_df["店铺名称"])
+        # 视频号合计目标金额
+        video_target = sum(target_dict.get(shop, 0) for shop in video_df["店铺名称"])
+        # 总计目标金额
+        total_target = sum(target_dict.values())
+
+        # 抖音合计月累计金额
+        douyin_cum = douyin_df["月累计金额"].sum()
+        video_cum = video_df["月累计金额"].sum()
+        total_cum = df_sales["月累计金额"].sum()
+
+        # 达成率计算
+        douyin_rate = f"{(douyin_cum / douyin_target * 100):.2f}%" if douyin_target > 0 else "未设目标"
+        video_rate = f"{(video_cum / video_target * 100):.2f}%" if video_target > 0 else "未设目标"
+        total_rate = f"{(total_cum / total_target * 100):.2f}%" if total_target > 0 else "未设目标"
+
         col1, col2, col3 = st.columns(3)
         with col1:
             st.metric(
                 label="📱 抖音合计",
                 value=f"当日: {douyin_df['当日金额'].sum():,.2f}",
-                delta=f"月累: {douyin_df['月累计金额'].sum():,.2f}" if not douyin_df.empty else None
+                delta=f"月累: {douyin_cum:,.2f}"
             )
+            st.caption(f"📈 月完成率: {douyin_rate}")
         with col2:
             st.metric(
                 label="📺 视频号合计",
                 value=f"当日: {video_df['当日金额'].sum():,.2f}",
-                delta=f"月累: {video_df['月累计金额'].sum():,.2f}" if not video_df.empty else None
+                delta=f"月累: {video_cum:,.2f}"
             )
+            st.caption(f"📈 月完成率: {video_rate}")
         with col3:
-            total_amount = df_sales["当日金额"].sum()
-            total_cumulative = df_sales["月累计金额"].sum()
             st.metric(
                 label="📊 总业绩合计",
-                value=f"当日: {total_amount:,.2f}",
-                delta=f"月累: {total_cumulative:,.2f}"
+                value=f"当日: {df_sales['当日金额'].sum():,.2f}",
+                delta=f"月累: {total_cum:,.2f}"
             )
-        
+            st.caption(f"📈 月完成率: {total_rate}")
+
         # 导出按钮
         excel_data = to_excel_download(df_display, "最新日明细.xlsx")
         st.download_button("💾 导出为 Excel", data=excel_data, file_name="最新日明细.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
