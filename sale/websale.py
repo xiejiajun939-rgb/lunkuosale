@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-订单业绩统计工具 - 完整版（店铺业绩 + 商品分析 + 图片/分类 + 分类净收入饼图）
+订单业绩统计工具 - 完整版（商品分析饼图，直接插入无冲突）
 访问密码：94949468
-需安装 plotly：pip install plotly
 """
 
 import streamlit as st
@@ -10,7 +9,8 @@ import pandas as pd
 from datetime import date
 import io
 from supabase import create_client
-import plotly.express as px
+import matplotlib.pyplot as plt
+import re
 
 # ========== 页面配置 ==========
 st.set_page_config(page_title="业绩统计工具", layout="wide", page_icon="📊")
@@ -180,6 +180,7 @@ def load_product_master():
         return pd.DataFrame()
 
 def save_product_sales(df_orders):
+    """直接插入订单明细，不处理冲突（假设每条记录唯一）"""
     if supabase is None:
         return
     master_df = load_product_master()
@@ -219,7 +220,8 @@ def save_product_sales(df_orders):
             "master_category": cat
         })
     if records:
-        supabase.table("product_sales").upsert(records, on_conflict="sale_date,product_code,shop_name").execute()
+        # 直接插入，假设无重复
+        supabase.table("product_sales").insert(records).execute()
 
 @st.cache_data(ttl=600)
 def load_product_sales():
@@ -256,8 +258,10 @@ def process_uploaded_file(uploaded_file):
         df["金额/时间"] = pd.to_numeric(df["金额/时间"], errors="coerce")
         df = df.dropna(subset=["金额/时间"])
 
+        # 保存商品明细（直接插入）
         save_product_sales(df)
 
+        # 店铺业绩汇总
         daily = df.groupby(["日期", "店铺名称"])["金额/时间"].sum().reset_index()
         daily = daily.sort_values(["店铺名称", "日期"])
         daily["月累计金额"] = daily.groupby("店铺名称")["金额/时间"].cumsum().round(2)
@@ -336,9 +340,10 @@ with st.sidebar:
     if st.button("🗑️ 清除目标记忆"):
         clear_targets()
 
-# ========== 主选项卡 ==========
+# ========== 创建选项卡 ==========
 tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["📅 最新日明细", "🏪 日期范围累计", "🔍 日期查询", "📦 发货退货明细", "🗄️ 历史业绩", "📊 商品分析"])
 
+# ========== 最新日明细 ==========
 with tab1:
     if st.session_state.get("daily_latest") is not None and not st.session_state.daily_latest.empty:
         df = st.session_state.daily_latest.copy()
@@ -389,6 +394,7 @@ with tab1:
     else:
         st.info("暂无店铺业绩数据，请先上传订单文件")
 
+# ========== 日期范围累计 ==========
 with tab2:
     if st.session_state.get("df_all_daily") is not None and not st.session_state.df_all_daily.empty:
         c1, c2 = st.columns(2)
@@ -416,6 +422,7 @@ with tab2:
     else:
         st.info("暂无数据")
 
+# ========== 日期查询 ==========
 with tab3:
     if st.session_state.get("df_all_daily") is not None and not st.session_state.df_all_daily.empty:
         query_date = st.date_input("查询日期", value=date.today(), key="query_date")
@@ -436,6 +443,7 @@ with tab3:
     else:
         st.info("暂无数据")
 
+# ========== 发货退货明细 ==========
 with tab4:
     st.subheader("📦 发货退货明细（按店铺）")
     prod_df = load_product_sales()
@@ -458,6 +466,7 @@ with tab4:
         else:
             st.info("无日期数据")
 
+# ========== 历史业绩 ==========
 with tab5:
     st.subheader("所有已保存的每日业绩")
     daily_df = load_daily_sales()
@@ -470,7 +479,7 @@ with tab5:
     else:
         st.info("暂无历史数据")
 
-# ========== 商品分析（增加分类净收入饼图） ==========
+# ========== 商品分析（含饼图） ==========
 with tab6:
     st.subheader("📊 商品销售分析（按品牌+产品）")
     prod_df = load_product_sales()
@@ -515,40 +524,42 @@ with tab6:
         if filtered.empty:
             st.warning("所选条件下无销售数据")
         else:
-            # ---- 按商品分类汇总 ----
+            # 按商品分类汇总（饼图）
             cat_summary = filtered.groupby("master_category").agg(
                 发货金额=("ship_amount", "sum"),
                 退货金额=("return_amount", "sum"),
                 净销售金额=("net_amount", "sum")
             ).reset_index()
-            cat_summary = cat_summary[cat_summary["master_category"].notna()]  # 过滤空分类
+            cat_summary = cat_summary[cat_summary["master_category"].notna()]
             
             if not cat_summary.empty:
                 st.subheader("📊 按商品分类统计")
-                # 三列饼图
+                plt.rcParams['font.sans-serif'] = ['SimHei', 'DejaVu Sans']
+                plt.rcParams['axes.unicode_minus'] = False
+                
                 col_pie1, col_pie2, col_pie3 = st.columns(3)
                 with col_pie1:
-                    fig_ship = px.pie(cat_summary, names="master_category", values="发货金额", 
-                                      title="发货金额分布", hole=0.3,
-                                      color_discrete_sequence=px.colors.qualitative.Set3)
-                    fig_ship.update_traces(textposition='inside', textinfo='percent+label')
-                    st.plotly_chart(fig_ship, use_container_width=True)
+                    fig1, ax1 = plt.subplots(figsize=(4, 4))
+                    ax1.pie(cat_summary["发货金额"], labels=cat_summary["master_category"], autopct='%1.1f%%', startangle=90)
+                    ax1.set_title("发货金额分布")
+                    st.pyplot(fig1)
+                    plt.close(fig1)
                 with col_pie2:
-                    fig_return = px.pie(cat_summary, names="master_category", values="退货金额", 
-                                        title="退货金额分布", hole=0.3,
-                                        color_discrete_sequence=px.colors.qualitative.Set2)
-                    fig_return.update_traces(textposition='inside', textinfo='percent+label')
-                    st.plotly_chart(fig_return, use_container_width=True)
+                    fig2, ax2 = plt.subplots(figsize=(4, 4))
+                    ax2.pie(cat_summary["退货金额"], labels=cat_summary["master_category"], autopct='%1.1f%%', startangle=90)
+                    ax2.set_title("退货金额分布")
+                    st.pyplot(fig2)
+                    plt.close(fig2)
                 with col_pie3:
-                    fig_net = px.pie(cat_summary, names="master_category", values="净销售金额", 
-                                     title="净销售金额分布", hole=0.3,
-                                     color_discrete_sequence=px.colors.qualitative.Pastel)
-                    fig_net.update_traces(textposition='inside', textinfo='percent+label')
-                    st.plotly_chart(fig_net, use_container_width=True)
+                    fig3, ax3 = plt.subplots(figsize=(4, 4))
+                    ax3.pie(cat_summary["净销售金额"], labels=cat_summary["master_category"], autopct='%1.1f%%', startangle=90)
+                    ax3.set_title("净销售金额分布")
+                    st.pyplot(fig3)
+                    plt.close(fig3)
             else:
                 st.info("当前筛选条件下无有效商品分类数据")
             
-            # ---- 原有表格（品牌+货号） ----
+            # 商品销售明细表格
             st.subheader("📋 商品销售明细（按品牌+货号）")
             grouped = filtered.groupby(["brand", "style_code", "master_category", "image_url"]).agg(
                 发货金额=("ship_amount", "sum"),
@@ -572,7 +583,6 @@ with tab6:
                 hide_index=True,
                 use_container_width=True
             )
-            # 导出
             export_df = grouped.drop(columns=["image_url"])
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
