@@ -10,6 +10,7 @@ from datetime import date
 import io
 from supabase import create_client
 import matplotlib.pyplot as plt
+import plotly.express as px   # 添加这行
 import re
 
 # ========== 页面配置 ==========
