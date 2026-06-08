@@ -2,6 +2,7 @@
 """
 订单业绩统计工具 - 带密码保护 + 数据持久化（Supabase）
 访问密码：94949468
+包含最新日明细下方的平台合计（抖音/视频号/总计）
 """
 
 import streamlit as st
@@ -17,7 +18,6 @@ st.set_page_config(page_title="业绩统计工具", layout="wide", page_icon="�
 PASSWORD = "94949468"
 
 def check_password():
-    """返回 True 表示验证通过"""
     if "authenticated" not in st.session_state:
         st.session_state.authenticated = False
 
@@ -36,11 +36,10 @@ def check_password():
                 st.error("密码错误")
     return False
 
-# 如果未验证通过，停止后续代码
 if not check_password():
     st.stop()
 
-# ========== 已通过验证，显示主界面 ==========
+# ========== 主界面 ==========
 st.title("📊 店铺业绩汇总分析")
 st.markdown("---")
 
@@ -122,7 +121,7 @@ def load_targets_from_supabase():
         return {}
     try:
         response = supabase.table("shop_targets").select("*").execute()
-    except:
+    except Exception:
         return {}
     if response.data:
         return {row["shop_name"]: row["target_amount"] for row in response.data}
@@ -322,8 +321,36 @@ with tab1:
         df_display = df_display[["日期", "店铺名称", "当日金额", "月累计金额", "目标金额", "达成率"]]
         st.subheader(f"最新日：{st.session_state.latest_date.strftime('%Y-%m-%d')}")
         st.dataframe(df_display, use_container_width=True, hide_index=True)
+        
+        # 计算合计（抖音、视频号、总计）
+        df_sales = st.session_state.daily_latest.copy()
+        douyin_df = df_sales[df_sales["店铺名称"].str.contains("抖音", case=False, na=False)]
+        video_df = df_sales[df_sales["店铺名称"].str.contains("视频号", case=False, na=False)]
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric(
+                label="📱 抖音合计",
+                value=f"当日: {douyin_df['当日金额'].sum():,.2f}",
+                delta=f"月累: {douyin_df['月累计金额'].sum():,.2f}" if not douyin_df.empty else None
+            )
+        with col2:
+            st.metric(
+                label="📺 视频号合计",
+                value=f"当日: {video_df['当日金额'].sum():,.2f}",
+                delta=f"月累: {video_df['月累计金额'].sum():,.2f}" if not video_df.empty else None
+            )
+        with col3:
+            total_amount = df_sales["当日金额"].sum()
+            total_cumulative = df_sales["月累计金额"].sum()
+            st.metric(
+                label="📊 总业绩合计",
+                value=f"当日: {total_amount:,.2f}",
+                delta=f"月累: {total_cumulative:,.2f}"
+            )
+        
+        # 导出按钮
         excel_data = to_excel_download(df_display, "最新日明细.xlsx")
-        st.download_button("💾 导出", data=excel_data, file_name="最新日明细.xlsx")
+        st.download_button("💾 导出为 Excel", data=excel_data, file_name="最新日明细.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
     else:
         st.info("暂无数据，请上传订单文件")
 
