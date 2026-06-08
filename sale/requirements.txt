@@ -4,3 +4,4 @@ openpyxl
 supabase
 st-supabase-connection
 plotly
+matplotlib
