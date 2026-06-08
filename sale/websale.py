@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """
-订单业绩统计工具 - 完整版（店铺业绩 + 商品分析 + 图片/分类 + 最新日明细合计）
+订单业绩统计工具 - 完整版（店铺业绩 + 商品分析 + 图片/分类 + 分类净收入饼图）
 访问密码：94949468
+需安装 plotly：pip install plotly
 """
 
 import streamlit as st
@@ -9,6 +10,7 @@ import pandas as pd
 from datetime import date
 import io
 from supabase import create_client
+import plotly.express as px
 
 # ========== 页面配置 ==========
 st.set_page_config(page_title="业绩统计工具", layout="wide", page_icon="📊")
@@ -340,7 +342,6 @@ tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["📅 最新日明细", "🏪 日�
 with tab1:
     if st.session_state.get("daily_latest") is not None and not st.session_state.daily_latest.empty:
         df = st.session_state.daily_latest.copy()
-        # 添加目标金额和达成率
         df["目标金额"] = df["店铺名称"].map(st.session_state.target_dict).fillna(0).round(2)
         def calc_rate(row):
             actual = row["月累计金额"]
@@ -352,23 +353,20 @@ with tab1:
         cols = ["日期", "店铺名称", "当日金额", "月累计金额", "目标金额", "达成率"]
         st.dataframe(df[cols], use_container_width=True, hide_index=True)
         
-        # ===== 3个合计卡片（抖音、视频号、总计）及月完成率 =====
+        # 合计卡片
         df_sales = st.session_state.daily_latest.copy()
         douyin_df = df_sales[df_sales["店铺名称"].str.contains("抖音", case=False, na=False)]
         video_df = df_sales[df_sales["店铺名称"].str.contains("视频号", case=False, na=False)]
         target_dict = st.session_state.target_dict
         
-        # 抖音合计
         douyin_target = sum(target_dict.get(shop, 0) for shop in douyin_df["店铺名称"])
         douyin_cum = douyin_df["月累计金额"].sum()
         douyin_rate = f"{(douyin_cum / douyin_target * 100):.2f}%" if douyin_target > 0 else "未设目标"
         
-        # 视频号合计
         video_target = sum(target_dict.get(shop, 0) for shop in video_df["店铺名称"])
         video_cum = video_df["月累计金额"].sum()
         video_rate = f"{(video_cum / video_target * 100):.2f}%" if video_target > 0 else "未设目标"
         
-        # 总业绩合计
         total_target = sum(target_dict.values())
         total_cum = df_sales["月累计金额"].sum()
         total_rate = f"{(total_cum / total_target * 100):.2f}%" if total_target > 0 else "未设目标"
@@ -384,7 +382,6 @@ with tab1:
             st.metric(label="📊 总业绩合计", value=f"当日: {df_sales['当日金额'].sum():,.2f}", delta=f"月累: {total_cum:,.2f}")
             st.caption(f"📈 月完成率: {total_rate}")
         
-        # 导出按钮
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             df[cols].to_excel(writer, index=False)
@@ -473,6 +470,7 @@ with tab5:
     else:
         st.info("暂无历史数据")
 
+# ========== 商品分析（增加分类净收入饼图） ==========
 with tab6:
     st.subheader("📊 商品销售分析（按品牌+产品）")
     prod_df = load_product_sales()
@@ -517,6 +515,24 @@ with tab6:
         if filtered.empty:
             st.warning("所选条件下无销售数据")
         else:
+            # ---- 按商品分类汇总净收入 ----
+            cat_summary = filtered.groupby("master_category")["net_amount"].sum().reset_index()
+            cat_summary = cat_summary[cat_summary["master_category"].notna()]  # 过滤空分类
+            if not cat_summary.empty:
+                st.subheader("📊 各商品分类净收入占比")
+                # 使用 Plotly 绘制饼图
+                fig = px.pie(cat_summary, names="master_category", values="net_amount", 
+                             title="净收入按商品分类分布",
+                             hole=0.3,  # 环形图效果，可改为0成为标准饼图
+                             color_discrete_sequence=px.colors.qualitative.Pastel)
+                fig.update_traces(textposition='inside', textinfo='percent+label')
+                fig.update_layout(showlegend=True, height=500)
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.info("当前筛选条件下无有效商品分类数据")
+            
+            # ---- 原有表格（品牌+货号） ----
+            st.subheader("📋 商品销售明细（按品牌+货号）")
             grouped = filtered.groupby(["brand", "style_code", "master_category", "image_url"]).agg(
                 发货金额=("ship_amount", "sum"),
                 退货金额=("return_amount", "sum"),
@@ -539,6 +555,7 @@ with tab6:
                 hide_index=True,
                 use_container_width=True
             )
+            # 导出
             export_df = grouped.drop(columns=["image_url"])
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
