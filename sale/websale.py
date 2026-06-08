@@ -2,10 +2,10 @@
 """
 订单业绩统计工具 - 完整版（店铺业绩+商品分析）
 访问密码：94949468
-需要 Supabase 中创建以下表：
+需提前在 Supabase 中创建以下表：
 1. daily_sales（店铺每日业绩）
 2. shop_targets（店铺目标金额）
-3. product_sales（商品销售明细，包含发货/退货/净额）
+3. product_sales（商品销售明细，需包含唯一约束）
 建表 SQL 见本文件末尾注释。
 """
 
@@ -90,20 +90,20 @@ def load_from_supabase():
         return pd.DataFrame()
 
 def save_to_supabase(df_all):
+    """保存或更新店铺业绩（批量化）"""
     if supabase is None:
         return
+    records = []
     for _, row in df_all.iterrows():
-        data = {
+        records.append({
             "sale_date": row["日期"].strftime("%Y-%m-%d"),
             "shop_name": row["店铺名称"],
             "amount": float(row["当日金额"]),
             "cumulative_amount": float(row["月累计金额"])
-        }
-        existing = supabase.table("daily_sales").select("*").eq("sale_date", data["sale_date"]).eq("shop_name", data["shop_name"]).execute()
-        if not existing.data:
-            supabase.table("daily_sales").insert(data).execute()
-        else:
-            supabase.table("daily_sales").update({"cumulative_amount": data["cumulative_amount"]}).eq("sale_date", data["sale_date"]).eq("shop_name", data["shop_name"]).execute()
+        })
+    if records:
+        # 使用 upsert 批量处理，依靠唯一约束 (sale_date, shop_name)
+        supabase.table("daily_sales").upsert(records, on_conflict="sale_date,shop_name").execute()
 
 def rebuild_from_history(history_df):
     if history_df.empty:
@@ -132,11 +132,9 @@ def load_targets_from_supabase():
 def save_targets_to_supabase(target_dict):
     if supabase is None:
         return
-    for shop_name, amount in target_dict.items():
-        supabase.table("shop_targets").upsert({
-            "shop_name": shop_name,
-            "target_amount": amount
-        }, on_conflict="shop_name").execute()
+    records = [{"shop_name": shop, "target_amount": amt} for shop, amt in target_dict.items()]
+    if records:
+        supabase.table("shop_targets").upsert(records, on_conflict="shop_name").execute()
 
 def clear_targets_in_supabase():
     if supabase is None:
@@ -144,6 +142,7 @@ def clear_targets_in_supabase():
     supabase.table("shop_targets").delete().neq("id", 0).execute()
 
 def process_order_file(uploaded_file):
+    """处理上传的 Excel 文件：写入商品明细 + 店铺业绩"""
     try:
         df = pd.read_excel(uploaded_file, header=1)
         required = ["日期", "金额/时间", "备注"]
@@ -152,11 +151,11 @@ def process_order_file(uploaded_file):
                 raise ValueError(f"表格缺少列: {col}")
 
         df["日期"] = pd.to_datetime(df["日期"])
-        # 提取店铺名称（从备注最后一部分"商店:xxx"）
+        # 提取店铺名称
         df["店铺名称"] = df["备注"].astype(str).str.split("_").str[-1]
         df["店铺名称"] = df["店铺名称"].str.replace(r'^商店[：:]', '', regex=True).str.strip()
         df["店铺名称"] = df["店铺名称"].str.strip()
-
+        # 过滤无效店铺名称
         df = df[df["店铺名称"].notna() & (df["店铺名称"] != "")].copy()
         if df.empty:
             raise ValueError("未提取到有效的店铺名称")
@@ -164,15 +163,14 @@ def process_order_file(uploaded_file):
         df["金额/时间"] = pd.to_numeric(df["金额/时间"], errors="coerce")
         df = df.dropna(subset=["金额/时间"])
 
-        # ---- 商品明细入库（新增）----
+        # ---- 1. 商品明细入库（批量 upsert）----
         save_product_sales_to_supabase(df)
 
-        # ---- 店铺业绩汇总 ----
+        # ---- 2. 店铺业绩汇总 ----
         daily = df.groupby(["日期", "店铺名称"])["金额/时间"].sum().reset_index()
         daily = daily.sort_values(["店铺名称", "日期"])
         daily["月累计金额"] = daily.groupby("店铺名称")["金额/时间"].cumsum().round(2)
         daily["当日金额"] = daily["金额/时间"].round(2)
-
         df_all_new = daily[["日期", "店铺名称", "当日金额", "月累计金额"]].copy()
         latest_date = daily["日期"].max()
 
@@ -194,10 +192,10 @@ def process_order_file(uploaded_file):
         latest_ship_refund['日期'] = latest_ship_refund['日期'].fillna(latest_date)
         df_ship = latest_ship_refund[["日期", "店铺名称", "当日发货", "月累计发货", "当日退货", "月累计退货"]]
 
-        # 保存店铺业绩到 Supabase
+        # 保存店铺业绩到 Supabase（批量 upsert）
         save_to_supabase(df_all_new)
 
-        # 重新加载全部历史
+        # 重新加载全部历史并更新 session_state
         history_df = load_from_supabase()
         df_all, daily_latest, monthly_actual, latest_date_updated = rebuild_from_history(history_df)
 
@@ -256,7 +254,7 @@ def download_target_template():
     template = pd.DataFrame({"店铺名称": ["示例店铺A", "示例店铺B"], "目标金额": [100000, 200000]})
     return to_excel_download(template, "目标模板.xlsx")
 
-# ========== 商品分析相关函数 ==========
+# ========== 商品分析相关函数（含批量 upsert） ==========
 SEASON_MAP = {"1": "春", "2": "夏", "3": "秋", "4": "冬"}
 SIZE_MAP = {"001": "S", "002": "M", "003": "L", "004": "XL", "008": "均码"}
 
@@ -269,14 +267,14 @@ def parse_product_code(remark):
         product_code = parts[1]
         if len(product_code) < 14:
             return None
-        brand = product_code[0]              # 品牌
-        year_season = product_code[1:4]      # 例如 "262" -> 26年 2季
-        year = year_season[:2]               # 年份（如 26）
-        season_code = year_season[2]         # 季节代码
-        category = product_code[4]           # 品类
-        style = product_code[5:8]            # 款式序号
-        color_code = product_code[8:11]      # 颜色代码
-        size_code = product_code[11:14]      # 尺码代码
+        brand = product_code[0]
+        year_season = product_code[1:4]
+        year = year_season[:2]
+        season_code = year_season[2]
+        category = product_code[4]
+        style = product_code[5:8]
+        color_code = product_code[8:11]
+        size_code = product_code[11:14]
         season_name = SEASON_MAP.get(season_code, season_code)
         size_name = SIZE_MAP.get(size_code, size_code)
         return {
@@ -293,18 +291,16 @@ def parse_product_code(remark):
         return None
 
 def save_product_sales_to_supabase(df_orders):
-    """将原始订单逐行保存到 product_sales 表，区分发货/退货"""
+    """批量 upsert 商品销售明细到 product_sales 表"""
     if supabase is None:
         return
-    inserted = 0
+    records = []
     for _, row in df_orders.iterrows():
         parsed = parse_product_code(row["备注"])
         if parsed is None:
             continue
         amount = float(row["金额/时间"])
-        ship_amount = max(amount, 0)
-        return_amount = max(-amount, 0)  # 退货金额取绝对值
-        data = {
+        records.append({
             "sale_date": row["日期"].strftime("%Y-%m-%d"),
             "shop_name": row["店铺名称"],
             "product_code": parsed["product_code"],
@@ -315,16 +311,13 @@ def save_product_sales_to_supabase(df_orders):
             "style": parsed["style"],
             "color_code": parsed["color_code"],
             "size_code": parsed["size"],
-            "ship_amount": ship_amount,
-            "return_amount": return_amount,
+            "ship_amount": max(amount, 0),
+            "return_amount": max(-amount, 0),
             "net_amount": amount
-        }
-        # 避免重复（同一天同一产品同一店铺，一般不会重复，但以防万一）
-        existing = supabase.table("product_sales").select("*").eq("sale_date", data["sale_date"]).eq("product_code", data["product_code"]).eq("shop_name", data["shop_name"]).execute()
-        if not existing.data:
-            supabase.table("product_sales").insert(data).execute()
-            inserted += 1
-    # 静默保存，不打印信息
+        })
+    if records:
+        # 使用 upsert，依靠唯一约束 (sale_date, product_code, shop_name)
+        supabase.table("product_sales").upsert(records, on_conflict="sale_date,product_code,shop_name").execute()
 
 @st.cache_data(ttl=3600)
 def load_product_sales():
@@ -517,7 +510,7 @@ with tab6:
     st.subheader("📊 商品销售分析（按品牌+产品）")
     product_df = load_product_sales()
     if product_df.empty:
-        st.warning("暂无商品数据。请确保上传的订单文件备注中包含商品编码（如 ..._G262Y030022002_...），且 Supabase 中 product_sales 表已创建。")
+        st.warning("暂无商品数据。请确保上传的订单文件备注中包含商品编码（如 ...G262Y030022002...），且 Supabase 中 product_sales 表已创建。")
         with st.expander("查看帮助"):
             st.markdown("""
             - 备注格式示例：`16060711769280_G252Y005407003_交易号:..._商店:抖音...`
@@ -587,7 +580,7 @@ CREATE TABLE IF NOT EXISTS shop_targets (
     updated_at TIMESTAMPTZ DEFAULT now()
 );
 
--- 商品销售明细表（发货/退货/净额）
+-- 商品销售明细表（需添加唯一约束）
 CREATE TABLE IF NOT EXISTS product_sales (
     id SERIAL PRIMARY KEY,
     sale_date DATE NOT NULL,
@@ -605,4 +598,6 @@ CREATE TABLE IF NOT EXISTS product_sales (
     net_amount DECIMAL(10,2) DEFAULT 0,
     created_at TIMESTAMPTZ DEFAULT now()
 );
+-- 添加唯一约束（用于 upsert）
+ALTER TABLE product_sales ADD CONSTRAINT unique_product_sale UNIQUE (sale_date, product_code, shop_name);
 """
