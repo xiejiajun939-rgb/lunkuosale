@@ -426,47 +426,48 @@ with tab6:
     st.subheader("📊 商品销售分析（按品牌+产品）")
     prod_df = load_product_sales()
     
-    # 调试信息（显示记录数，帮助排查）
-    st.info(f"📊 商品销售明细记录数：{len(prod_df)}")
-    
     if prod_df.empty:
         st.warning("暂无商品销售数据，请先上传订单文件（备注中需包含商品编码）。")
     else:
-        # 提取短货号
+        # 1. 确保必要列存在
+        if "brand" not in prod_df.columns:
+            prod_df["brand"] = prod_df["product_code"].str[0]  # 从完整编码第一位取品牌
+        
+        # 2. 修复空 brand：从 product_code 第一位补齐
+        prod_df["brand"] = prod_df["brand"].fillna(prod_df["product_code"].str[0])
+        
+        # 3. 生成短货号
         prod_df["short_code"] = prod_df["product_code"].str[:8]
+        prod_df = prod_df.dropna(subset=["brand", "short_code"])
         
-        # 加载商品库（可选）
-        master_df = load_product_master()
-        if not master_df.empty:
-            # 左连接商品库
-            merged = prod_df.merge(master_df, left_on="short_code", right_on="product_code", how="left")
-        else:
-            merged = prod_df.copy()
-            merged["category"] = None
-            merged["image_url"] = None
-        
-        # 日期范围（默认取最小最大日期）
+        # 4. 日期范围（确保包含所有数据）
         min_date = prod_df["sale_date"].min().date()
         max_date = prod_df["sale_date"].max().date()
+        
         col1, col2 = st.columns(2)
         with col1:
             start_date = st.date_input("开始日期", value=min_date, key="prod_start", min_value=min_date, max_value=max_date)
         with col2:
             end_date = st.date_input("结束日期", value=max_date, key="prod_end", min_value=min_date, max_value=max_date)
         
-        mask = (merged["sale_date"] >= pd.to_datetime(start_date)) & (merged["sale_date"] <= pd.to_datetime(end_date))
-        filtered = merged[mask].copy()
-        
-        # 品牌筛选
-        all_brands = ["全部"] + sorted(filtered["brand"].dropna().unique())
-        selected_brands = st.multiselect("选择品牌（可多选）", all_brands, default="全部")
-        if "全部" not in selected_brands:
-            filtered = filtered[filtered["brand"].isin(selected_brands)]
+        mask = (prod_df["sale_date"] >= pd.to_datetime(start_date)) & (prod_df["sale_date"] <= pd.to_datetime(end_date))
+        filtered = prod_df[mask].copy()
         
         if filtered.empty:
-            st.warning("所选条件下无销售数据")
+            st.warning(f"在 {start_date} 至 {end_date} 范围内无销售数据。")
         else:
-            # 聚合（按品牌、短货号、分类、图片）
+            # 5. 加载商品库（可选）
+            master_df = load_product_master()
+            if not master_df.empty:
+                master_df = master_df.rename(columns={"product_code": "master_code"})
+                filtered = filtered.merge(master_df, left_on="short_code", right_on="master_code", how="left")
+                filtered["category"] = filtered.get("category", None)
+                filtered["image_url"] = filtered.get("image_url", None)
+            else:
+                filtered["category"] = None
+                filtered["image_url"] = None
+            
+            # 6. 按品牌、短货号、分类、图片聚合
             grouped = filtered.groupby(["brand", "short_code", "category", "image_url"]).agg(
                 发货金额=("ship_amount", "sum"),
                 退货金额=("return_amount", "sum"),
@@ -475,7 +476,7 @@ with tab6:
             grouped = grouped.sort_values("净销售金额", ascending=False)
             grouped = grouped.rename(columns={"short_code": "货号"})
             
-            # 显示表格
+            # 7. 显示表格
             st.dataframe(
                 grouped,
                 column_config={
@@ -490,7 +491,81 @@ with tab6:
                 hide_index=True,
                 use_container_width=True
             )
-            # 导出
+            # 8. 导出
+            export_df = grouped.drop(columns=["image_url"]) if "image_url" in grouped.columns else grouped
+            output = io.BytesIO()
+            with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                export_df.to_excel(writer, index=False)
+            st.download_button("💾 导出分析结果", data=output.getvalue(), file_name="商品分析.xlsx")with tab6:
+    st.subheader("📊 商品销售分析（按品牌+产品）")
+    prod_df = load_product_sales()
+    
+    if prod_df.empty:
+        st.warning("暂无商品销售数据，请先上传订单文件（备注中需包含商品编码）。")
+    else:
+        # 1. 确保必要列存在
+        if "brand" not in prod_df.columns:
+            prod_df["brand"] = prod_df["product_code"].str[0]  # 从完整编码第一位取品牌
+        
+        # 2. 修复空 brand：从 product_code 第一位补齐
+        prod_df["brand"] = prod_df["brand"].fillna(prod_df["product_code"].str[0])
+        
+        # 3. 生成短货号
+        prod_df["short_code"] = prod_df["product_code"].str[:8]
+        prod_df = prod_df.dropna(subset=["brand", "short_code"])
+        
+        # 4. 日期范围（确保包含所有数据）
+        min_date = prod_df["sale_date"].min().date()
+        max_date = prod_df["sale_date"].max().date()
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            start_date = st.date_input("开始日期", value=min_date, key="prod_start", min_value=min_date, max_value=max_date)
+        with col2:
+            end_date = st.date_input("结束日期", value=max_date, key="prod_end", min_value=min_date, max_value=max_date)
+        
+        mask = (prod_df["sale_date"] >= pd.to_datetime(start_date)) & (prod_df["sale_date"] <= pd.to_datetime(end_date))
+        filtered = prod_df[mask].copy()
+        
+        if filtered.empty:
+            st.warning(f"在 {start_date} 至 {end_date} 范围内无销售数据。")
+        else:
+            # 5. 加载商品库（可选）
+            master_df = load_product_master()
+            if not master_df.empty:
+                master_df = master_df.rename(columns={"product_code": "master_code"})
+                filtered = filtered.merge(master_df, left_on="short_code", right_on="master_code", how="left")
+                filtered["category"] = filtered.get("category", None)
+                filtered["image_url"] = filtered.get("image_url", None)
+            else:
+                filtered["category"] = None
+                filtered["image_url"] = None
+            
+            # 6. 按品牌、短货号、分类、图片聚合
+            grouped = filtered.groupby(["brand", "short_code", "category", "image_url"]).agg(
+                发货金额=("ship_amount", "sum"),
+                退货金额=("return_amount", "sum"),
+                净销售金额=("net_amount", "sum")
+            ).reset_index()
+            grouped = grouped.sort_values("净销售金额", ascending=False)
+            grouped = grouped.rename(columns={"short_code": "货号"})
+            
+            # 7. 显示表格
+            st.dataframe(
+                grouped,
+                column_config={
+                    "brand": "品牌",
+                    "货号": "货号",
+                    "category": "细分品类",
+                    "发货金额": st.column_config.NumberColumn("发货金额", format="%.2f"),
+                    "退货金额": st.column_config.NumberColumn("退货金额", format="%.2f"),
+                    "净销售金额": st.column_config.NumberColumn("净销售金额", format="%.2f"),
+                    "image_url": st.column_config.ImageColumn("商品图片", help="点击放大")
+                },
+                hide_index=True,
+                use_container_width=True
+            )
+            # 8. 导出
             export_df = grouped.drop(columns=["image_url"]) if "image_url" in grouped.columns else grouped
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
