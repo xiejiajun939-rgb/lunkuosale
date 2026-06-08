@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-订单业绩统计工具 - 完整版（商品分析带图片）
+订单业绩统计工具 - 使用 style_code 关联商品库
 访问密码：94949468
-需提前在 Supabase 中创建表：daily_sales, shop_targets, product_sales, product_master（可选）
 """
 
 import streamlit as st
@@ -139,7 +138,7 @@ def parse_product_code(remark):
         parts = remark.split('_')
         if len(parts) < 2:
             return None
-        product_code = parts[1]
+        product_code = parts[1]          # 14位完整编码
         if len(product_code) < 14:
             return None
         brand = product_code[0]
@@ -150,9 +149,10 @@ def parse_product_code(remark):
         style = product_code[5:8]
         color_code = product_code[8:11]
         size_code = product_code[11:14]
+        style_code = product_code[:8]    # 8位货号
         return {
             "product_code": product_code,
-            "short_code": product_code[:8],
+            "style_code": style_code,
             "brand": brand,
             "year": year,
             "season": SEASON_MAP.get(season_code, season_code),
@@ -177,6 +177,7 @@ def save_product_sales(df_orders):
             "sale_date": row["日期"].strftime("%Y-%m-%d"),
             "shop_name": row["店铺名称"],
             "product_code": parsed["product_code"],
+            "style_code": parsed["style_code"],
             "brand": parsed["brand"],
             "year": parsed["year"],
             "season": parsed["season"],
@@ -200,6 +201,9 @@ def load_product_sales():
         if resp.data:
             df = pd.DataFrame(resp.data)
             df["sale_date"] = pd.to_datetime(df["sale_date"])
+            # 如果 style_code 为空（历史数据），从 product_code 补全
+            if "style_code" in df.columns and df["style_code"].isnull().any():
+                df["style_code"] = df["style_code"].fillna(df["product_code"].str[:8])
             return df
         else:
             return pd.DataFrame()
@@ -215,7 +219,7 @@ def load_product_master():
         resp = supabase.table("product_master").select("*").execute()
         if resp.data:
             df = pd.DataFrame(resp.data)
-            # 重命名列以匹配合并
+            # 确保列名统一
             if "product_code" in df.columns:
                 df = df.rename(columns={"product_code": "master_code"})
             return df
@@ -243,7 +247,7 @@ def process_uploaded_file(uploaded_file):
         df["金额/时间"] = pd.to_numeric(df["金额/时间"], errors="coerce")
         df = df.dropna(subset=["金额/时间"])
 
-        # 保存商品明细
+        # 保存商品明细（自动计算 style_code）
         save_product_sales(df)
 
         # 店铺业绩汇总
@@ -296,7 +300,6 @@ if st.session_state.target_dict == {}:
 # ========== 侧边栏 ==========
 with st.sidebar:
     st.header("📂 数据加载")
-    # 订单文件上传
     uploaded_order = st.file_uploader("选择订单文件 (Excel)", type=["xlsx", "xls"], key="order_uploader")
     if uploaded_order is not None and st.session_state.processed_order != uploaded_order.name:
         ok, msg = process_uploaded_file(uploaded_order)
@@ -307,7 +310,6 @@ with st.sidebar:
         else:
             st.error(msg)
 
-    # 目标文件上传
     uploaded_target = st.file_uploader("选择目标文件 (Excel)", type=["xlsx", "xls"], key="target_uploader")
     if uploaded_target is not None and st.session_state.processed_target != uploaded_target.name:
         ok, msg = load_target_file(uploaded_target)
@@ -432,7 +434,7 @@ with tab5:
     else:
         st.info("暂无历史数据")
 
-# ========== 商品分析（带图片关联） ==========
+# ========== 商品分析（使用 style_code 关联 product_master） ==========
 with tab6:
     st.subheader("📊 商品销售分析")
     prod_df = load_product_sales()
@@ -440,19 +442,20 @@ with tab6:
         st.warning("暂无商品销售数据，请先上传订单文件。")
     else:
         st.info(f"📊 商品销售明细总记录数：{len(prod_df)}")
+        # 确保 style_code 存在
+        if "style_code" not in prod_df.columns:
+            prod_df["style_code"] = prod_df["product_code"].str[:8]
         # 补全 brand
         if "brand" not in prod_df.columns or prod_df["brand"].isnull().all():
             prod_df["brand"] = prod_df["product_code"].str[0]
         else:
             prod_df["brand"] = prod_df["brand"].fillna(prod_df["product_code"].str[0])
-        # 生成短货号
-        prod_df["short_code"] = prod_df["product_code"].str[:8]
         
         # 加载商品库
         master_df = load_product_master()
         if not master_df.empty:
-            # 合并商品库，得到 category 和 image_url
-            prod_df = prod_df.merge(master_df, left_on="short_code", right_on="master_code", how="left")
+            # 使用 style_code 关联 master_code
+            prod_df = prod_df.merge(master_df, left_on="style_code", right_on="master_code", how="left")
         else:
             prod_df["category"] = None
             prod_df["image_url"] = None
@@ -479,16 +482,16 @@ with tab6:
         if filtered.empty:
             st.warning("所选条件下无销售数据")
         else:
-            # 按品牌、短货号、分类、图片聚合
-            grouped = filtered.groupby(["brand", "short_code", "category", "image_url"]).agg(
+            # 按品牌、style_code、分类、图片聚合
+            grouped = filtered.groupby(["brand", "style_code", "category", "image_url"]).agg(
                 发货金额=("ship_amount", "sum"),
                 退货金额=("return_amount", "sum"),
                 净销售金额=("net_amount", "sum")
             ).reset_index()
             grouped = grouped.sort_values("净销售金额", ascending=False)
-            grouped.rename(columns={"short_code": "货号"}, inplace=True)
+            grouped.rename(columns={"style_code": "货号"}, inplace=True)
             
-            # 显示表格（带图片列）
+            # 显示表格（含图片列）
             st.dataframe(
                 grouped,
                 column_config={
@@ -509,61 +512,3 @@ with tab6:
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
                 export_df.to_excel(writer, index=False)
             st.download_button("💾 导出分析结果", data=output.getvalue(), file_name="商品分析.xlsx")
-
-# ========== 建表 SQL（参考） ==========
-"""
--- 店铺每日业绩表
-CREATE TABLE IF NOT EXISTS daily_sales (
-    id SERIAL PRIMARY KEY,
-    sale_date DATE NOT NULL,
-    shop_name TEXT NOT NULL,
-    amount DECIMAL(10,2) NOT NULL,
-    cumulative_amount DECIMAL(10,2),
-    created_at TIMESTAMPTZ DEFAULT now(),
-    UNIQUE(sale_date, shop_name)
-);
-
--- 店铺目标表
-CREATE TABLE IF NOT EXISTS shop_targets (
-    id SERIAL PRIMARY KEY,
-    shop_name TEXT NOT NULL UNIQUE,
-    target_amount DECIMAL(10,2) NOT NULL,
-    updated_at TIMESTAMPTZ DEFAULT now()
-);
-
--- 商品销售明细表
-CREATE TABLE IF NOT EXISTS product_sales (
-    id SERIAL PRIMARY KEY,
-    sale_date DATE NOT NULL,
-    shop_name TEXT,
-    product_code TEXT,
-    brand TEXT,
-    year TEXT,
-    season TEXT,
-    category TEXT,
-    style TEXT,
-    color_code TEXT,
-    size_code TEXT,
-    ship_amount DECIMAL(10,2) DEFAULT 0,
-    return_amount DECIMAL(10,2) DEFAULT 0,
-    net_amount DECIMAL(10,2) DEFAULT 0,
-    created_at TIMESTAMPTZ DEFAULT now()
-);
-ALTER TABLE product_sales ADD CONSTRAINT unique_product_sale UNIQUE (sale_date, product_code, shop_name);
-
--- 商品库表（可选，用于存储货号对应的图片和分类）
-CREATE TABLE IF NOT EXISTS product_master (
-    id SERIAL PRIMARY KEY,
-    product_code TEXT NOT NULL UNIQUE,
-    image_url TEXT,
-    category TEXT,
-    created_at TIMESTAMPTZ DEFAULT now(),
-    updated_at TIMESTAMPTZ DEFAULT now()
-);
-
--- 为简化权限，建议禁用 RLS（适合内部工具）
-ALTER TABLE daily_sales DISABLE ROW LEVEL SECURITY;
-ALTER TABLE shop_targets DISABLE ROW LEVEL SECURITY;
-ALTER TABLE product_sales DISABLE ROW LEVEL SECURITY;
-ALTER TABLE product_master DISABLE ROW LEVEL SECURITY;
-"""
