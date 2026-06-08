@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-订单业绩统计工具 - 带 Supabase 持久化（支持历史业绩+目标金额跨设备保存）
-启动时自动从数据库加载历史业绩和已存储的目标金额
+订单业绩统计工具 - 带密码保护 + 数据持久化（Supabase）
+访问密码：94949468
 """
 
 import streamlit as st
@@ -12,8 +12,49 @@ from supabase import create_client
 
 # ========== 页面配置 ==========
 st.set_page_config(page_title="业绩统计工具", layout="wide", page_icon="📊")
+
+# ========== 密码验证 ==========
+PASSWORD = "94949468"
+
+def check_password():
+    """返回 True 表示验证通过"""
+    if "authenticated" not in st.session_state:
+        st.session_state.authenticated = False
+
+    if st.session_state.authenticated:
+        return True
+
+    st.title("🔒 请输入访问密码")
+    with st.form("password_form"):
+        pwd = st.text_input("密码", type="password")
+        submitted = st.form_submit_button("登录")
+        if submitted:
+            if pwd == PASSWORD:
+                st.session_state.authenticated = True
+                st.rerun()
+            else:
+                st.error("密码错误")
+    return False
+
+# 如果未验证通过，停止后续代码
+if not check_password():
+    st.stop()
+
+# ========== 已通过验证，显示主界面 ==========
 st.title("📊 店铺业绩汇总分析")
 st.markdown("---")
+
+# ========== Supabase 连接 ==========
+def init_supabase():
+    try:
+        url = st.secrets["SUPABASE_URL"]
+        key = st.secrets["SUPABASE_KEY"]
+        return create_client(url, key)
+    except Exception as e:
+        st.error(f"Supabase 连接失败：{e}")
+        return None
+
+supabase = init_supabase()
 
 # ========== 初始化 session_state ==========
 if "df_all_daily" not in st.session_state:
@@ -31,21 +72,8 @@ if "latest_date" not in st.session_state:
 if "data_loaded" not in st.session_state:
     st.session_state.data_loaded = False
 
-# ========== Supabase 连接 ==========
-def init_supabase():
-    try:
-        url = st.secrets["SUPABASE_URL"]
-        key = st.secrets["SUPABASE_KEY"]
-        return create_client(url, key)
-    except Exception as e:
-        st.error(f"Supabase 连接失败，请检查 secrets 配置：{e}")
-        return None
-
-supabase = init_supabase()
-
-# ========== 业绩数据相关函数 ==========
+# ========== 数据持久化函数 ==========
 def load_from_supabase():
-    """从 Supabase 加载所有历史业绩数据"""
     if supabase is None:
         return pd.DataFrame()
     try:
@@ -62,7 +90,6 @@ def load_from_supabase():
         return pd.DataFrame()
 
 def save_to_supabase(df_all):
-    """将每日业绩保存到 Supabase（避免重复）"""
     if supabase is None:
         return
     for _, row in df_all.iterrows():
@@ -79,7 +106,6 @@ def save_to_supabase(df_all):
             supabase.table("daily_sales").update({"cumulative_amount": data["cumulative_amount"]}).eq("sale_date", data["sale_date"]).eq("shop_name", data["shop_name"]).execute()
 
 def rebuild_from_history(history_df):
-    """根据历史业绩 DataFrame 重建 df_all_daily, daily_latest, monthly_actual"""
     if history_df.empty:
         return None, None, None, None
     df_all = history_df.sort_values(["店铺名称", "日期"])
@@ -91,15 +117,12 @@ def rebuild_from_history(history_df):
     monthly_actual = monthly_actual[["店铺名称", "月累计金额"]].sort_values("店铺名称")
     return df_all, daily_latest, monthly_actual, latest_date
 
-# ========== 目标数据持久化函数 ==========
 def load_targets_from_supabase():
-    """从 Supabase 加载所有已保存的目标金额"""
     if supabase is None:
         return {}
     try:
         response = supabase.table("shop_targets").select("*").execute()
-    except Exception as e:
-        st.error(f"读取目标数据失败：{e}")
+    except:
         return {}
     if response.data:
         return {row["shop_name"]: row["target_amount"] for row in response.data}
@@ -107,7 +130,6 @@ def load_targets_from_supabase():
         return {}
 
 def save_targets_to_supabase(target_dict):
-    """将目标金额保存到 Supabase（upsert）"""
     if supabase is None:
         return
     for shop_name, amount in target_dict.items():
@@ -117,12 +139,10 @@ def save_targets_to_supabase(target_dict):
         }, on_conflict="shop_name").execute()
 
 def clear_targets_in_supabase():
-    """删除所有目标金额记录"""
     if supabase is None:
         return
     supabase.table("shop_targets").delete().neq("id", 0).execute()
 
-# ========== 订单文件处理函数（保留，并追加到数据库） ==========
 def process_order_file(uploaded_file):
     try:
         df = pd.read_excel(uploaded_file, header=1)
@@ -151,7 +171,7 @@ def process_order_file(uploaded_file):
         df_all_new = daily[["日期", "店铺名称", "当日金额", "月累计金额"]].copy()
         latest_date = daily["日期"].max()
 
-        # 发货退货明细（仅用于本次上传展示）
+        # 发货退货明细
         df['发货金额'] = df['金额/时间'].clip(lower=0)
         df['退货金额'] = df['金额/时间'].clip(upper=0).abs()
         ship_refund_daily = df.groupby(["日期", "店铺名称"])[["发货金额", "退货金额"]].sum().reset_index()
@@ -169,10 +189,7 @@ def process_order_file(uploaded_file):
         latest_ship_refund['日期'] = latest_ship_refund['日期'].fillna(latest_date)
         df_ship = latest_ship_refund[["日期", "店铺名称", "当日发货", "月累计发货", "当日退货", "月累计退货"]]
 
-        # 保存业绩到数据库
         save_to_supabase(df_all_new)
-
-        # 重新从数据库加载所有历史数据并重建
         history_df = load_from_supabase()
         df_all, daily_latest, monthly_actual, latest_date_updated = rebuild_from_history(history_df)
 
@@ -183,12 +200,11 @@ def process_order_file(uploaded_file):
             "df_ship": df_ship,
             "latest_date": latest_date_updated,
             "success": True,
-            "message": f"处理完成并已保存！最新日期：{latest_date_updated.strftime('%Y-%m-%d')}"
+            "message": f"处理完成！最新日期：{latest_date_updated.strftime('%Y-%m-%d')}"
         }
     except Exception as e:
         return {"success": False, "message": f"处理失败：{str(e)}"}
 
-# ========== 目标文件处理（带持久化） ==========
 def load_target_file(uploaded_file):
     try:
         df_target = pd.read_excel(uploaded_file, header=None)
@@ -203,10 +219,7 @@ def load_target_file(uploaded_file):
         for name, val in zip(shop_names, target_vals):
             if pd.notna(val) and name not in ["", "nan", "None"]:
                 target_dict[name] = val
-
-        # 保存目标到数据库
         save_targets_to_supabase(target_dict)
-
         return {"success": True, "target_dict": target_dict, "count": len(target_dict), "message": f"成功加载并保存 {len(target_dict)} 个店铺目标"}
     except Exception as e:
         return {"success": False, "message": f"加载目标文件失败：{str(e)}"}
@@ -235,9 +248,9 @@ def download_target_template():
     template = pd.DataFrame({"店铺名称": ["示例店铺A", "示例店铺B"], "目标金额": [100000, 200000]})
     return to_excel_download(template, "目标模板.xlsx")
 
-# ========== 页面启动时自动加载历史数据和目标数据 ==========
-if not st.session_state.data_loaded:
-    with st.spinner("正在加载历史业绩数据..."):
+# ========== 启动时加载数据 ==========
+if not st.session_state.get("data_loaded", False):
+    with st.spinner("正在加载数据..."):
         history_df = load_from_supabase()
         if not history_df.empty:
             df_all, daily_latest, monthly_actual, latest_date = rebuild_from_history(history_df)
@@ -250,17 +263,17 @@ if not st.session_state.data_loaded:
             st.session_state.daily_latest = None
             st.session_state.monthly_actual = None
             st.session_state.latest_date = None
-        # 加载目标数据
         st.session_state.target_dict = load_targets_from_supabase()
+        st.session_state.df_ship_refund = None
         st.session_state.data_loaded = True
 
-# ========== 侧边栏：文件上传与工具 ==========
+# ========== 侧边栏 ==========
 with st.sidebar:
     st.header("📂 数据加载")
     order_file = st.file_uploader("选择订单文件 (Excel)", type=["xlsx", "xls"], key="order_upload")
     if order_file is not None:
-        if st.session_state.order_file_name != order_file.name:
-            with st.spinner("正在处理订单文件..."):
+        if st.session_state.get("order_file_name") != order_file.name:
+            with st.spinner("处理中..."):
                 result = process_order_file(order_file)
                 if result["success"]:
                     st.session_state.df_all_daily = result["df_all"]
@@ -277,8 +290,8 @@ with st.sidebar:
 
     target_file = st.file_uploader("选择目标文件 (Excel)", type=["xlsx", "xls"], key="target_upload")
     if target_file is not None:
-        if st.session_state.target_file_name != target_file.name:
-            with st.spinner("正在加载目标..."):
+        if st.session_state.get("target_file_name") != target_file.name:
+            with st.spinner("加载中..."):
                 result = load_target_file(target_file)
                 if result["success"]:
                     st.session_state.target_dict = result["target_dict"]
@@ -294,11 +307,10 @@ with st.sidebar:
     template_data = download_target_template()
     st.download_button("📄 下载目标模板", data=template_data, file_name="目标模板.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
     if st.button("🗑️ 清除目标记忆"):
-        # 清除数据库中的目标数据
         clear_targets_in_supabase()
         st.session_state.target_dict = {}
         st.session_state.target_file_name = None
-        st.success("目标已清除（包括数据库）")
+        st.success("目标已清除")
         st.rerun()
 
 # ========== 主选项卡 ==========
@@ -311,9 +323,9 @@ with tab1:
         st.subheader(f"最新日：{st.session_state.latest_date.strftime('%Y-%m-%d')}")
         st.dataframe(df_display, use_container_width=True, hide_index=True)
         excel_data = to_excel_download(df_display, "最新日明细.xlsx")
-        st.download_button("💾 导出为 Excel", data=excel_data, file_name="最新日明细.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        st.download_button("💾 导出", data=excel_data, file_name="最新日明细.xlsx")
     else:
-        st.info("暂无历史业绩数据，请先上传订单文件")
+        st.info("暂无数据，请上传订单文件")
 
 with tab2:
     if st.session_state.get("df_all_daily") is not None and not st.session_state.df_all_daily.empty:
@@ -322,33 +334,32 @@ with tab2:
             start_date = st.date_input("开始日期", value=date.today().replace(day=1), key="range_start")
         with col2:
             end_date = st.date_input("结束日期", value=date.today(), key="range_end")
-        if st.button("🔍 计算累计", key="calc_range"):
+        if st.button("🔍 计算累计"):
             if start_date > end_date:
                 st.error("开始日期不能晚于结束日期")
             else:
                 mask = (st.session_state.df_all_daily["日期"] >= pd.to_datetime(start_date)) & (st.session_state.df_all_daily["日期"] <= pd.to_datetime(end_date))
                 range_data = st.session_state.df_all_daily[mask].copy()
                 if range_data.empty:
-                    st.warning(f"{start_date} 至 {end_date} 没有业绩数据")
+                    st.warning(f"{start_date} 至 {end_date} 无数据")
                 else:
                     range_summary = range_data.groupby("店铺名称")["当日金额"].sum().reset_index()
                     range_summary["累计金额"] = range_summary["当日金额"].round(2)
                     range_summary = range_summary.sort_values("店铺名称")[["店铺名称", "累计金额"]]
-                    st.success(f"共 {len(range_summary)} 个店铺")
                     st.dataframe(range_summary, use_container_width=True, hide_index=True)
                     excel_data = to_excel_download(range_summary, f"累计_{start_date}_{end_date}.xlsx")
-                    st.download_button("💾 导出此结果", data=excel_data, file_name=f"累计_{start_date}_{end_date}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                    st.download_button("💾 导出", data=excel_data, file_name=f"累计_{start_date}_{end_date}.xlsx")
     else:
-        st.info("暂无历史业绩数据，请先上传订单文件")
+        st.info("暂无数据，请上传订单文件")
 
 with tab3:
     if st.session_state.get("df_all_daily") is not None and not st.session_state.df_all_daily.empty:
         query_date = st.date_input("查询日期", value=date.today(), key="query_date")
-        if st.button("🔍 查询", key="query_btn"):
+        if st.button("🔍 查询"):
             query_date_ts = pd.to_datetime(query_date)
             result = st.session_state.df_all_daily[st.session_state.df_all_daily["日期"] == query_date_ts].copy()
             if result.empty:
-                st.warning(f"{query_date} 没有业绩数据")
+                st.warning(f"{query_date} 无数据")
             else:
                 result = result.sort_values("店铺名称")
                 result["当日金额"] = result["当日金额"].round(2)
@@ -356,9 +367,9 @@ with tab3:
                 cols = ["日期", "店铺名称", "当日金额", "月累计金额"]
                 st.dataframe(result[cols], use_container_width=True, hide_index=True)
                 excel_data = to_excel_download(result[cols], f"查询_{query_date}.xlsx")
-                st.download_button("💾 导出查询结果", data=excel_data, file_name=f"查询_{query_date}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                st.download_button("💾 导出", data=excel_data, file_name=f"查询_{query_date}.xlsx")
     else:
-        st.info("暂无历史业绩数据，请先上传订单文件")
+        st.info("暂无数据，请上传订单文件")
 
 with tab4:
     if st.session_state.get("df_ship_refund") is not None and not st.session_state.df_ship_refund.empty:
@@ -367,9 +378,9 @@ with tab4:
         st.subheader(f"最新日发货退货明细 - {st.session_state.latest_date.strftime('%Y-%m-%d')}")
         st.dataframe(df_ship[cols], use_container_width=True, hide_index=True)
         excel_data = to_excel_download(df_ship[cols], "发货退货明细.xlsx")
-        st.download_button("💾 导出发货退货明细", data=excel_data, file_name="发货退货明细.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        st.download_button("💾 导出", data=excel_data, file_name="发货退货明细.xlsx")
     else:
-        st.info("发货退货明细仅在上传订单文件后显示。历史业绩中暂未包含此项，如需查看请重新上传订单文件。")
+        st.info("发货退货明细仅在上传订单文件后显示")
 
 with tab5:
     st.subheader("所有已保存的每日业绩")
@@ -377,6 +388,6 @@ with tab5:
     if not history_df.empty:
         st.dataframe(history_df, use_container_width=True, hide_index=True)
         excel_data = to_excel_download(history_df, "历史业绩.xlsx")
-        st.download_button("💾 导出全部历史数据", data=excel_data, file_name="历史业绩.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        st.download_button("💾 导出全部", data=excel_data, file_name="历史业绩.xlsx")
     else:
-        st.info("暂无历史数据，请先上传订单文件")
+        st.info("暂无历史数据")
