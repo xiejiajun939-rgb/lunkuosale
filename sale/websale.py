@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-订单业绩统计工具 - 使用 style_code 关联商品库
+订单业绩统计工具 - 商品分析双表关联（图片+分类）
 访问密码：94949468
 """
 
@@ -59,7 +59,6 @@ if "target_dict" not in st.session_state:
     st.session_state.target_dict = {}
 if "latest_date" not in st.session_state:
     st.session_state.latest_date = None
-# 用于防止重复处理上传文件
 if "processed_order" not in st.session_state:
     st.session_state.processed_order = None
 if "processed_target" not in st.session_state:
@@ -138,7 +137,7 @@ def parse_product_code(remark):
         parts = remark.split('_')
         if len(parts) < 2:
             return None
-        product_code = parts[1]          # 14位完整编码
+        product_code = parts[1]
         if len(product_code) < 14:
             return None
         brand = product_code[0]
@@ -149,7 +148,7 @@ def parse_product_code(remark):
         style = product_code[5:8]
         color_code = product_code[8:11]
         size_code = product_code[11:14]
-        style_code = product_code[:8]    # 8位货号
+        style_code = product_code[:8]
         return {
             "product_code": product_code,
             "style_code": style_code,
@@ -201,8 +200,10 @@ def load_product_sales():
         if resp.data:
             df = pd.DataFrame(resp.data)
             df["sale_date"] = pd.to_datetime(df["sale_date"])
-            # 如果 style_code 为空（历史数据），从 product_code 补全
-            if "style_code" in df.columns and df["style_code"].isnull().any():
+            # 确保 style_code 存在（历史数据可能缺失）
+            if "style_code" not in df.columns:
+                df["style_code"] = df["product_code"].str[:8]
+            else:
                 df["style_code"] = df["style_code"].fillna(df["product_code"].str[:8])
             return df
         else:
@@ -247,10 +248,8 @@ def process_uploaded_file(uploaded_file):
         df["金额/时间"] = pd.to_numeric(df["金额/时间"], errors="coerce")
         df = df.dropna(subset=["金额/时间"])
 
-        # 保存商品明细（自动计算 style_code）
         save_product_sales(df)
 
-        # 店铺业绩汇总
         daily = df.groupby(["日期", "店铺名称"])["金额/时间"].sum().reset_index()
         daily = daily.sort_values(["店铺名称", "日期"])
         daily["月累计金额"] = daily.groupby("店铺名称")["金额/时间"].cumsum().round(2)
@@ -434,7 +433,7 @@ with tab5:
     else:
         st.info("暂无历史数据")
 
-# ========== 商品分析（使用 style_code 关联 product_master） ==========
+# ========== 商品分析（双表关联，确保显示） ==========
 with tab6:
     st.subheader("📊 商品销售分析")
     prod_df = load_product_sales()
@@ -442,10 +441,8 @@ with tab6:
         st.warning("暂无商品销售数据，请先上传订单文件。")
     else:
         st.info(f"📊 商品销售明细总记录数：{len(prod_df)}")
-        # 确保 style_code 存在
-        if "style_code" not in prod_df.columns:
-            prod_df["style_code"] = prod_df["product_code"].str[:8]
-        # 补全 brand
+        
+        # 补全 brand（如果为空则从 product_code 第一位取）
         if "brand" not in prod_df.columns or prod_df["brand"].isnull().all():
             prod_df["brand"] = prod_df["product_code"].str[0]
         else:
@@ -454,13 +451,13 @@ with tab6:
         # 加载商品库
         master_df = load_product_master()
         if not master_df.empty:
-            # 使用 style_code 关联 master_code
+            # 左连接商品库（使用 style_code 关联 master_code）
             prod_df = prod_df.merge(master_df, left_on="style_code", right_on="master_code", how="left")
         else:
             prod_df["category"] = None
             prod_df["image_url"] = None
         
-        # 日期筛选
+        # 日期筛选（默认全选）
         min_date = prod_df["sale_date"].min().date()
         max_date = prod_df["sale_date"].max().date()
         col1, col2 = st.columns(2)
@@ -482,7 +479,7 @@ with tab6:
         if filtered.empty:
             st.warning("所选条件下无销售数据")
         else:
-            # 按品牌、style_code、分类、图片聚合
+            # 按品牌、货号、分类、图片聚合
             grouped = filtered.groupby(["brand", "style_code", "category", "image_url"]).agg(
                 发货金额=("ship_amount", "sum"),
                 退货金额=("return_amount", "sum"),
