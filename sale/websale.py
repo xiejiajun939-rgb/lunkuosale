@@ -1,12 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-订单业绩统计工具 - 完整版（店铺业绩 + 商品分析 + 商品图片/分类）
+订单业绩统计工具 - 稳定版（商品分析基于 product_sales，可选关联 product_master）
 访问密码：94949468
-需提前在 Supabase 中创建以下表（建表 SQL 见文件末尾）：
-- daily_sales
-- shop_targets
-- product_sales
-- product_master（可选，用于商品图片和分类）
 """
 
 import streamlit as st
@@ -206,7 +201,7 @@ def load_product_sales():
         else:
             return pd.DataFrame()
     except Exception as e:
-        st.error(f"加载商品数据失败：{e}")
+        st.error(f"加载商品销售数据失败：{e}")
         return pd.DataFrame()
 
 @st.cache_data(ttl=600)
@@ -220,7 +215,7 @@ def load_product_master():
         else:
             return pd.DataFrame()
     except Exception:
-        # 表不存在或查询失败，返回空
+        # 表不存在或查询失败，返回空DataFrame，不影响主流程
         return pd.DataFrame()
 
 # ========== 订单文件处理 ==========
@@ -427,27 +422,29 @@ with tab5:
     else:
         st.info("暂无历史数据")
 
-# ========== 商品分析（关联 product_master） ==========
+# ========== 商品分析（稳健关联 product_master） ==========
 with tab6:
     st.subheader("📊 商品销售分析（按品牌+产品）")
     prod_df = load_product_sales()
-    master_df = load_product_master()
-    
     if prod_df.empty:
         st.warning("暂无商品销售数据，请先上传订单文件（备注中需包含商品编码）。")
     else:
         # 提取短货号
         prod_df["short_code"] = prod_df["product_code"].str[:8]
         
-        # 关联商品库（左连接）
+        # 加载商品库（若失败不影响主流程）
+        master_df = load_product_master()
+        
+        # 左连接商品库
         if not master_df.empty:
+            # 确保 master_df 的 product_code 列与 short_code 对应
             merged = prod_df.merge(master_df, left_on="short_code", right_on="product_code", how="left")
         else:
             merged = prod_df.copy()
             merged["category"] = None
             merged["image_url"] = None
         
-        # 日期范围（默认包含所有数据）
+        # 日期范围（默认取数据中最小最大日期）
         min_date = prod_df["sale_date"].min().date()
         max_date = prod_df["sale_date"].max().date()
         col1, col2 = st.columns(2)
@@ -468,7 +465,8 @@ with tab6:
         if filtered.empty:
             st.warning("所选条件下无销售数据")
         else:
-            # 按品牌、短货号、分类、图片聚合（同一货号图片取第一个）
+            # 聚合：按品牌、短货号、分类、图片
+            # 注意：同一货号可能有多条图片记录，我们取第一个非空值
             grouped = filtered.groupby(["brand", "short_code", "category", "image_url"]).agg(
                 发货金额=("ship_amount", "sum"),
                 退货金额=("return_amount", "sum"),
@@ -477,7 +475,7 @@ with tab6:
             grouped = grouped.sort_values("净销售金额", ascending=False)
             grouped = grouped.rename(columns={"short_code": "货号"})
             
-            # 显示表格（包含图片列）
+            # 若 image_url 列全部为空，Streamlit 仍可正常显示空白
             st.dataframe(
                 grouped,
                 column_config={
@@ -492,7 +490,7 @@ with tab6:
                 hide_index=True,
                 use_container_width=True
             )
-            # 导出（不含图片列）
+            # 导出时去掉图片列
             export_df = grouped.drop(columns=["image_url"])
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
