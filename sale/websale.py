@@ -372,25 +372,36 @@ with tab1:
         df["达成率"] = df.apply(calc_rate, axis=1)
         cols = ["日期", "店铺名称", "当日金额", "月累计金额", "目标金额", "达成率"]
         st.dataframe(df[cols], use_container_width=True, hide_index=True)
-
-        # 合计卡片
+        
+        # ===== 修复合计卡片的月累计（基于所有店铺的最新月累计） =====
+        df_all = st.session_state.df_all_daily
+        if df_all is not None and not df_all.empty:
+            # 每个店铺取最后一条记录的月累计（即到最新日期的累计）
+            latest_cum = df_all.groupby("店铺名称")["月累计金额"].last().reset_index()
+            douyin_shops = latest_cum[latest_cum["店铺名称"].str.contains("抖音", case=False, na=False)]
+            video_shops = latest_cum[latest_cum["店铺名称"].str.contains("视频号", case=False, na=False)]
+            douyin_cum = douyin_shops["月累计金额"].sum()
+            video_cum = video_shops["月累计金额"].sum()
+            total_cum = latest_cum["月累计金额"].sum()
+        else:
+            douyin_cum = 0
+            video_cum = 0
+            total_cum = 0
+        
+        # 当日金额合计（仍基于 daily_latest）
         df_sales = st.session_state.daily_latest.copy()
         douyin_df = df_sales[df_sales["店铺名称"].str.contains("抖音", case=False, na=False)]
         video_df = df_sales[df_sales["店铺名称"].str.contains("视频号", case=False, na=False)]
         target_dict = st.session_state.target_dict
-
+        
         douyin_target = sum(target_dict.get(shop, 0) for shop in douyin_df["店铺名称"])
-        douyin_cum = douyin_df["月累计金额"].sum()
-        douyin_rate = f"{(douyin_cum / douyin_target * 100):.2f}%" if douyin_target > 0 else "未设目标"
-
         video_target = sum(target_dict.get(shop, 0) for shop in video_df["店铺名称"])
-        video_cum = video_df["月累计金额"].sum()
-        video_rate = f"{(video_cum / video_target * 100):.2f}%" if video_target > 0 else "未设目标"
-
         total_target = sum(target_dict.values())
-        total_cum = df_sales["月累计金额"].sum()
+        
+        douyin_rate = f"{(douyin_cum / douyin_target * 100):.2f}%" if douyin_target > 0 else "未设目标"
+        video_rate = f"{(video_cum / video_target * 100):.2f}%" if video_target > 0 else "未设目标"
         total_rate = f"{(total_cum / total_target * 100):.2f}%" if total_target > 0 else "未设目标"
-
+        
         col1, col2, col3 = st.columns(3)
         with col1:
             st.metric(label="📱 抖音合计", value=f"当日: {douyin_df['当日金额'].sum():,.2f}", delta=f"月累: {douyin_cum:,.2f}")
@@ -401,7 +412,7 @@ with tab1:
         with col3:
             st.metric(label="📊 总业绩合计", value=f"当日: {df_sales['当日金额'].sum():,.2f}", delta=f"月累: {total_cum:,.2f}")
             st.caption(f"📈 月完成率: {total_rate}")
-
+        
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             df[cols].to_excel(writer, index=False)
