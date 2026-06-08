@@ -1,7 +1,12 @@
 # -*- coding: utf-8 -*-
 """
-订单业绩统计工具 - 修复商品分析显示问题
+订单业绩统计工具 - 完整版（店铺业绩 + 商品分析 + 商品图片/分类）
 访问密码：94949468
+需提前在 Supabase 中创建以下表（建表 SQL 见文件末尾）：
+- daily_sales
+- shop_targets
+- product_sales
+- product_master（可选，用于商品图片和分类）
 """
 
 import streamlit as st
@@ -202,6 +207,20 @@ def load_product_sales():
             return pd.DataFrame()
     except Exception as e:
         st.error(f"加载商品数据失败：{e}")
+        return pd.DataFrame()
+
+@st.cache_data(ttl=600)
+def load_product_master():
+    if supabase is None:
+        return pd.DataFrame()
+    try:
+        resp = supabase.table("product_master").select("*").execute()
+        if resp.data:
+            return pd.DataFrame(resp.data)
+        else:
+            return pd.DataFrame()
+    except Exception:
+        # 表不存在或查询失败，返回空
         return pd.DataFrame()
 
 # ========== 订单文件处理 ==========
@@ -408,17 +427,27 @@ with tab5:
     else:
         st.info("暂无历史数据")
 
+# ========== 商品分析（关联 product_master） ==========
 with tab6:
     st.subheader("📊 商品销售分析（按品牌+产品）")
     prod_df = load_product_sales()
+    master_df = load_product_master()
     
     if prod_df.empty:
         st.warning("暂无商品销售数据，请先上传订单文件（备注中需包含商品编码）。")
     else:
-        # 提取短货号（前8位）
+        # 提取短货号
         prod_df["short_code"] = prod_df["product_code"].str[:8]
         
-        # 日期范围选择，默认包含所有数据
+        # 关联商品库（左连接）
+        if not master_df.empty:
+            merged = prod_df.merge(master_df, left_on="short_code", right_on="product_code", how="left")
+        else:
+            merged = prod_df.copy()
+            merged["category"] = None
+            merged["image_url"] = None
+        
+        # 日期范围（默认包含所有数据）
         min_date = prod_df["sale_date"].min().date()
         max_date = prod_df["sale_date"].max().date()
         col1, col2 = st.columns(2)
@@ -427,8 +456,8 @@ with tab6:
         with col2:
             end_date = st.date_input("结束日期", value=max_date, key="prod_end", min_value=min_date, max_value=max_date)
         
-        mask = (prod_df["sale_date"] >= pd.to_datetime(start_date)) & (prod_df["sale_date"] <= pd.to_datetime(end_date))
-        filtered = prod_df[mask].copy()
+        mask = (merged["sale_date"] >= pd.to_datetime(start_date)) & (merged["sale_date"] <= pd.to_datetime(end_date))
+        filtered = merged[mask].copy()
         
         # 品牌筛选
         all_brands = ["全部"] + sorted(filtered["brand"].dropna().unique())
@@ -439,8 +468,8 @@ with tab6:
         if filtered.empty:
             st.warning("所选条件下无销售数据")
         else:
-            # 按品牌、短货号聚合（不依赖商品库）
-            grouped = filtered.groupby(["brand", "short_code"]).agg(
+            # 按品牌、短货号、分类、图片聚合（同一货号图片取第一个）
+            grouped = filtered.groupby(["brand", "short_code", "category", "image_url"]).agg(
                 发货金额=("ship_amount", "sum"),
                 退货金额=("return_amount", "sum"),
                 净销售金额=("net_amount", "sum")
@@ -448,20 +477,82 @@ with tab6:
             grouped = grouped.sort_values("净销售金额", ascending=False)
             grouped = grouped.rename(columns={"short_code": "货号"})
             
+            # 显示表格（包含图片列）
             st.dataframe(
                 grouped,
                 column_config={
                     "brand": "品牌",
                     "货号": "货号",
+                    "category": "细分品类",
                     "发货金额": st.column_config.NumberColumn("发货金额", format="%.2f"),
                     "退货金额": st.column_config.NumberColumn("退货金额", format="%.2f"),
-                    "净销售金额": st.column_config.NumberColumn("净销售金额", format="%.2f")
+                    "净销售金额": st.column_config.NumberColumn("净销售金额", format="%.2f"),
+                    "image_url": st.column_config.ImageColumn("商品图片", help="点击放大")
                 },
                 hide_index=True,
                 use_container_width=True
             )
-            # 导出
+            # 导出（不含图片列）
+            export_df = grouped.drop(columns=["image_url"])
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                grouped.to_excel(writer, index=False)
+                export_df.to_excel(writer, index=False)
             st.download_button("💾 导出分析结果", data=output.getvalue(), file_name="商品分析.xlsx")
+
+# ========== 建表 SQL（请在 Supabase SQL Editor 中执行） ==========
+"""
+-- 店铺每日业绩表
+CREATE TABLE IF NOT EXISTS daily_sales (
+    id SERIAL PRIMARY KEY,
+    sale_date DATE NOT NULL,
+    shop_name TEXT NOT NULL,
+    amount DECIMAL(10,2) NOT NULL,
+    cumulative_amount DECIMAL(10,2),
+    created_at TIMESTAMPTZ DEFAULT now(),
+    UNIQUE(sale_date, shop_name)
+);
+
+-- 店铺目标表
+CREATE TABLE IF NOT EXISTS shop_targets (
+    id SERIAL PRIMARY KEY,
+    shop_name TEXT NOT NULL UNIQUE,
+    target_amount DECIMAL(10,2) NOT NULL,
+    updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- 商品销售明细表
+CREATE TABLE IF NOT EXISTS product_sales (
+    id SERIAL PRIMARY KEY,
+    sale_date DATE NOT NULL,
+    shop_name TEXT,
+    product_code TEXT,
+    brand TEXT,
+    year TEXT,
+    season TEXT,
+    category TEXT,
+    style TEXT,
+    color_code TEXT,
+    size_code TEXT,
+    ship_amount DECIMAL(10,2) DEFAULT 0,
+    return_amount DECIMAL(10,2) DEFAULT 0,
+    net_amount DECIMAL(10,2) DEFAULT 0,
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+ALTER TABLE product_sales ADD CONSTRAINT unique_product_sale UNIQUE (sale_date, product_code, shop_name);
+
+-- 商品库表（可选，用于存储货号对应的图片和分类）
+CREATE TABLE IF NOT EXISTS product_master (
+    id SERIAL PRIMARY KEY,
+    product_code TEXT NOT NULL UNIQUE,
+    image_url TEXT,
+    category TEXT,
+    created_at TIMESTAMPTZ DEFAULT now(),
+    updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- 为简化权限，建议禁用 RLS（适合内部工具）
+ALTER TABLE daily_sales DISABLE ROW LEVEL SECURITY;
+ALTER TABLE shop_targets DISABLE ROW LEVEL SECURITY;
+ALTER TABLE product_sales DISABLE ROW LEVEL SECURITY;
+ALTER TABLE product_master DISABLE ROW LEVEL SECURITY;
+"""
