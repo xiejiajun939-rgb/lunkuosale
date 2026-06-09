@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-订单业绩统计工具 - 最终稳定版（修复累计，商品分析可用）
+订单业绩统计工具 - 最终版（使用 remark 唯一键，商品分析修复）
 访问密码：94949468
 """
 
@@ -193,7 +193,8 @@ def save_product_sales(df_orders):
             }
     records = []
     for _, row in df_orders.iterrows():
-        parsed = parse_product_code(row["备注"])
+        remark = row["备注"]
+        parsed = parse_product_code(remark)
         if parsed is None:
             continue
         amount = float(row["金额/时间"])
@@ -201,6 +202,7 @@ def save_product_sales(df_orders):
         img = master_map.get(short_code, {}).get("image_url")
         cat = master_map.get(short_code, {}).get("master_category")
         records.append({
+            "remark": remark,
             "sale_date": row["日期"].strftime("%Y-%m-%d"),
             "shop_name": row["店铺名称"],
             "product_code": parsed["product_code"],
@@ -208,7 +210,7 @@ def save_product_sales(df_orders):
             "brand": parsed["brand"],
             "year": parsed["year"],
             "season": parsed["season"],
-            "category": parsed["category"],
+            "product_category": parsed["category"],
             "style": parsed["style"],
             "color_code": parsed["color_code"],
             "size_code": parsed["size"],
@@ -219,8 +221,7 @@ def save_product_sales(df_orders):
             "master_category": cat
         })
     if records:
-        # 直接插入，不处理冲突（假设交易号唯一）
-        supabase.table("product_sales").insert(records).execute()
+        supabase.table("product_sales").upsert(records, on_conflict="remark").execute()
 
 @st.cache_data(ttl=600)
 def load_product_sales():
@@ -257,10 +258,9 @@ def process_uploaded_file(uploaded_file):
         df["金额/时间"] = pd.to_numeric(df["金额/时间"], errors="coerce")
         df = df.dropna(subset=["金额/时间"])
 
-        # 保存商品明细
         save_product_sales(df)
 
-        # 店铺业绩汇总（基于所有历史数据重新计算累计）
+        # 店铺业绩汇总
         existing = load_daily_sales()
         if existing.empty:
             existing_df = pd.DataFrame(columns=["日期", "店铺名称", "当日金额"])
@@ -367,7 +367,7 @@ with tab1:
         cols = ["日期", "店铺名称", "当日金额", "月累计金额", "目标金额", "达成率"]
         st.dataframe(df[cols], use_container_width=True, hide_index=True)
         
-        # 合计卡片：月累计基于所有店铺的最新月累计
+        # 合计卡片
         df_all = st.session_state.df_all_daily
         if df_all is not None and not df_all.empty:
             latest_cum = df_all.groupby("店铺名称")["月累计金额"].last().reset_index()
