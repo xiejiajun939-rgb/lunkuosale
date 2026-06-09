@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-订单业绩统计工具 - 完整版（修复月累计，商品分析饼图）
+订单业绩统计工具 - 最终稳定版（修复累计，商品分析可用）
 访问密码：94949468
 """
 
@@ -86,7 +86,6 @@ def save_daily_sales(records):
     supabase.table("daily_sales").upsert(records, on_conflict="sale_date,shop_name").execute()
 
 def rebuild_daily_data():
-    """从 daily_sales 表重建店铺业绩视图（最新日明细等）"""
     df = load_daily_sales()
     if df.empty:
         st.session_state.df_all_daily = None
@@ -181,7 +180,6 @@ def load_product_master():
         return pd.DataFrame()
 
 def save_product_sales(df_orders):
-    """直接插入订单明细，不处理冲突（假设每条记录唯一）"""
     if supabase is None:
         return
     master_df = load_product_master()
@@ -221,7 +219,7 @@ def save_product_sales(df_orders):
             "master_category": cat
         })
     if records:
-        # 直接插入，假设无重复
+        # 直接插入，不处理冲突（假设交易号唯一）
         supabase.table("product_sales").insert(records).execute()
 
 @st.cache_data(ttl=600)
@@ -240,7 +238,7 @@ def load_product_sales():
         st.error(f"加载商品销售数据失败：{e}")
         return pd.DataFrame()
 
-# ========== 订单文件处理（修复月累计） ==========
+# ========== 订单文件处理 ==========
 def process_uploaded_file(uploaded_file):
     try:
         df = pd.read_excel(uploaded_file, header=1)
@@ -262,25 +260,22 @@ def process_uploaded_file(uploaded_file):
         # 保存商品明细
         save_product_sales(df)
 
-        # ---- 修复月累计：基于所有历史数据重新计算 ----
-        # 1. 加载已有的店铺每日业绩（只取需要的列）
+        # 店铺业绩汇总（基于所有历史数据重新计算累计）
         existing = load_daily_sales()
         if existing.empty:
-            existing = pd.DataFrame(columns=["sale_date", "shop_name", "amount"])
+            existing_df = pd.DataFrame(columns=["日期", "店铺名称", "当日金额"])
         else:
-            existing = existing[["sale_date", "shop_name", "amount"]].rename(columns={"amount": "当日金额"})
+            existing_df = existing[["sale_date", "shop_name", "amount"]].copy()
+            existing_df.columns = ["日期", "店铺名称", "当日金额"]
         
-        # 2. 汇总本次上传的每日业绩
         new_daily = df.groupby(["日期", "店铺名称"])["金额/时间"].sum().reset_index()
         new_daily.columns = ["日期", "店铺名称", "当日金额"]
         
-        # 3. 合并并累加
-        merged = pd.concat([existing, new_daily], ignore_index=True)
+        merged = pd.concat([existing_df, new_daily], ignore_index=True)
         merged = merged.groupby(["日期", "店铺名称"])["当日金额"].sum().reset_index()
         merged = merged.sort_values(["店铺名称", "日期"])
         merged["月累计金额"] = merged.groupby("店铺名称")["当日金额"].cumsum().round(2)
         
-        # 4. 写入数据库（upsert 会覆盖已有记录，确保累计正确）
         records = []
         for _, row in merged.iterrows():
             records.append({
@@ -291,7 +286,6 @@ def process_uploaded_file(uploaded_file):
             })
         save_daily_sales(records)
 
-        # 5. 重新加载全局数据
         rebuild_daily_data()
         st.session_state.target_dict = load_targets()
         return True, f"处理完成！最新日期：{merged['日期'].max().strftime('%Y-%m-%d')}"
@@ -373,10 +367,9 @@ with tab1:
         cols = ["日期", "店铺名称", "当日金额", "月累计金额", "目标金额", "达成率"]
         st.dataframe(df[cols], use_container_width=True, hide_index=True)
         
-        # ===== 合计卡片：月累计基于所有店铺的最新累计 =====
+        # 合计卡片：月累计基于所有店铺的最新月累计
         df_all = st.session_state.df_all_daily
         if df_all is not None and not df_all.empty:
-            # 每个店铺取最后一条记录的月累计
             latest_cum = df_all.groupby("店铺名称")["月累计金额"].last().reset_index()
             douyin_shops = latest_cum[latest_cum["店铺名称"].str.contains("抖音", case=False, na=False)]
             video_shops = latest_cum[latest_cum["店铺名称"].str.contains("视频号", case=False, na=False)]
@@ -388,7 +381,6 @@ with tab1:
             video_cum = 0
             total_cum = 0
         
-        # 当日金额合计（基于 daily_latest）
         df_sales = st.session_state.daily_latest.copy()
         douyin_df = df_sales[df_sales["店铺名称"].str.contains("抖音", case=False, na=False)]
         video_df = df_sales[df_sales["店铺名称"].str.contains("视频号", case=False, na=False)]
@@ -505,7 +497,7 @@ with tab5:
     else:
         st.info("暂无历史数据")
 
-# ========== 商品分析（含饼图） ==========
+# ========== 商品分析 ==========
 with tab6:
     st.subheader("📊 商品销售分析（按品牌+产品）")
     prod_df = load_product_sales()
@@ -550,7 +542,7 @@ with tab6:
         if filtered.empty:
             st.warning("所选条件下无销售数据")
         else:
-            # ---- 按商品分类汇总（饼图） ----
+            # 按商品分类汇总（饼图）
             cat_summary = filtered.groupby("master_category").agg(
                 发货金额=("ship_amount", "sum"),
                 退货金额=("return_amount", "sum"),
@@ -582,7 +574,7 @@ with tab6:
             else:
                 st.info("当前筛选条件下无有效商品分类数据")
             
-            # ---- 商品销售明细表格 ----
+            # 商品销售明细表格
             st.subheader("📋 商品销售明细（按品牌+货号）")
             grouped = filtered.groupby(["brand", "style_code", "master_category", "image_url"]).agg(
                 发货金额=("ship_amount", "sum"),
