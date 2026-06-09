@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-订单业绩统计工具 - 最终完整版（强化商品分析）
+订单业绩统计工具 - 最终修复版（商品分析货号汇总显示）
 访问密码：94949468
 """
 
@@ -232,7 +232,6 @@ def load_product_sales():
         if resp.data:
             df = pd.DataFrame(resp.data)
             df["sale_date"] = pd.to_datetime(df["sale_date"])
-            # 确保字符串列类型正确
             return df
         else:
             return pd.DataFrame()
@@ -259,10 +258,8 @@ def process_uploaded_file(uploaded_file):
         df["金额/时间"] = pd.to_numeric(df["金额/时间"], errors="coerce")
         df = df.dropna(subset=["金额/时间"])
 
-        # 保存商品明细
         save_product_sales(df)
 
-        # 店铺业绩汇总
         existing = load_daily_sales()
         if existing.empty:
             existing_df = pd.DataFrame(columns=["日期", "店铺名称", "当日金额"])
@@ -504,107 +501,93 @@ with tab5:
     else:
         st.info("暂无历史数据")
 
-# ========== 商品分析（强化版：多维度筛选，按 style_code 汇总） ==========
+# ========== 商品分析（最终修复版） ==========
 with tab6:
     st.subheader("📊 商品销售分析（按货号汇总）")
-    
     prod_df = load_product_sales()
     
-    # 调试信息（部署后可注释）
-    st.write(f"DEBUG: product_sales 总记录数 = {len(prod_df)}")
-    if not prod_df.empty:
-        st.write(f"DEBUG: 列名 = {list(prod_df.columns)}")
-        st.write("DEBUG: 前5行数据预览:")
-        st.dataframe(prod_df.head(5))
-    else:
+    if prod_df.empty:
         st.warning("暂无商品销售数据，请先上传订单文件。")
-        st.info("如果数据库已有数据但此处显示为空，请检查 Supabase RLS 设置或表名大小写。")
-        st.stop()  # 无数据时停止后续执行
-    
-    # 确保必要字段存在，若不存在则尝试生成或填充空值
-    if "style_code" not in prod_df.columns or prod_df["style_code"].isnull().all():
-        st.warning("style_code 字段缺失或全为空，正在从 product_code 前8位生成...")
-        prod_df["style_code"] = prod_df["product_code"].str[:8]
+        st.info("如果数据库已有数据但此处为空，请检查 Supabase RLS 设置或表名大小写。")
     else:
-        prod_df["style_code"] = prod_df["style_code"].fillna(prod_df["product_code"].str[:8])
-    
-    if "brand" not in prod_df.columns or prod_df["brand"].isnull().all():
-        prod_df["brand"] = prod_df["product_code"].str[0]
-    else:
-        prod_df["brand"] = prod_df["brand"].fillna(prod_df["product_code"].str[0])
-    
-    if "year" not in prod_df.columns:
-        prod_df["year"] = None
-    if "season" not in prod_df.columns:
-        prod_df["season"] = None
-    if "size_code" not in prod_df.columns:
-        prod_df["size_code"] = None
-    if "master_category" not in prod_df.columns:
-        prod_df["master_category"] = None
-    if "image_url" not in prod_df.columns:
-        prod_df["image_url"] = None
-    
-    # 数值列转换
-    for col in ["ship_amount", "return_amount", "net_amount"]:
-        if col in prod_df.columns:
-            prod_df[col] = pd.to_numeric(prod_df[col], errors="coerce").fillna(0)
-    
-    # 日期筛选
-    min_date = prod_df["sale_date"].min().date()
-    max_date = prod_df["sale_date"].max().date()
-    col1, col2 = st.columns(2)
-    with col1:
-        start_date = st.date_input("开始日期", min_date, key="prod_start", min_value=min_date, max_value=max_date)
-    with col2:
-        end_date = st.date_input("结束日期", max_date, key="prod_end", min_value=min_date, max_value=max_date)
-    mask = (prod_df["sale_date"] >= pd.to_datetime(start_date)) & (prod_df["sale_date"] <= pd.to_datetime(end_date))
-    filtered = prod_df[mask].copy()
-    st.write(f"DEBUG: 日期筛选后记录数 = {len(filtered)}")
-    
-    # 多维度筛选器
-    st.subheader("🔍 筛选条件")
-    col_f1, col_f2, col_f3, col_f4 = st.columns(4)
-    with col_f1:
-        brands = ["全部"] + sorted(filtered["brand"].dropna().unique())
-        selected_brand = st.selectbox("品牌", brands, key="brand_filter")
-    with col_f2:
-        years = ["全部"] + sorted(filtered["year"].dropna().unique())
-        selected_year = st.selectbox("年份", years, key="year_filter")
-    with col_f3:
-        seasons = ["全部"] + sorted(filtered["season"].dropna().unique())
-        selected_season = st.selectbox("季节", seasons, key="season_filter")
-    with col_f4:
-        sizes = ["全部"] + sorted(filtered["size_code"].dropna().unique())
-        selected_size = st.selectbox("尺码", sizes, key="size_filter")
-    
-    if selected_brand != "全部":
-        filtered = filtered[filtered["brand"] == selected_brand]
-    if selected_year != "全部":
-        filtered = filtered[filtered["year"] == selected_year]
-    if selected_season != "全部":
-        filtered = filtered[filtered["season"] == selected_season]
-    if selected_size != "全部":
-        filtered = filtered[filtered["size_code"] == selected_size]
-    
-    st.write(f"DEBUG: 所有筛选后记录数 = {len(filtered)}")
-    
-    if filtered.empty:
-        st.warning("所选条件下无销售数据")
-    else:
-        # 按货号汇总
-        grouped = filtered.groupby(["style_code", "master_category", "image_url"]).agg(
-            发货金额=("ship_amount", "sum"),
-            退货金额=("return_amount", "sum"),
-            净销售金额=("net_amount", "sum")
-        ).reset_index()
-        grouped = grouped.sort_values("净销售金额", ascending=False)
-        grouped.rename(columns={"style_code": "货号"}, inplace=True)
-        st.write(f"DEBUG: 聚合后行数 = {len(grouped)}")
-        
-        st.subheader("📋 商品销售汇总（按货号）")
-        if grouped.empty:
-            st.warning("聚合后无数据，请检查 style_code 是否全为空或分组字段问题。")
+        # 修复：如果 style_code 为空，从 product_code 前8位生成
+        if "style_code" not in prod_df.columns or prod_df["style_code"].isnull().all():
+            prod_df["style_code"] = prod_df["product_code"].str[:8]
+            st.info("检测到 style_code 缺失，已从 product_code 前8位自动生成。")
         else:
+            prod_df["style_code"] = prod_df["style_code"].fillna(prod_df["product_code"].str[:8])
+        
+        # 确保必要列存在
+        if "brand" not in prod_df.columns or prod_df["brand"].isnull().all():
+            prod_df["brand"] = prod_df["product_code"].str[0]
+        else:
+            prod_df["brand"] = prod_df["brand"].fillna(prod_df["product_code"].str[0])
+        if "year" not in prod_df.columns:
+            prod_df["year"] = None
+        if "season" not in prod_df.columns:
+            prod_df["season"] = None
+        if "size_code" not in prod_df.columns:
+            prod_df["size_code"] = None
+        if "master_category" not in prod_df.columns:
+            prod_df["master_category"] = None
+        if "image_url" not in prod_df.columns:
+            prod_df["image_url"] = None
+        
+        # 数值列转换
+        for col in ["ship_amount", "return_amount", "net_amount"]:
+            if col in prod_df.columns:
+                prod_df[col] = pd.to_numeric(prod_df[col], errors="coerce").fillna(0)
+        
+        # 日期筛选器（默认包含所有数据）
+        min_date = prod_df["sale_date"].min().date()
+        max_date = prod_df["sale_date"].max().date()
+        col1, col2 = st.columns(2)
+        with col1:
+            start_date = st.date_input("开始日期", value=min_date, key="prod_start", min_value=min_date, max_value=max_date)
+        with col2:
+            end_date = st.date_input("结束日期", value=max_date, key="prod_end", min_value=min_date, max_value=max_date)
+        
+        mask = (prod_df["sale_date"] >= pd.to_datetime(start_date)) & (prod_df["sale_date"] <= pd.to_datetime(end_date))
+        filtered = prod_df[mask].copy()
+        
+        # 多维度筛选器
+        st.subheader("🔍 筛选条件")
+        col_f1, col_f2, col_f3, col_f4 = st.columns(4)
+        with col_f1:
+            brands = ["全部"] + sorted(filtered["brand"].dropna().unique())
+            selected_brand = st.selectbox("品牌", brands, key="brand_filter")
+        with col_f2:
+            years = ["全部"] + sorted(filtered["year"].dropna().unique())
+            selected_year = st.selectbox("年份", years, key="year_filter")
+        with col_f3:
+            seasons = ["全部"] + sorted(filtered["season"].dropna().unique())
+            selected_season = st.selectbox("季节", seasons, key="season_filter")
+        with col_f4:
+            sizes = ["全部"] + sorted(filtered["size_code"].dropna().unique())
+            selected_size = st.selectbox("尺码", sizes, key="size_filter")
+        
+        if selected_brand != "全部":
+            filtered = filtered[filtered["brand"] == selected_brand]
+        if selected_year != "全部":
+            filtered = filtered[filtered["year"] == selected_year]
+        if selected_season != "全部":
+            filtered = filtered[filtered["season"] == selected_season]
+        if selected_size != "全部":
+            filtered = filtered[filtered["size_code"] == selected_size]
+        
+        if filtered.empty:
+            st.warning("所选条件下无销售数据")
+        else:
+            # 按货号汇总
+            grouped = filtered.groupby(["style_code", "master_category", "image_url"]).agg(
+                发货金额=("ship_amount", "sum"),
+                退货金额=("return_amount", "sum"),
+                净销售金额=("net_amount", "sum")
+            ).reset_index()
+            grouped = grouped.sort_values("净销售金额", ascending=False)
+            grouped.rename(columns={"style_code": "货号"}, inplace=True)
+            
+            st.subheader("📋 商品销售汇总（按货号）")
             st.dataframe(
                 grouped,
                 column_config={
@@ -618,35 +601,35 @@ with tab6:
                 hide_index=True,
                 use_container_width=True
             )
-        
-        # 按商品分类饼图
-        cat_summary = filtered.groupby("master_category")["net_amount"].sum().reset_index()
-        cat_summary = cat_summary[cat_summary["master_category"].notna()]
-        if not cat_summary.empty:
-            st.subheader("📊 按商品分类净销售占比")
-            fig = px.pie(cat_summary, names="master_category", values="net_amount", 
-                         title="净销售金额分布", hole=0.3,
-                         color_discrete_sequence=px.colors.qualitative.Pastel)
-            fig.update_traces(textposition='inside', textinfo='percent+label')
+            
+            # 饼图
+            cat_summary = filtered.groupby("master_category")["net_amount"].sum().reset_index()
+            cat_summary = cat_summary[cat_summary["master_category"].notna()]
+            if not cat_summary.empty:
+                st.subheader("📊 按商品分类净销售占比")
+                fig = px.pie(cat_summary, names="master_category", values="net_amount", 
+                             title="净销售金额分布", hole=0.3,
+                             color_discrete_sequence=px.colors.qualitative.Pastel)
+                fig.update_traces(textposition='inside', textinfo='percent+label')
+                st.plotly_chart(fig, use_container_width=True)
+            
+            # 柱状图
+            st.subheader("📈 销售趋势（净销售金额）")
+            chart_option = st.radio("分组维度", ["品牌", "年份", "季节"], horizontal=True)
+            if chart_option == "品牌":
+                chart_data = filtered.groupby("brand")["net_amount"].sum().reset_index()
+                fig = px.bar(chart_data, x="brand", y="net_amount", title="各品牌净销售金额", color="brand")
+            elif chart_option == "年份":
+                chart_data = filtered.groupby("year")["net_amount"].sum().reset_index()
+                fig = px.bar(chart_data, x="year", y="net_amount", title="各年份净销售金额", color="year")
+            else:
+                chart_data = filtered.groupby("season")["net_amount"].sum().reset_index()
+                fig = px.bar(chart_data, x="season", y="net_amount", title="各季节净销售金额", color="season")
             st.plotly_chart(fig, use_container_width=True)
-        
-        # 柱状图
-        st.subheader("📈 销售趋势（净销售金额）")
-        chart_option = st.radio("分组维度", ["品牌", "年份", "季节"], horizontal=True)
-        if chart_option == "品牌":
-            chart_data = filtered.groupby("brand")["net_amount"].sum().reset_index()
-            fig = px.bar(chart_data, x="brand", y="net_amount", title="各品牌净销售金额", color="brand")
-        elif chart_option == "年份":
-            chart_data = filtered.groupby("year")["net_amount"].sum().reset_index()
-            fig = px.bar(chart_data, x="year", y="net_amount", title="各年份净销售金额", color="year")
-        else:
-            chart_data = filtered.groupby("season")["net_amount"].sum().reset_index()
-            fig = px.bar(chart_data, x="season", y="net_amount", title="各季节净销售金额", color="season")
-        st.plotly_chart(fig, use_container_width=True)
-        
-        # 导出
-        export_df = grouped.drop(columns=["image_url"]) if "image_url" in grouped.columns else grouped
-        output = io.BytesIO()
-        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            export_df.to_excel(writer, index=False)
-        st.download_button("💾 导出分析结果", data=output.getvalue(), file_name="商品分析.xlsx")
+            
+            # 导出
+            export_df = grouped.drop(columns=["image_url"]) if "image_url" in grouped.columns else grouped
+            output = io.BytesIO()
+            with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                export_df.to_excel(writer, index=False)
+            st.download_button("💾 导出分析结果", data=output.getvalue(), file_name="商品分析.xlsx")
