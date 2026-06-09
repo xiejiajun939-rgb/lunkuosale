@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-订单业绩统计工具 - 最终稳定版（商品分析已修复）
+订单业绩统计工具 - 最终修复版（商品分析调试，唯一约束）
 访问密码：94949468
 """
 
@@ -221,7 +221,10 @@ def save_product_sales(df_orders):
             "master_category": cat
         })
     if records:
-        supabase.table("product_sales").upsert(records, on_conflict="remark").execute()
+        try:
+            supabase.table("product_sales").upsert(records, on_conflict="remark").execute()
+        except Exception as e:
+            st.error(f"商品明细保存失败：{e}")
 
 @st.cache_data(ttl=600)
 def load_product_sales():
@@ -268,19 +271,21 @@ def process_uploaded_file(uploaded_file):
         else:
             existing_df = existing[["sale_date", "shop_name", "amount"]].copy()
             existing_df.columns = ["日期", "店铺名称", "当日金额"]
-            # 确保金额为数值类型
-            existing_df["当日金额"] = pd.to_numeric(existing_df["当日金额"], errors="coerce").fillna(0)
         
         new_daily = df.groupby(["日期", "店铺名称"])["金额/时间"].sum().reset_index()
         new_daily.columns = ["日期", "店铺名称", "当日金额"]
-        # 确保新金额也是数值
-        new_daily["当日金额"] = pd.to_numeric(new_daily["当日金额"], errors="coerce").fillna(0)
+        
+        # 确保日期列是 datetime 类型
+        if not existing_df.empty:
+            existing_df["日期"] = pd.to_datetime(existing_df["日期"])
+        new_daily["日期"] = pd.to_datetime(new_daily["日期"])
         
         merged = pd.concat([existing_df, new_daily], ignore_index=True)
         merged = merged.groupby(["日期", "店铺名称"])["当日金额"].sum().reset_index()
-        # 再次确保数值类型（避免 groupby 后类型变化）
-        merged["当日金额"] = pd.to_numeric(merged["当日金额"], errors="coerce").fillna(0)
         merged = merged.sort_values(["店铺名称", "日期"])
+        
+        # 修复 cumsum 错误：确保当日金额是数值类型
+        merged["当日金额"] = pd.to_numeric(merged["当日金额"], errors="coerce").fillna(0)
         merged["月累计金额"] = merged.groupby("店铺名称")["当日金额"].cumsum().round(2)
         
         records = []
@@ -504,10 +509,16 @@ with tab5:
     else:
         st.info("暂无历史数据")
 
-# ========== 商品分析 ==========
+# ========== 商品分析（带调试） ==========
 with tab6:
     st.subheader("📊 商品销售分析（按品牌+产品）")
     prod_df = load_product_sales()
+    
+    # 调试信息
+    st.write(f"DEBUG: product_sales 记录数 = {len(prod_df)}")
+    if not prod_df.empty:
+        st.write("DEBUG: 前5行数据:")
+        st.dataframe(prod_df.head(5))
     
     if prod_df.empty:
         st.warning("暂无商品销售数据，请先上传订单文件。")
@@ -539,12 +550,14 @@ with tab6:
         
         mask = (prod_df["sale_date"] >= pd.to_datetime(start_date)) & (prod_df["sale_date"] <= pd.to_datetime(end_date))
         filtered = prod_df[mask].copy()
+        st.write(f"DEBUG: 日期筛选后记录数 = {len(filtered)}")
         
         # 品牌筛选
         brands = ["全部"] + sorted(filtered["brand"].dropna().unique())
         selected_brand = st.selectbox("选择品牌", brands)
         if selected_brand != "全部":
             filtered = filtered[filtered["brand"] == selected_brand]
+            st.write(f"DEBUG: 品牌筛选后记录数 = {len(filtered)}")
         
         if filtered.empty:
             st.warning("所选条件下无销售数据")
@@ -556,6 +569,7 @@ with tab6:
                 净销售金额=("net_amount", "sum")
             ).reset_index()
             cat_summary = cat_summary[cat_summary["master_category"].notna()]
+            st.write(f"DEBUG: 分类汇总行数 = {len(cat_summary)}")
             
             if not cat_summary.empty:
                 st.subheader("📊 按商品分类统计")
@@ -590,6 +604,7 @@ with tab6:
             ).reset_index()
             grouped = grouped.sort_values("净销售金额", ascending=False)
             grouped.rename(columns={"style_code": "货号"}, inplace=True)
+            st.write(f"DEBUG: 聚合后行数 = {len(grouped)}")
             
             st.dataframe(
                 grouped,
