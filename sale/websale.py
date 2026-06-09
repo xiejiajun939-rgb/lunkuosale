@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-订单业绩统计工具 - 最终修复版（商品分析货号汇总显示）
+订单业绩统计工具 - 最终版（商品分析实时关联 product_master）
 访问密码：94949468
 """
 
@@ -171,6 +171,7 @@ def load_product_master():
         resp = supabase.table("product_master").select("*").execute()
         if resp.data:
             df = pd.DataFrame(resp.data)
+            # 确保列名统一
             if "product_code" in df.columns:
                 df = df.rename(columns={"product_code": "master_code"})
             return df
@@ -232,6 +233,11 @@ def load_product_sales():
         if resp.data:
             df = pd.DataFrame(resp.data)
             df["sale_date"] = pd.to_datetime(df["sale_date"])
+            # 确保 style_code 存在
+            if "style_code" not in df.columns or df["style_code"].isnull().all():
+                df["style_code"] = df["product_code"].str[:8]
+            else:
+                df["style_code"] = df["style_code"].fillna(df["product_code"].str[:8])
             return df
         else:
             return pd.DataFrame()
@@ -371,7 +377,7 @@ with tab1:
         cols = ["日期", "店铺名称", "当日金额", "月累计金额", "目标金额", "达成率"]
         st.dataframe(df[cols], use_container_width=True, hide_index=True)
         
-        # 合计卡片
+        # 合计卡片（月累计基于所有店铺最新累计）
         df_all = st.session_state.df_all_daily
         if df_all is not None and not df_all.empty:
             latest_cum = df_all.groupby("店铺名称")["月累计金额"].last().reset_index()
@@ -501,23 +507,33 @@ with tab5:
     else:
         st.info("暂无历史数据")
 
-# ========== 商品分析（最终修复版） ==========
+# ========== 商品分析（实时关联 product_master） ==========
 with tab6:
     st.subheader("📊 商品销售分析（按货号汇总）")
-    prod_df = load_product_sales()
     
+    # 加载数据
+    prod_df = load_product_sales()
     if prod_df.empty:
         st.warning("暂无商品销售数据，请先上传订单文件。")
-        st.info("如果数据库已有数据但此处为空，请检查 Supabase RLS 设置或表名大小写。")
     else:
-        # 修复：如果 style_code 为空，从 product_code 前8位生成
-        if "style_code" not in prod_df.columns or prod_df["style_code"].isnull().all():
-            prod_df["style_code"] = prod_df["product_code"].str[:8]
-            st.info("检测到 style_code 缺失，已从 product_code 前8位自动生成。")
+        # 加载商品库
+        master_df = load_product_master()
+        if master_df.empty:
+            st.warning("商品库（product_master）为空，将无法显示图片和分类。")
         else:
-            prod_df["style_code"] = prod_df["style_code"].fillna(prod_df["product_code"].str[:8])
+            # 重命名以备合并
+            master_df = master_df.rename(columns={"master_code": "style_code"})
         
-        # 确保必要列存在
+        # 确保 style_code 存在（已在 load_product_sales 中处理）
+        # 合并商品库获取图片和分类（左连接）
+        if not master_df.empty:
+            prod_df = prod_df.merge(master_df[["style_code", "image_url", "category"]], on="style_code", how="left")
+            prod_df.rename(columns={"category": "master_category"}, inplace=True)
+        else:
+            prod_df["master_category"] = None
+            prod_df["image_url"] = None
+        
+        # 确保必要列
         if "brand" not in prod_df.columns or prod_df["brand"].isnull().all():
             prod_df["brand"] = prod_df["product_code"].str[0]
         else:
@@ -528,17 +544,13 @@ with tab6:
             prod_df["season"] = None
         if "size_code" not in prod_df.columns:
             prod_df["size_code"] = None
-        if "master_category" not in prod_df.columns:
-            prod_df["master_category"] = None
-        if "image_url" not in prod_df.columns:
-            prod_df["image_url"] = None
         
-        # 数值列转换
+        # 数值转换
         for col in ["ship_amount", "return_amount", "net_amount"]:
             if col in prod_df.columns:
                 prod_df[col] = pd.to_numeric(prod_df[col], errors="coerce").fillna(0)
         
-        # 日期筛选器（默认包含所有数据）
+        # 日期筛选
         min_date = prod_df["sale_date"].min().date()
         max_date = prod_df["sale_date"].max().date()
         col1, col2 = st.columns(2)
@@ -546,11 +558,10 @@ with tab6:
             start_date = st.date_input("开始日期", value=min_date, key="prod_start", min_value=min_date, max_value=max_date)
         with col2:
             end_date = st.date_input("结束日期", value=max_date, key="prod_end", min_value=min_date, max_value=max_date)
-        
         mask = (prod_df["sale_date"] >= pd.to_datetime(start_date)) & (prod_df["sale_date"] <= pd.to_datetime(end_date))
         filtered = prod_df[mask].copy()
         
-        # 多维度筛选器
+        # 筛选器
         st.subheader("🔍 筛选条件")
         col_f1, col_f2, col_f3, col_f4 = st.columns(4)
         with col_f1:
@@ -578,7 +589,7 @@ with tab6:
         if filtered.empty:
             st.warning("所选条件下无销售数据")
         else:
-            # 按货号汇总
+            # 按货号聚合
             grouped = filtered.groupby(["style_code", "master_category", "image_url"]).agg(
                 发货金额=("ship_amount", "sum"),
                 退货金额=("return_amount", "sum"),
