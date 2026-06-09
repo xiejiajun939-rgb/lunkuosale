@@ -258,21 +258,28 @@ def process_uploaded_file(uploaded_file):
         df["金额/时间"] = pd.to_numeric(df["金额/时间"], errors="coerce")
         df = df.dropna(subset=["金额/时间"])
 
+        # 保存商品明细
         save_product_sales(df)
 
-        # 店铺业绩汇总（基于所有历史数据重新计算累计）
+        # 店铺业绩汇总
         existing = load_daily_sales()
         if existing.empty:
             existing_df = pd.DataFrame(columns=["日期", "店铺名称", "当日金额"])
         else:
             existing_df = existing[["sale_date", "shop_name", "amount"]].copy()
             existing_df.columns = ["日期", "店铺名称", "当日金额"]
+            # 确保金额为数值类型
+            existing_df["当日金额"] = pd.to_numeric(existing_df["当日金额"], errors="coerce").fillna(0)
         
         new_daily = df.groupby(["日期", "店铺名称"])["金额/时间"].sum().reset_index()
         new_daily.columns = ["日期", "店铺名称", "当日金额"]
+        # 确保新金额也是数值
+        new_daily["当日金额"] = pd.to_numeric(new_daily["当日金额"], errors="coerce").fillna(0)
         
         merged = pd.concat([existing_df, new_daily], ignore_index=True)
         merged = merged.groupby(["日期", "店铺名称"])["当日金额"].sum().reset_index()
+        # 再次确保数值类型（避免 groupby 后类型变化）
+        merged["当日金额"] = pd.to_numeric(merged["当日金额"], errors="coerce").fillna(0)
         merged = merged.sort_values(["店铺名称", "日期"])
         merged["月累计金额"] = merged.groupby("店铺名称")["当日金额"].cumsum().round(2)
         
