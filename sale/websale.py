@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-订单业绩统计工具 - 最终版（使用 remark 唯一键，商品分析修复）
+订单业绩统计工具 - 最终稳定版（商品分析已修复）
 访问密码：94949468
 """
 
@@ -260,7 +260,7 @@ def process_uploaded_file(uploaded_file):
 
         save_product_sales(df)
 
-        # 店铺业绩汇总
+        # 店铺业绩汇总（基于所有历史数据重新计算累计）
         existing = load_daily_sales()
         if existing.empty:
             existing_df = pd.DataFrame(columns=["日期", "店铺名称", "当日金额"])
@@ -506,7 +506,7 @@ with tab6:
         st.warning("暂无商品销售数据，请先上传订单文件。")
     else:
         # 确保必要列
-        if "brand" not in prod_df.columns or prod_df["brand"].isnull().all():
+        if "brand" not in prod_df.columns:
             prod_df["brand"] = prod_df["product_code"].str[0]
         else:
             prod_df["brand"] = prod_df["brand"].fillna(prod_df["product_code"].str[0])
