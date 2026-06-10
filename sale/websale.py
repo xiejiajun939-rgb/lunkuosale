@@ -402,6 +402,7 @@ with st.sidebar:
                     if ok:
                         st.success(msg)
                         st.session_state.uploaded_order_hash = file_id
+                        st.cache_data.clear()
                         st.rerun()
                     else:
                         st.error(msg)
@@ -423,6 +424,7 @@ with st.sidebar:
                     if ok:
                         st.success(msg)
                         st.session_state.uploaded_order_hash = file_id
+                        st.cache_data.clear()
                         st.rerun()
                     else:
                         st.error(msg)
@@ -444,6 +446,9 @@ with st.sidebar:
         st.download_button("📄 下载目标模板", data=template_bytes.getvalue(), file_name="目标模板.xlsx")
         if st.button("🗑️ 清除当前用户的目标记忆"):
             clear_targets(st.session_state.table_suffix)
+        if st.button("🔄 强制刷新所有数据"):
+            st.cache_data.clear()
+            st.rerun()
     else:
         st.info("普通用户仅可查看数据，无法上传。")
     
@@ -668,11 +673,10 @@ with tab5:
         st.info("暂无历史数据")
 
 # ========== 商品分析 ==========
-# ========== 商品分析 ==========
 with tab6:
     st.subheader("📊 商品销售分析（按货号汇总）")
     
-    # 新增：刷新按钮
+    # 刷新按钮
     col_btn, _ = st.columns([1, 5])
     with col_btn:
         if st.button("🔄 刷新数据", key="refresh_analysis", help="清除缓存并重新从数据库加载最新数据"):
@@ -788,8 +792,14 @@ with tab6:
                         grouped["master_category"] = None
                     grouped["image_url"] = None
                 
+                # 计算退款率（退货金额 / 发货金额）
+                grouped["退款率"] = grouped.apply(
+                    lambda row: f"{(row['退货金额'] / row['发货金额'] * 100):.2f}%" 
+                    if row['发货金额'] != 0 else "-", axis=1
+                )
+                
                 # 显示表格
-                col_order = ["货号", "image_url", "master_category", "发货金额", "退货金额", "净销售金额"]
+                col_order = ["货号", "image_url", "master_category", "发货金额", "退货金额", "净销售金额", "退款率"]
                 grouped = grouped[col_order]
                 st.dataframe(
                     grouped,
@@ -799,7 +809,8 @@ with tab6:
                         "master_category": "商品分类",
                         "发货金额": st.column_config.NumberColumn("发货金额", format="%.2f"),
                         "退货金额": st.column_config.NumberColumn("退货金额", format="%.2f"),
-                        "净销售金额": st.column_config.NumberColumn("净销售金额", format="%.2f")
+                        "净销售金额": st.column_config.NumberColumn("净销售金额", format="%.2f"),
+                        "退款率": st.column_config.TextColumn("退款率")
                     },
                     hide_index=True,
                     use_container_width=True
@@ -827,13 +838,11 @@ with tab6:
                         st.info(f"{title}：无销售金额")
                         return
                     if total < 0:
-                        # 净销售额为负时的特殊提示
                         if pie_metric == "净销售金额":
                             st.warning(f"{title}：净销售总额为负（{total:.2f}），无法绘制饼图。请选择「发货金额」或「退货金额」查看分布。")
                         else:
                             st.info(f"{title}：总额为负，无法绘制饼图")
                         return
-                    # 过滤掉零值行，避免无意义扇区
                     chart_data = data[data[value_col] != 0].copy()
                     if chart_data.empty:
                         st.info(f"{title}：无有效数据")
@@ -848,8 +857,8 @@ with tab6:
                     if grouped["master_category"].isnull().all():
                         total_val = grouped[grouped_metric_col].sum()
                         if total_val > 0:
-                            pie_data = pd.DataFrame({name_col: ["未分类"], value_col: [total_val]})
-                            safe_pie_chart(pie_data, name_col, value_col, f"按分类 - {pie_metric}", px.colors.qualitative.Pastel)
+                            pie_data = pd.DataFrame({"master_category": ["未分类"], grouped_metric_col: [total_val]})
+                            safe_pie_chart(pie_data, "master_category", grouped_metric_col, f"按分类 - {pie_metric}", px.colors.qualitative.Pastel)
                         elif total_val < 0 and pie_metric == "净销售金额":
                             st.warning(f"按分类 - {pie_metric}：净销售总额为负，无法绘制饼图。请切换指标。")
                         else:
@@ -911,12 +920,13 @@ with tab6:
                         st.plotly_chart(fig, use_container_width=True)
                 
                 # 导出按钮
-                export_cols = ["货号", "master_category", "发货金额", "退货金额", "净销售金额"]
+                export_cols = ["货号", "master_category", "发货金额", "退货金额", "净销售金额", "退款率"]
                 export_df = grouped[export_cols].copy()
                 output = io.BytesIO()
                 with pd.ExcelWriter(output, engine='openpyxl') as writer:
                     export_df.to_excel(writer, index=False)
                 st.download_button("💾 导出分析结果", data=output.getvalue(), file_name="商品分析.xlsx")
+
 # ========== 调试选项卡 ==========
 with tab_debug:
     st.subheader("🔧 数据库调试信息")
