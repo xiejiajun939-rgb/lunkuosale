@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-订单业绩统计工具 - 完整版（支持直播/非直播数据独立上传，管理员双通道）
-管理员账号：admin / 1234567890 （可上传非直播和直播数据）
-非直播账号：XDZ01 / 94949468 （仅查看非直播数据）
-直播账号：ZBZ01 / 123456 （仅查看直播数据）
+订单业绩统计工具 - 完整版（管理员可切换数据源，双通道上传，含退出登录）
+管理员账号：admin / 1234567890
+非直播账号：XDZ01 / 94949468
+直播账号：ZBZ01 / 123456
 """
 
 import streamlit as st
@@ -19,9 +19,9 @@ st.set_page_config(page_title="业绩统计工具", layout="wide", page_icon="�
 
 # ========== 用户认证 ==========
 USERS = {
-    "admin": {"password": "1234567890", "role": "admin", "table_suffix": ""},
-    "XDZ01": {"password": "94949468", "role": "user", "table_suffix": ""},
-    "ZBZ01": {"password": "123456", "role": "user", "table_suffix": "_live"}
+    "admin": {"password": "1234567890", "role": "admin", "default_suffix": ""},
+    "XDZ01": {"password": "94949468", "role": "user", "default_suffix": ""},
+    "ZBZ01": {"password": "123456", "role": "user", "default_suffix": "_live"}
 }
 
 def login():
@@ -35,7 +35,7 @@ def login():
                 st.session_state.authenticated = True
                 st.session_state.username = username
                 st.session_state.role = USERS[username]["role"]
-                st.session_state.table_suffix = USERS[username]["table_suffix"]
+                st.session_state.table_suffix = USERS[username]["default_suffix"]
                 st.rerun()
             else:
                 st.error("用户名或密码错误")
@@ -79,7 +79,7 @@ if "latest_date" not in st.session_state:
 if "uploaded_order_hash" not in st.session_state:
     st.session_state.uploaded_order_hash = None
 
-# ========== 店铺业绩数据函数（支持动态后缀） ==========
+# ========== 店铺业绩数据函数 ==========
 def load_daily_sales(suffix=None):
     if supabase is None:
         return pd.DataFrame()
@@ -148,7 +148,7 @@ def clear_targets(suffix=None):
     st.session_state.target_dict = {}
     st.rerun()
 
-# ========== 商品相关函数（支持动态后缀） ==========
+# ========== 商品相关函数 ==========
 SEASON_MAP = {"1": "春", "2": "夏", "3": "秋", "4": "冬"}
 SIZE_MAP = {"001": "S", "002": "M", "003": "L", "004": "XL", "008": "均码"}
 
@@ -286,7 +286,7 @@ def load_product_sales(suffix=None):
         st.error(f"加载商品销售数据失败：{e}")
         return pd.DataFrame()
 
-# ========== 订单文件处理（支持动态后缀） ==========
+# ========== 订单文件处理 ==========
 def process_uploaded_file(uploaded_file, suffix):
     try:
         df = pd.read_excel(uploaded_file, header=1)
@@ -365,18 +365,31 @@ def load_target_file(uploaded_file, suffix):
     except Exception as e:
         return False, str(e)
 
-# ========== 页面初始化加载当前用户的数据 ==========
+# ========== 页面初始化加载数据 ==========
 rebuild_daily_data(st.session_state.table_suffix)
 if st.session_state.target_dict == {}:
     st.session_state.target_dict = load_targets(st.session_state.table_suffix)
 
-# ========== 侧边栏（管理员双通道） ==========
+# ========== 侧边栏 ==========
 with st.sidebar:
     st.header("📂 数据加载")
     
     if st.session_state.role == "admin":
-        # 非直播数据上传区
-        st.subheader("📁 非直播数据")
+        st.subheader("🔄 数据源切换")
+        current_suffix = st.session_state.table_suffix
+        data_source = st.radio(
+            "选择要查看的数据",
+            options=["非直播数据", "直播数据"],
+            index=0 if current_suffix == "" else 1,
+            key="data_source_switch"
+        )
+        new_suffix = "" if data_source == "非直播数据" else "_live"
+        if new_suffix != current_suffix:
+            st.session_state.table_suffix = new_suffix
+            st.rerun()
+        
+        st.markdown("---")
+        st.subheader("📁 非直播数据上传")
         uploaded_order_normal = st.file_uploader("选择订单文件 (Excel)", type=["xlsx", "xls"], key="order_uploader_normal")
         if uploaded_order_normal is not None:
             file_id = f"{uploaded_order_normal.name}_{uploaded_order_normal.size}"
@@ -398,7 +411,7 @@ with st.sidebar:
                 st.error(msg)
 
         st.markdown("---")
-        st.subheader("🎥 直播数据")
+        st.subheader("🎥 直播数据上传")
         uploaded_order_live = st.file_uploader("选择订单文件 (Excel)", type=["xlsx", "xls"], key="order_uploader_live")
         if uploaded_order_live is not None:
             file_id = f"{uploaded_order_live.name}_{uploaded_order_live.size}"
@@ -430,6 +443,14 @@ with st.sidebar:
             clear_targets(st.session_state.table_suffix)
     else:
         st.info("普通用户仅可查看数据，无法上传。")
+    
+    st.markdown("---")
+    if st.button("🚪 退出登录"):
+        st.session_state.authenticated = False
+        for key in ["username", "role", "table_suffix"]:
+            if key in st.session_state:
+                del st.session_state[key]
+        st.rerun()
 
 # ========== 创建选项卡 ==========
 tab1, tab2, tab3, tab4, tab5, tab6, tab_debug, tab_export = st.tabs([
