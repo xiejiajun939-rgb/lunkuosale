@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-订单业绩统计工具 - 带用户管理系统（管理员/普通用户）
-管理员账号：admin / 1234567890
-普通账号：XDZ01 / 94949468
+订单业绩统计工具 - 完整版（支持直播/非直播数据独立上传，管理员双通道）
+管理员账号：admin / 1234567890 （可上传非直播和直播数据）
+非直播账号：XDZ01 / 94949468 （仅查看非直播数据）
+直播账号：ZBZ01 / 123456 （仅查看直播数据）
 """
 
 import streamlit as st
@@ -17,14 +18,13 @@ import re
 st.set_page_config(page_title="业绩统计工具", layout="wide", page_icon="📊")
 
 # ========== 用户认证 ==========
-# 预定义账号（密码硬编码，生产环境建议使用哈希）
 USERS = {
-    "admin": {"password": "1234567890", "role": "admin"},
-    "XDZ01": {"password": "94949468", "role": "user"}
+    "admin": {"password": "1234567890", "role": "admin", "table_suffix": ""},
+    "XDZ01": {"password": "94949468", "role": "user", "table_suffix": ""},
+    "ZBZ01": {"password": "123456", "role": "user", "table_suffix": "_live"}
 }
 
 def login():
-    """显示登录表单，验证成功后设置 session_state"""
     st.title("🔐 业绩统计工具 - 登录")
     with st.form("login_form"):
         username = st.text_input("用户名")
@@ -35,11 +35,11 @@ def login():
                 st.session_state.authenticated = True
                 st.session_state.username = username
                 st.session_state.role = USERS[username]["role"]
+                st.session_state.table_suffix = USERS[username]["table_suffix"]
                 st.rerun()
             else:
                 st.error("用户名或密码错误")
 
-# 未登录时显示登录界面
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
 
@@ -47,9 +47,8 @@ if not st.session_state.authenticated:
     login()
     st.stop()
 
-# 已登录，显示主界面
 st.title("📊 店铺业绩汇总分析")
-st.markdown(f"欢迎，**{st.session_state.username}** ({'管理员' if st.session_state.role == 'admin' else '小店成员'})")
+st.markdown(f"欢迎，**{st.session_state.username}** ({'管理员' if st.session_state.role == 'admin' else '成员'})")
 st.markdown("---")
 
 # ========== Supabase 连接 ==========
@@ -65,6 +64,11 @@ def init_supabase():
 
 supabase = init_supabase()
 
+def get_table_name(base_name, suffix=None):
+    if suffix is None:
+        suffix = st.session_state.get("table_suffix", "")
+    return f"{base_name}{suffix}"
+
 # ========== 初始化 session_state ==========
 if "df_all_daily" not in st.session_state:
     st.session_state.df_all_daily = None
@@ -75,12 +79,13 @@ if "latest_date" not in st.session_state:
 if "uploaded_order_hash" not in st.session_state:
     st.session_state.uploaded_order_hash = None
 
-# ========== 店铺业绩数据函数 ==========
-def load_daily_sales():
+# ========== 店铺业绩数据函数（支持动态后缀） ==========
+def load_daily_sales(suffix=None):
     if supabase is None:
         return pd.DataFrame()
     try:
-        resp = supabase.table("daily_sales").select("*").execute()
+        table_name = get_table_name("daily_sales", suffix)
+        resp = supabase.table(table_name).select("*").execute()
         if resp.data:
             df = pd.DataFrame(resp.data)
             df["sale_date"] = pd.to_datetime(df["sale_date"])
@@ -91,13 +96,14 @@ def load_daily_sales():
         st.error(f"加载店铺业绩失败：{e}")
         return pd.DataFrame()
 
-def save_daily_sales(records):
+def save_daily_sales(records, suffix=None):
     if supabase is None or not records:
         return
-    supabase.table("daily_sales").upsert(records, on_conflict="sale_date,shop_name").execute()
+    table_name = get_table_name("daily_sales", suffix)
+    supabase.table(table_name).upsert(records, on_conflict="sale_date,shop_name").execute()
 
-def rebuild_daily_data():
-    df = load_daily_sales()
+def rebuild_daily_data(suffix=None):
+    df = load_daily_sales(suffix)
     if df.empty:
         st.session_state.df_all_daily = None
         st.session_state.latest_date = None
@@ -114,11 +120,12 @@ def rebuild_daily_data():
     st.session_state.monthly_actual = monthly_actual
     st.session_state.latest_date = latest_date
 
-def load_targets():
+def load_targets(suffix=None):
     if supabase is None:
         return {}
     try:
-        resp = supabase.table("shop_targets").select("*").execute()
+        table_name = get_table_name("shop_targets", suffix)
+        resp = supabase.table(table_name).select("*").execute()
         if resp.data:
             return {row["shop_name"]: row["target_amount"] for row in resp.data}
         else:
@@ -126,20 +133,22 @@ def load_targets():
     except:
         return {}
 
-def save_targets(target_dict):
+def save_targets(target_dict, suffix=None):
     if supabase is None:
         return
     records = [{"shop_name": k, "target_amount": v} for k, v in target_dict.items()]
     if records:
-        supabase.table("shop_targets").upsert(records, on_conflict="shop_name").execute()
+        table_name = get_table_name("shop_targets", suffix)
+        supabase.table(table_name).upsert(records, on_conflict="shop_name").execute()
 
-def clear_targets():
+def clear_targets(suffix=None):
     if supabase:
-        supabase.table("shop_targets").delete().neq("id", 0).execute()
+        table_name = get_table_name("shop_targets", suffix)
+        supabase.table(table_name).delete().neq("id", 0).execute()
     st.session_state.target_dict = {}
     st.rerun()
 
-# ========== 商品相关函数 ==========
+# ========== 商品相关函数（支持动态后缀） ==========
 SEASON_MAP = {"1": "春", "2": "夏", "3": "秋", "4": "冬"}
 SIZE_MAP = {"001": "S", "002": "M", "003": "L", "004": "XL", "008": "均码"}
 
@@ -198,7 +207,7 @@ def load_product_master():
         st.error(f"加载商品库失败：{e}")
         return pd.DataFrame()
 
-def save_product_sales(df_orders):
+def save_product_sales(df_orders, suffix=None):
     if supabase is None:
         return
     master_df = load_product_master()
@@ -240,18 +249,20 @@ def save_product_sales(df_orders):
             "master_category": cat
         })
     if records:
-        supabase.table("product_sales").upsert(records, on_conflict="remark").execute()
+        table_name = get_table_name("product_sales", suffix)
+        supabase.table(table_name).upsert(records, on_conflict="remark").execute()
 
 @st.cache_data(ttl=600)
-def load_product_sales():
+def load_product_sales(suffix=None):
     if supabase is None:
         return pd.DataFrame()
     try:
+        table_name = get_table_name("product_sales", suffix)
         all_data = []
         page = 0
         page_size = 1000
         while True:
-            resp = supabase.table("product_sales").select("*").range(page * page_size, (page + 1) * page_size - 1).execute()
+            resp = supabase.table(table_name).select("*").range(page * page_size, (page + 1) * page_size - 1).execute()
             if not resp.data:
                 break
             all_data.extend(resp.data)
@@ -275,8 +286,8 @@ def load_product_sales():
         st.error(f"加载商品销售数据失败：{e}")
         return pd.DataFrame()
 
-# ========== 订单文件处理（仅管理员可用） ==========
-def process_uploaded_file(uploaded_file):
+# ========== 订单文件处理（支持动态后缀） ==========
+def process_uploaded_file(uploaded_file, suffix):
     try:
         df = pd.read_excel(uploaded_file, header=1)
         required = ["日期", "金额/时间", "备注"]
@@ -294,9 +305,9 @@ def process_uploaded_file(uploaded_file):
         df["金额/时间"] = pd.to_numeric(df["金额/时间"], errors="coerce")
         df = df.dropna(subset=["金额/时间"])
 
-        save_product_sales(df)
+        save_product_sales(df, suffix)
 
-        existing = load_daily_sales()
+        existing = load_daily_sales(suffix)
         if existing.empty:
             existing_df = pd.DataFrame(columns=["日期", "店铺名称", "当日金额"])
         else:
@@ -324,15 +335,16 @@ def process_uploaded_file(uploaded_file):
                 "amount": float(row["当日金额"]),
                 "cumulative_amount": float(row["月累计金额"])
             })
-        save_daily_sales(records)
+        save_daily_sales(records, suffix)
 
-        rebuild_daily_data()
-        st.session_state.target_dict = load_targets()
+        if suffix == st.session_state.get("table_suffix", ""):
+            rebuild_daily_data(suffix)
+            st.session_state.target_dict = load_targets(suffix)
         return True, f"处理完成！最新日期：{merged['日期'].max().strftime('%Y-%m-%d')}"
     except Exception as e:
         return False, str(e)
 
-def load_target_file(uploaded_file):
+def load_target_file(uploaded_file, suffix):
     try:
         df_target = pd.read_excel(uploaded_file, header=None)
         first_cell = str(df_target.iloc[0, 0]) if len(df_target) > 0 else ""
@@ -346,27 +358,30 @@ def load_target_file(uploaded_file):
         for name, val in zip(shop_names, target_vals):
             if pd.notna(val) and name not in ["", "nan", "None"]:
                 target_dict[name] = val
-        save_targets(target_dict)
-        st.session_state.target_dict = target_dict
+        save_targets(target_dict, suffix)
+        if suffix == st.session_state.get("table_suffix", ""):
+            st.session_state.target_dict = target_dict
         return True, f"成功加载 {len(target_dict)} 个店铺目标"
     except Exception as e:
         return False, str(e)
 
-# ========== 页面初始化加载数据 ==========
-rebuild_daily_data()
+# ========== 页面初始化加载当前用户的数据 ==========
+rebuild_daily_data(st.session_state.table_suffix)
 if st.session_state.target_dict == {}:
-    st.session_state.target_dict = load_targets()
+    st.session_state.target_dict = load_targets(st.session_state.table_suffix)
 
-# ========== 侧边栏 ==========
+# ========== 侧边栏（管理员双通道） ==========
 with st.sidebar:
     st.header("📂 数据加载")
-    # 只有管理员可见上传组件
+    
     if st.session_state.role == "admin":
-        uploaded_order = st.file_uploader("选择订单文件 (Excel)", type=["xlsx", "xls"], key="order_uploader")
-        if uploaded_order is not None:
-            file_id = f"{uploaded_order.name}_{uploaded_order.size}"
+        # 非直播数据上传区
+        st.subheader("📁 非直播数据")
+        uploaded_order_normal = st.file_uploader("选择订单文件 (Excel)", type=["xlsx", "xls"], key="order_uploader_normal")
+        if uploaded_order_normal is not None:
+            file_id = f"{uploaded_order_normal.name}_{uploaded_order_normal.size}"
             if st.session_state.uploaded_order_hash != file_id:
-                ok, msg = process_uploaded_file(uploaded_order)
+                ok, msg = process_uploaded_file(uploaded_order_normal, "")
                 if ok:
                     st.success(msg)
                     st.session_state.uploaded_order_hash = file_id
@@ -374,9 +389,31 @@ with st.sidebar:
                 else:
                     st.error(msg)
 
-        target_file = st.file_uploader("选择目标文件 (Excel)", type=["xlsx", "xls"], key="target_upload")
-        if target_file is not None:
-            ok, msg = load_target_file(target_file)
+        target_file_normal = st.file_uploader("选择目标文件 (Excel)", type=["xlsx", "xls"], key="target_upload_normal")
+        if target_file_normal is not None:
+            ok, msg = load_target_file(target_file_normal, "")
+            if ok:
+                st.success(msg)
+            else:
+                st.error(msg)
+
+        st.markdown("---")
+        st.subheader("🎥 直播数据")
+        uploaded_order_live = st.file_uploader("选择订单文件 (Excel)", type=["xlsx", "xls"], key="order_uploader_live")
+        if uploaded_order_live is not None:
+            file_id = f"{uploaded_order_live.name}_{uploaded_order_live.size}"
+            if st.session_state.uploaded_order_hash != file_id:
+                ok, msg = process_uploaded_file(uploaded_order_live, "_live")
+                if ok:
+                    st.success(msg)
+                    st.session_state.uploaded_order_hash = file_id
+                    st.rerun()
+                else:
+                    st.error(msg)
+
+        target_file_live = st.file_uploader("选择目标文件 (Excel)", type=["xlsx", "xls"], key="target_upload_live")
+        if target_file_live is not None:
+            ok, msg = load_target_file(target_file_live, "_live")
             if ok:
                 st.success(msg)
             else:
@@ -389,10 +426,10 @@ with st.sidebar:
         with pd.ExcelWriter(template_bytes, engine='openpyxl') as writer:
             template_df.to_excel(writer, index=False)
         st.download_button("📄 下载目标模板", data=template_bytes.getvalue(), file_name="目标模板.xlsx")
-        if st.button("🗑️ 清除目标记忆"):
-            clear_targets()
+        if st.button("🗑️ 清除当前用户的目标记忆"):
+            clear_targets(st.session_state.table_suffix)
     else:
-        st.info("暂无权限上传文件或修改权限")
+        st.info("普通用户仅可查看数据，无法上传。")
 
 # ========== 创建选项卡 ==========
 tab1, tab2, tab3, tab4, tab5, tab6, tab_debug, tab_export = st.tabs([
@@ -400,7 +437,7 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab_debug, tab_export = st.tabs([
     "🗄️ 历史业绩", "📊 商品分析", "🔧 调试", "📚 商品库导出"
 ])
 
-# ========== 最新日明细（不变） ==========
+# ========== 最新日明细 ==========
 with tab1:
     if st.session_state.get("daily_latest") is not None and not st.session_state.daily_latest.empty:
         df = st.session_state.daily_latest.copy()
@@ -415,7 +452,6 @@ with tab1:
         cols = ["日期", "店铺名称", "当日金额", "月累计金额", "目标金额", "达成率"]
         st.dataframe(df[cols], use_container_width=True, hide_index=True)
         
-        # 合计卡片
         df_all = st.session_state.df_all_daily
         if df_all is not None and not df_all.empty:
             latest_cum = df_all.groupby("店铺名称")["月累计金额"].last().reset_index()
@@ -607,21 +643,18 @@ with tab5:
     else:
         st.info("暂无历史数据")
 
-# ========== 商品分析（带货号多选筛选） ==========
+# ========== 商品分析 ==========
 with tab6:
     st.subheader("📊 商品销售分析（按货号汇总）")
-    
     prod_df = load_product_sales()
     if prod_df.empty:
         st.warning("暂无商品销售数据，请先上传订单文件。")
     else:
-        # 清洗 style_code
         if "style_code" in prod_df.columns:
             prod_df["style_code"] = prod_df["style_code"].astype(str).str.strip().str.upper()
         else:
             prod_df["style_code"] = prod_df["product_code"].str[:8].str.strip().str.upper()
         
-        # 日期筛选
         min_date = prod_df["sale_date"].min().date()
         max_date = prod_df["sale_date"].max().date()
         col_date1, col_date2 = st.columns(2)
@@ -631,20 +664,14 @@ with tab6:
             end_date = st.date_input("结束日期", value=max_date, key="prod_end", min_value=min_date, max_value=max_date)
         mask = (prod_df["sale_date"] >= pd.to_datetime(start_date)) & (prod_df["sale_date"] <= pd.to_datetime(end_date))
         filtered = prod_df[mask].copy()
-        
         if filtered.empty:
             st.warning("所选日期范围内无销售数据")
         else:
-            # 筛选条件区域
             st.subheader("🔍 筛选条件")
-            
-            # 第一行：平台 + 店铺
             col_platform, col_shop = st.columns(2)
             with col_platform:
                 platform_options = ["全部", "抖音", "视频号"]
                 selected_platform = st.selectbox("平台", platform_options, key="platform_filter")
-            
-            # 店铺筛选（根据平台动态更新选项）
             all_shops = filtered["shop_name"].unique()
             if selected_platform == "抖音":
                 shop_options = [shop for shop in all_shops if "抖音" in shop]
@@ -654,7 +681,6 @@ with tab6:
                 shop_options = list(all_shops)
             selected_shops = st.multiselect("店铺（可多选）", options=sorted(shop_options), default=[], key="shop_filter")
             
-            # 第二行：货号 + 品牌
             col_code, col_brand = st.columns(2)
             with col_code:
                 style_codes_input = st.text_input(
@@ -666,28 +692,22 @@ with tab6:
                 brands = ["全部"] + sorted(filtered["brand"].dropna().unique())
                 selected_brand = st.selectbox("品牌", brands, key="brand_filter")
             
-            # 应用筛选
-            # 平台筛选
             if selected_platform == "抖音":
                 filtered = filtered[filtered["shop_name"].str.contains("抖音", case=False, na=False)]
             elif selected_platform == "视频号":
                 filtered = filtered[filtered["shop_name"].str.contains("视频号", case=False, na=False)]
-            # 店铺筛选
             if selected_shops:
                 filtered = filtered[filtered["shop_name"].isin(selected_shops)]
-            # 货号筛选
             if style_codes_input.strip():
                 target_codes = [code.strip().upper() for code in style_codes_input.split(",") if code.strip()]
                 if target_codes:
                     filtered = filtered[filtered["style_code"].isin(target_codes)]
-            # 品牌筛选
             if selected_brand != "全部":
                 filtered = filtered[filtered["brand"] == selected_brand]
             
             if filtered.empty:
                 st.warning("所选条件下无销售数据")
             else:
-                # 聚合
                 grouped = filtered.groupby("style_code").agg(
                     发货金额=("ship_amount", "sum"),
                     退货金额=("return_amount", "sum"),
@@ -696,7 +716,6 @@ with tab6:
                 grouped = grouped.sort_values("净销售金额", ascending=False)
                 grouped.rename(columns={"style_code": "货号"}, inplace=True)
                 
-                # 关联商品库
                 master_df = load_product_master()
                 if not master_df.empty and "style_code" in master_df.columns:
                     master_df["style_code"] = master_df["style_code"].astype(str).str.strip().str.upper()
@@ -708,7 +727,6 @@ with tab6:
                     grouped["master_category"] = None
                     grouped["image_url"] = None
                 
-                # 列顺序
                 col_order = ["货号", "image_url", "master_category", "发货金额", "退货金额", "净销售金额"]
                 grouped = grouped[col_order]
                 
@@ -726,7 +744,6 @@ with tab6:
                     use_container_width=True
                 )
                 
-                # 饼图指标选择器
                 pie_metric = st.radio("饼图指标", ["净销售金额", "发货金额", "退货金额"], horizontal=True, key="pie_metric")
                 if pie_metric == "净销售金额":
                     metric_col = "net_amount"
@@ -786,7 +803,6 @@ with tab6:
                     else:
                         st.info("无季节数据")
                 
-                # 品牌柱状图
                 if "brand" in filtered.columns:
                     st.subheader("📈 品牌销售分析")
                     brand_metric = st.radio("品牌图表指标", ["净销售金额", "发货金额", "退货金额"], horizontal=True, key="brand_metric")
@@ -805,13 +821,13 @@ with tab6:
                         fig = px.bar(brand_data, x="brand", y=brand_col, title=f"各品牌{brand_title}", color="brand")
                         st.plotly_chart(fig, use_container_width=True)
                 
-                # 导出
                 export_cols = ["货号", "master_category", "发货金额", "退货金额", "净销售金额"]
                 export_df = grouped[export_cols].copy()
                 output = io.BytesIO()
                 with pd.ExcelWriter(output, engine='openpyxl') as writer:
                     export_df.to_excel(writer, index=False)
                 st.download_button("💾 导出分析结果", data=output.getvalue(), file_name="商品分析.xlsx")
+
 # ========== 调试选项卡 ==========
 with tab_debug:
     st.subheader("🔧 数据库调试信息")
@@ -819,25 +835,18 @@ with tab_debug:
         st.error("Supabase 未连接")
     else:
         try:
-            st.write("product_master 表内容:")
-            resp = supabase.table("product_master").select("*").execute()
-            st.write(f"记录数: {len(resp.data)}")
-            if resp.data:
-                df_debug = pd.DataFrame(resp.data)
-                st.dataframe(df_debug.head(10))
-                st.write(f"列名: {df_debug.columns.tolist()}")
+            table_name = get_table_name("product_sales")
+            st.write(f"当前使用的商品销售表: {table_name}")
+            resp = supabase.table(table_name).select("*").limit(5).execute()
+            st.write(f"前5条数据: {resp.data}")
         except Exception as e:
             st.error(f"查询失败: {e}")
         
         try:
-            st.write("---")
-            st.write("product_sales 表统计:")
-            count_resp = supabase.table("product_sales").select("count", count="exact").execute()
-            st.write(f"总记录数: {count_resp.count}")
-            if count_resp.count > 0:
-                sample = supabase.table("product_sales").select("*").limit(3).execute()
-                st.write("前3行示例:")
-                st.dataframe(pd.DataFrame(sample.data))
+            table_name = get_table_name("daily_sales")
+            st.write(f"当前使用的每日业绩表: {table_name}")
+            resp = supabase.table(table_name).select("*").limit(5).execute()
+            st.write(f"前5条数据: {resp.data}")
         except Exception as e:
             st.error(f"查询失败: {e}")
 
