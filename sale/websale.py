@@ -550,9 +550,8 @@ with tab6:
             use_container_width=True
         )
         
-        # 指标选择器（用于所有饼图）
-        pie_metric = st.radio("饼图指标", ["净销售金额", "发货金额", "退货金额"], horizontal=True)
-        # 映射到实际列名
+        # 饼图指标选择器
+        pie_metric = st.radio("饼图指标", ["净销售金额", "发货金额", "退货金额"], horizontal=True, key="pie_metric")
         if pie_metric == "净销售金额":
             metric_col = "net_amount"
             grouped_metric_col = "净销售金额"
@@ -566,7 +565,7 @@ with tab6:
         st.subheader("📊 销售分布")
         col1, col2, col3 = st.columns(3)
         
-        # 1. 按商品分类（使用 grouped 中的列）
+        # 按商品分类
         with col1:
             if not grouped["master_category"].isnull().all():
                 pie_data = grouped.groupby("master_category")[grouped_metric_col].sum().reset_index()
@@ -582,7 +581,7 @@ with tab6:
             else:
                 st.info("无分类数据")
         
-        # 2. 按年份（使用 prod_df 中的原始列）
+        # 按年份
         with col2:
             if "year" in prod_df.columns and not prod_df["year"].isnull().all():
                 year_data = prod_df.groupby("year")[metric_col].sum().reset_index()
@@ -598,7 +597,7 @@ with tab6:
             else:
                 st.info("无年份数据")
         
-        # 3. 按季节（使用 prod_df 中的原始列）
+        # 按季节
         with col3:
             if "season" in prod_df.columns and not prod_df["season"].isnull().all():
                 season_data = prod_df.groupby("season")[metric_col].sum().reset_index()
@@ -614,13 +613,23 @@ with tab6:
             else:
                 st.info("无季节数据")
         
-        # 柱状图（按品牌）
+        # 品牌柱状图（独立指标选择）
         if "brand" in prod_df.columns:
-            brand_data = prod_df.groupby("brand")["net_amount"].sum().reset_index()
-            brand_data = brand_data.sort_values("net_amount", ascending=False)
+            st.subheader("📈 品牌销售分析")
+            brand_metric = st.radio("品牌图表指标", ["净销售金额", "发货金额", "退货金额"], horizontal=True, key="brand_metric")
+            if brand_metric == "净销售金额":
+                brand_col = "net_amount"
+                brand_title = "净销售金额"
+            elif brand_metric == "发货金额":
+                brand_col = "ship_amount"
+                brand_title = "发货金额"
+            else:
+                brand_col = "return_amount"
+                brand_title = "退货金额"
+            brand_data = prod_df.groupby("brand")[brand_col].sum().reset_index()
+            brand_data = brand_data.sort_values(brand_col, ascending=False)
             if not brand_data.empty:
-                st.subheader("📈 各品牌净销售金额")
-                fig = px.bar(brand_data, x="brand", y="net_amount", title="各品牌净销售金额", color="brand")
+                fig = px.bar(brand_data, x="brand", y=brand_col, title=f"各品牌{brand_title}", color="brand")
                 st.plotly_chart(fig, use_container_width=True)
         
         # 导出
