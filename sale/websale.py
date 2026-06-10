@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-订单业绩统计工具 - 最终版（商品分析三饼图：分类/年份/季节）
+订单业绩统计工具 - 完整版（所有选项卡均含平台合计）
 访问密码：94949468
 """
 
@@ -440,7 +440,6 @@ with tab2:
                 if range_data.empty:
                     st.warning("无数据")
                 else:
-                    # 按店铺汇总累计金额
                     summary = range_data.groupby("店铺名称")["当日金额"].sum().reset_index()
                     summary["累计金额"] = summary["当日金额"].round(2)
                     summary = summary[["店铺名称", "累计金额"]].sort_values("店铺名称")
@@ -460,13 +459,13 @@ with tab2:
                     with col3:
                         st.metric("📊 总业绩合计", f"{overall_total:,.2f}")
                     
-                    # 导出按钮
                     output = io.BytesIO()
                     with pd.ExcelWriter(output, engine='openpyxl') as writer:
                         summary.to_excel(writer, index=False)
                     st.download_button("💾 导出", data=output.getvalue(), file_name=f"累计_{start}_{end}.xlsx")
     else:
         st.info("暂无数据")
+
 # ========== 日期查询 ==========
 with tab3:
     if st.session_state.get("df_all_daily") is not None and not st.session_state.df_all_daily.empty:
@@ -517,14 +516,13 @@ with tab4:
         if dates:
             selected_date = st.selectbox("选择日期", dates, format_func=lambda x: x.strftime("%Y-%m-%d"))
             filtered = prod_df[prod_df["sale_date"] == selected_date]
-            # 按店铺汇总发货和退货
             summary = filtered.groupby("shop_name").agg(
                 当日发货=("ship_amount", "sum"),
                 当日退货=("return_amount", "sum")
             ).reset_index()
             st.dataframe(summary, use_container_width=True, hide_index=True)
             
-            # 合计卡片（抖音、视频号、整体）
+            # 合计卡片
             douyin_df = summary[summary["shop_name"].str.contains("抖音", case=False, na=False)]
             video_df = summary[summary["shop_name"].str.contains("视频号", case=False, na=False)]
             douyin_ship = douyin_df["当日发货"].sum()
@@ -533,7 +531,6 @@ with tab4:
             video_return = video_df["当日退货"].sum()
             overall_ship = summary["当日发货"].sum()
             overall_return = summary["当日退货"].sum()
-            
             col1, col2, col3 = st.columns(3)
             with col1:
                 st.metric("📱 抖音合计", f"发货: {douyin_ship:,.2f}", delta=f"退货: {douyin_return:,.2f}")
@@ -556,34 +553,7 @@ with tab5:
     if not daily_df.empty:
         st.dataframe(daily_df, use_container_width=True, hide_index=True)
         
-        # 合计卡片：计算所有店铺的当日金额合计（抖音、视频号、整体）
-        # 注意：daily_df 中的列名为 shop_name, amount（当日金额）
-        douyin_df = daily_df[daily_df["shop_name"].str.contains("抖音", case=False, na=False)]
-        video_df = daily_df[daily_df["shop_name"].str.contains("视频号", case=False, na=False)]
-        douyin_total = douyin_df["amount"].sum()
-        video_total = video_df["amount"].sum()
-        overall_total = daily_df["amount"].sum()
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("📱 抖音合计", f"{douyin_total:,.2f}")
-        with col2:
-            st.metric("📺 视频号合计", f"{video_total:,.2f}")
-        with col3:
-            st.metric("📊 总业绩合计", f"{overall_total:,.2f}")
-        
-        output = io.BytesIO()
-        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            daily_df.to_excel(writer, index=False)
-        st.download_button("💾 导出全部", data=output.getvalue(), file_name="历史业绩.xlsx")
-    else:
-        st.info("暂无历史数据")with tab5:
-    st.subheader("所有已保存的每日业绩")
-    daily_df = load_daily_sales()
-    if not daily_df.empty:
-        st.dataframe(daily_df, use_container_width=True, hide_index=True)
-        
-        # 合计卡片：计算所有店铺的当日金额合计（抖音、视频号、整体）
-        # 注意：daily_df 中的列名为 shop_name, amount（当日金额）
+        # 合计卡片
         douyin_df = daily_df[daily_df["shop_name"].str.contains("抖音", case=False, na=False)]
         video_df = daily_df[daily_df["shop_name"].str.contains("视频号", case=False, na=False)]
         douyin_total = douyin_df["amount"].sum()
@@ -604,7 +574,7 @@ with tab5:
     else:
         st.info("暂无历史数据")
 
-# ========== 商品分析（三个饼图：分类、年份、季节） ==========
+# ========== 商品分析（带时间筛选和饼图） ==========
 with tab6:
     st.subheader("📊 商品销售分析（按货号汇总）")
     
@@ -612,7 +582,7 @@ with tab6:
     if prod_df.empty:
         st.warning("暂无商品销售数据，请先上传订单文件。")
     else:
-        # 日期筛选（应用于所有分析）
+        # 日期筛选
         min_date = prod_df["sale_date"].min().date()
         max_date = prod_df["sale_date"].max().date()
         col_date1, col_date2 = st.columns(2)
@@ -620,14 +590,13 @@ with tab6:
             start_date = st.date_input("开始日期", value=min_date, key="prod_start", min_value=min_date, max_value=max_date)
         with col_date2:
             end_date = st.date_input("结束日期", value=max_date, key="prod_end", min_value=min_date, max_value=max_date)
-        
         mask = (prod_df["sale_date"] >= pd.to_datetime(start_date)) & (prod_df["sale_date"] <= pd.to_datetime(end_date))
         filtered = prod_df[mask].copy()
         
         if filtered.empty:
             st.warning("所选日期范围内无销售数据")
         else:
-            # 1. 按货号聚合销售金额（基于日期筛选后的数据）
+            # 1. 按货号聚合销售金额
             grouped = filtered.groupby("style_code").agg(
                 发货金额=("ship_amount", "sum"),
                 退货金额=("return_amount", "sum"),
@@ -728,7 +697,7 @@ with tab6:
                 else:
                     st.info("无季节数据")
             
-            # 品牌柱状图（独立指标选择）
+            # 品牌柱状图
             if "brand" in filtered.columns:
                 st.subheader("📈 品牌销售分析")
                 brand_metric = st.radio("品牌图表指标", ["净销售金额", "发货金额", "退货金额"], horizontal=True, key="brand_metric")
@@ -753,6 +722,7 @@ with tab6:
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
                 export_df.to_excel(writer, index=False)
             st.download_button("💾 导出分析结果", data=output.getvalue(), file_name="商品分析.xlsx")
+
 # ========== 调试选项卡 ==========
 with tab_debug:
     st.subheader("🔧 数据库调试信息")
