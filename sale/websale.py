@@ -367,6 +367,7 @@ def load_target_file(uploaded_file, suffix):
         return False, str(e)
 
 # ========== 页面初始化加载数据 ==========
+# 注意：每次页面加载都会根据当前 suffix 重新加载数据（因为 rebuild_daily_data 内部查询数据库）
 rebuild_daily_data(st.session_state.table_suffix)
 if st.session_state.target_dict == {}:
     st.session_state.target_dict = load_targets(st.session_state.table_suffix)
@@ -377,28 +378,30 @@ with st.sidebar:
     
     if st.session_state.role == "admin":
         st.subheader("🔄 数据源切换")
-        # 使用 selectbox + 确认按钮
+        # 显示当前生效的数据源
+        suffix_names = {
+            "": "非直播数据",
+            "_live": "直播数据",
+            "_all": "全部数据"
+        }
+        current_source_name = suffix_names.get(st.session_state.table_suffix, "未知")
+        st.info(f"📌 当前正在查看：**{current_source_name}**")
+        
         source_options = {
             "非直播数据": "",
             "直播数据": "_live",
             "全部数据": "_all"
         }
-        # 获取当前选中的后缀，用于显示默认值
-        current_suffix = st.session_state.table_suffix
-        current_source_name = [k for k, v in source_options.items() if v == current_suffix]
-        if not current_source_name:
-            current_source_name = "非直播数据"
-        else:
-            current_source_name = current_source_name[0]
-        
-        # 下拉选择
+        # 预先选中当前数据源对应的选项
+        default_index = list(source_options.keys()).index(current_source_name) if current_source_name in source_options else 0
         selected_source = st.selectbox(
-            "选择数据源",
+            "选择要切换到的数据源",
             options=list(source_options.keys()),
-            index=list(source_options.keys()).index(current_source_name),
+            index=default_index,
             key="source_select"
         )
-        # 确认按钮
+        
+        # 确认切换按钮
         if st.button("✅ 确认切换", key="confirm_switch"):
             new_suffix = source_options[selected_source]
             if new_suffix != st.session_state.table_suffix:
@@ -408,8 +411,7 @@ with st.sidebar:
         
         st.markdown("---")
         
-        # 根据当前选中的数据源显示对应的上传板块（注意：不是根据selected_source，而是根据实际已生效的table_suffix）
-        # 这样在切换确认后才改变上传板块的显示
+        # 根据当前**生效的**数据源显示上传板块
         current_display_suffix = st.session_state.table_suffix
         if current_display_suffix == "":
             st.subheader("📁 非直播数据上传")
@@ -501,13 +503,11 @@ with st.sidebar:
                 del st.session_state[key]
         st.rerun()
 
-# ========== 动态创建选项卡（管理员显示全部，普通用户只显示前6个）==========
-# 基础选项卡标签（所有用户可见）
+# ========== 动态创建选项卡 ==========
 base_tab_labels = [
     "📅 最新日明细", "🏪 日期范围累计", "🔍 日期查询", 
     "📦 发货退货明细", "🗄️ 历史业绩", "📊 商品分析"
 ]
-# 管理员额外选项卡
 admin_tab_labels = ["🔧 调试", "📚 商品库导出"]
 
 if st.session_state.role == "admin":
@@ -519,6 +519,11 @@ tabs = st.tabs(all_tab_labels)
 
 # ========== 最新日明细 ==========
 with tabs[0]:
+    # 显示当前数据源提示
+    source_names = {"": "非直播数据", "_live": "直播数据", "_all": "全部数据"}
+    current_source = source_names.get(st.session_state.table_suffix, "未知")
+    st.info(f"📌 当前查看的数据源：**{current_source}**")
+    
     if st.session_state.get("daily_latest") is not None and not st.session_state.daily_latest.empty:
         df = st.session_state.daily_latest.copy()
         df["目标金额"] = df["店铺名称"].map(st.session_state.target_dict).fillna(0).round(2)
@@ -699,7 +704,7 @@ with tabs[3]:
 # ========== 历史业绩 ==========
 with tabs[4]:
     st.subheader("所有已保存的每日业绩")
-    daily_df = load_daily_sales()
+    daily_df = load_daily_sales()  # 注意：这里不带参数，会使用当前 table_suffix
     if not daily_df.empty:
         st.dataframe(daily_df, use_container_width=True, hide_index=True)
         
@@ -724,7 +729,6 @@ with tabs[4]:
         st.info("暂无历史数据")
 
 # ========== 商品分析 ==========
-# ========== 商品分析 ==========
 with tabs[5]:
     st.subheader("📊 商品销售分析（按货号汇总）")
     
@@ -745,20 +749,17 @@ with tabs[5]:
         else:
             prod_df["style_code"] = prod_df["product_code"].str[:8].str.strip().str.upper()
         
-        # ================= 新增：提取主播（仅全部数据）=================
+        # 如果是全部数据，提取主播字段
         if st.session_state.table_suffix == "_all":
-            # 定义提取主播的函数
             def extract_anchor(remark):
                 if not isinstance(remark, str):
                     return None
-                # 匹配 "主播:xxx" 或 "主播：xxx"，直到下划线或字符串结束
                 import re
                 match = re.search(r'主播[：:]([^_]+)', remark)
                 if match:
                     return match.group(1).strip()
                 return None
             prod_df["anchor"] = prod_df["remark"].apply(extract_anchor)
-        # ============================================================
         
         # 日期选择器
         min_date = prod_df["sale_date"].min().date()
@@ -798,7 +799,7 @@ with tabs[5]:
                 brands = ["全部"] + sorted(filtered["brand"].dropna().unique())
                 selected_brand = st.selectbox("品牌", brands, key="brand_filter")
             
-            # ================= 新增：主播筛选（仅全部数据）=================
+            # 主播筛选（仅全部数据）
             selected_anchors = []
             if st.session_state.table_suffix == "_all" and "anchor" in filtered.columns:
                 all_anchors = filtered["anchor"].dropna().unique()
@@ -809,7 +810,6 @@ with tabs[5]:
                         default=[],
                         key="anchor_filter"
                     )
-            # ============================================================
             
             # 应用筛选
             if selected_platform == "抖音":
@@ -839,7 +839,7 @@ with tabs[5]:
                 grouped = grouped.sort_values("净销售金额", ascending=False)
                 grouped.rename(columns={"style_code": "货号"}, inplace=True)
                 
-                # 获取商品主库信息（仅用于补充图片和缺失的分类，不覆盖现有分类）
+                # 获取商品主库信息（仅用于补充图片和缺失的分类）
                 master_df = load_product_master()
                 if not master_df.empty and "style_code" in master_df.columns:
                     master_df["style_code"] = master_df["style_code"].astype(str).str.strip().str.upper()
@@ -847,7 +847,6 @@ with tabs[5]:
                     img_map = master_df.set_index("style_code")["image_url"].to_dict()
                     cat_map = master_df.set_index("style_code")["category"].to_dict()
                     
-                    # 添加图片列
                     if "image_url" not in grouped.columns:
                         grouped["image_url"] = None
                     for idx, row in grouped.iterrows():
@@ -855,18 +854,14 @@ with tabs[5]:
                         if pd.isna(row["image_url"]) and code in img_map:
                             grouped.at[idx, "image_url"] = img_map[code]
                     
-                    # 分类列：优先使用表中已有的 master_category，若为空则用主库的 category
                     if "master_category" not in filtered.columns:
                         filtered["master_category"] = None
-                    # 汇总表里加上 master_category（取每个货号的第一个非空值）
                     cat_series = filtered.groupby("style_code")["master_category"].first()
                     grouped["master_category"] = grouped["货号"].map(cat_series)
-                    # 若仍为空，尝试从主库补充
                     for idx, row in grouped.iterrows():
                         if pd.isna(row["master_category"]) and row["货号"] in cat_map:
                             grouped.at[idx, "master_category"] = cat_map[row["货号"]]
                 else:
-                    # 没有主库时，直接从 filtered 中取分类
                     if "master_category" in filtered.columns:
                         cat_series = filtered.groupby("style_code")["master_category"].first()
                         grouped["master_category"] = grouped["货号"].map(cat_series)
@@ -874,7 +869,7 @@ with tabs[5]:
                         grouped["master_category"] = None
                     grouped["image_url"] = None
                 
-                # 计算退款率（退货金额 / 发货金额）
+                # 计算退款率
                 grouped["退款率"] = grouped.apply(
                     lambda row: f"{(row['退货金额'] / row['发货金额'] * 100):.2f}%" 
                     if row['发货金额'] != 0 else "-", axis=1
@@ -898,7 +893,7 @@ with tabs[5]:
                     use_container_width=True
                 )
                 
-                # 饼图指标选择
+                # 饼图
                 pie_metric = st.radio("饼图指标", ["净销售金额", "发货金额", "退货金额"], horizontal=True, key="pie_metric")
                 if pie_metric == "净销售金额":
                     metric_col = "net_amount"
@@ -913,7 +908,6 @@ with tabs[5]:
                 st.subheader("📊 销售分布")
                 col1, col2, col3 = st.columns(3)
                 
-                # 辅助函数：安全绘制饼图（处理总额为负或零）
                 def safe_pie_chart(data, name_col, value_col, title, color_seq):
                     total = data[value_col].sum()
                     if total == 0:
@@ -934,7 +928,7 @@ with tabs[5]:
                     fig.update_traces(textposition='inside', textinfo='percent+label')
                     st.plotly_chart(fig, use_container_width=True)
                 
-                # 1. 按分类饼图
+                # 分类饼图
                 with col1:
                     if grouped["master_category"].isnull().all():
                         total_val = grouped[grouped_metric_col].sum()
@@ -950,7 +944,7 @@ with tabs[5]:
                         pie_data = pie_data[pie_data["master_category"].notna()]
                         safe_pie_chart(pie_data, "master_category", grouped_metric_col, f"按分类 - {pie_metric}", px.colors.qualitative.Pastel)
                 
-                # 2. 按年份饼图
+                # 年份饼图
                 with col2:
                     if "year" not in filtered.columns or filtered["year"].isnull().all():
                         total_val = filtered[metric_col].sum()
@@ -966,7 +960,7 @@ with tabs[5]:
                         year_data = year_data[year_data["year"].notna()]
                         safe_pie_chart(year_data, "year", metric_col, f"按年份 - {pie_metric}", px.colors.qualitative.Set2)
                 
-                # 3. 按季节饼图
+                # 季节饼图
                 with col3:
                     if "season" not in filtered.columns or filtered["season"].isnull().all():
                         total_val = filtered[metric_col].sum()
@@ -1001,7 +995,7 @@ with tabs[5]:
                         fig = px.bar(brand_data, x="brand", y=brand_col, title=f"各品牌{brand_title}", color="brand")
                         st.plotly_chart(fig, use_container_width=True)
                 
-                # 导出按钮
+                # 导出
                 export_cols = ["货号", "master_category", "发货金额", "退货金额", "净销售金额", "退款率"]
                 export_df = grouped[export_cols].copy()
                 output = io.BytesIO()
@@ -1016,19 +1010,26 @@ if st.session_state.role == "admin":
         if supabase is None:
             st.error("Supabase 未连接")
         else:
+            # 显示当前使用的表
+            current_suffix = st.session_state.table_suffix
+            st.write(f"**当前数据源后缀**: `{current_suffix}`")
+            st.write(f"**当前使用的每日业绩表**: `daily_sales{current_suffix}`")
+            st.write(f"**当前使用的商品销售表**: `product_sales{current_suffix}`")
+            st.write(f"**当前使用的目标表**: `shop_targets{current_suffix}`")
+            
             try:
                 table_name = get_table_name("product_sales")
-                st.write(f"当前使用的商品销售表: {table_name}")
+                st.write(f"查询商品销售表 `{table_name}` 前5条数据:")
                 resp = supabase.table(table_name).select("*").limit(5).execute()
-                st.write(f"前5条数据: {resp.data}")
+                st.write(resp.data)
             except Exception as e:
                 st.error(f"查询失败: {e}")
             
             try:
                 table_name = get_table_name("daily_sales")
-                st.write(f"当前使用的每日业绩表: {table_name}")
+                st.write(f"查询每日业绩表 `{table_name}` 前5条数据:")
                 resp = supabase.table(table_name).select("*").limit(5).execute()
-                st.write(f"前5条数据: {resp.data}")
+                st.write(resp.data)
             except Exception as e:
                 st.error(f"查询失败: {e}")
 
