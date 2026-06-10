@@ -460,14 +460,24 @@ with st.sidebar:
                 del st.session_state[key]
         st.rerun()
 
-# ========== 创建选项卡 ==========
-tab1, tab2, tab3, tab4, tab5, tab6, tab_debug, tab_export = st.tabs([
-    "📅 最新日明细", "🏪 日期范围累计", "🔍 日期查询", "📦 发货退货明细", 
-    "🗄️ 历史业绩", "📊 商品分析", "🔧 调试", "📚 商品库导出"
-])
+# ========== 动态创建选项卡（管理员显示全部，普通用户只显示前6个）==========
+# 基础选项卡标签（所有用户可见）
+base_tab_labels = [
+    "📅 最新日明细", "🏪 日期范围累计", "🔍 日期查询", 
+    "📦 发货退货明细", "🗄️ 历史业绩", "📊 商品分析"
+]
+# 管理员额外选项卡
+admin_tab_labels = ["🔧 调试", "📚 商品库导出"]
+
+if st.session_state.role == "admin":
+    all_tab_labels = base_tab_labels + admin_tab_labels
+else:
+    all_tab_labels = base_tab_labels
+
+tabs = st.tabs(all_tab_labels)
 
 # ========== 最新日明细 ==========
-with tab1:
+with tabs[0]:
     if st.session_state.get("daily_latest") is not None and not st.session_state.daily_latest.empty:
         df = st.session_state.daily_latest.copy()
         df["目标金额"] = df["店铺名称"].map(st.session_state.target_dict).fillna(0).round(2)
@@ -526,7 +536,7 @@ with tab1:
         st.info("暂无店铺业绩数据，请先上传订单文件")
 
 # ========== 日期范围累计 ==========
-with tab2:
+with tabs[1]:
     if st.session_state.get("df_all_daily") is not None and not st.session_state.df_all_daily.empty:
         c1, c2 = st.columns(2)
         with c1:
@@ -568,7 +578,7 @@ with tab2:
         st.info("暂无数据")
 
 # ========== 日期查询 ==========
-with tab3:
+with tabs[2]:
     if st.session_state.get("df_all_daily") is not None and not st.session_state.df_all_daily.empty:
         query_date = st.date_input("查询日期", value=date.today(), key="query_date")
         if st.button("查询"):
@@ -606,7 +616,7 @@ with tab3:
         st.info("暂无数据")
 
 # ========== 发货退货明细 ==========
-with tab4:
+with tabs[3]:
     st.subheader("📦 发货退货明细（按店铺）")
     prod_df = load_product_sales(st.session_state.table_suffix)
     if prod_df.empty:
@@ -646,7 +656,7 @@ with tab4:
             st.info("无日期数据")
 
 # ========== 历史业绩 ==========
-with tab5:
+with tabs[4]:
     st.subheader("所有已保存的每日业绩")
     daily_df = load_daily_sales()
     if not daily_df.empty:
@@ -673,7 +683,7 @@ with tab5:
         st.info("暂无历史数据")
 
 # ========== 商品分析 ==========
-with tab6:
+with tabs[5]:
     st.subheader("📊 商品销售分析（按货号汇总）")
     
     # 刷新按钮
@@ -927,45 +937,47 @@ with tab6:
                     export_df.to_excel(writer, index=False)
                 st.download_button("💾 导出分析结果", data=output.getvalue(), file_name="商品分析.xlsx")
 
-# ========== 调试选项卡 ==========
-with tab_debug:
-    st.subheader("🔧 数据库调试信息")
-    if supabase is None:
-        st.error("Supabase 未连接")
-    else:
-        try:
-            table_name = get_table_name("product_sales")
-            st.write(f"当前使用的商品销售表: {table_name}")
-            resp = supabase.table(table_name).select("*").limit(5).execute()
-            st.write(f"前5条数据: {resp.data}")
-        except Exception as e:
-            st.error(f"查询失败: {e}")
-        
-        try:
-            table_name = get_table_name("daily_sales")
-            st.write(f"当前使用的每日业绩表: {table_name}")
-            resp = supabase.table(table_name).select("*").limit(5).execute()
-            st.write(f"前5条数据: {resp.data}")
-        except Exception as e:
-            st.error(f"查询失败: {e}")
+# ========== 管理员专属：调试选项卡 ==========
+if st.session_state.role == "admin":
+    with tabs[6]:
+        st.subheader("🔧 数据库调试信息")
+        if supabase is None:
+            st.error("Supabase 未连接")
+        else:
+            try:
+                table_name = get_table_name("product_sales")
+                st.write(f"当前使用的商品销售表: {table_name}")
+                resp = supabase.table(table_name).select("*").limit(5).execute()
+                st.write(f"前5条数据: {resp.data}")
+            except Exception as e:
+                st.error(f"查询失败: {e}")
+            
+            try:
+                table_name = get_table_name("daily_sales")
+                st.write(f"当前使用的每日业绩表: {table_name}")
+                resp = supabase.table(table_name).select("*").limit(5).execute()
+                st.write(f"前5条数据: {resp.data}")
+            except Exception as e:
+                st.error(f"查询失败: {e}")
 
-# ========== 商品库导出选项卡 ==========
-with tab_export:
-    st.subheader("📚 导出商品库数据（product_master）")
-    master_df = load_product_master()
-    if master_df.empty:
-        st.warning("商品库（product_master）为空，无法导出。")
-    else:
-        st.write(f"当前商品库共有 **{len(master_df)}** 条记录。")
-        with st.expander("点击预览商品库数据"):
-            st.dataframe(master_df.head(10), use_container_width=True)
-        
-        output = io.BytesIO()
-        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            master_df.to_excel(writer, index=False)
-        st.download_button(
-            label="📥 导出全部商品库数据 (Excel)",
-            data=output.getvalue(),
-            file_name=f"product_master_{date.today()}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
+# ========== 管理员专属：商品库导出选项卡 ==========
+if st.session_state.role == "admin":
+    with tabs[7]:
+        st.subheader("📚 导出商品库数据（product_master）")
+        master_df = load_product_master()
+        if master_df.empty:
+            st.warning("商品库（product_master）为空，无法导出。")
+        else:
+            st.write(f"当前商品库共有 **{len(master_df)}** 条记录。")
+            with st.expander("点击预览商品库数据"):
+                st.dataframe(master_df.head(10), use_container_width=True)
+            
+            output = io.BytesIO()
+            with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                master_df.to_excel(writer, index=False)
+            st.download_button(
+                label="📥 导出全部商品库数据 (Excel)",
+                data=output.getvalue(),
+                file_name=f"product_master_{date.today()}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
