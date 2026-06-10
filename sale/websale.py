@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-订单业绩统计工具 - 最终修复版（商品库关联正常）
+订单业绩统计工具 - 最终修复版（含调试功能）
 访问密码：94949468
 """
 
@@ -171,8 +171,6 @@ def load_product_master():
         resp = supabase.table("product_master").select("*").execute()
         if resp.data:
             df = pd.DataFrame(resp.data)
-            # 原表列名：product_code, image_url, category
-            # 重命名为 master_code 以便合并
             if "product_code" in df.columns:
                 df = df.rename(columns={"product_code": "master_code"})
             return df
@@ -361,7 +359,7 @@ with st.sidebar:
         clear_targets()
 
 # ========== 创建选项卡 ==========
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["📅 最新日明细", "🏪 日期范围累计", "🔍 日期查询", "📦 发货退货明细", "🗄️ 历史业绩", "📊 商品分析"])
+tab1, tab2, tab3, tab4, tab5, tab6, tab_debug = st.tabs(["📅 最新日明细", "🏪 日期范围累计", "🔍 日期查询", "📦 发货退货明细", "🗄️ 历史业绩", "📊 商品分析", "🔧 调试"])
 
 # ========== 最新日明细 ==========
 with tab1:
@@ -508,7 +506,7 @@ with tab5:
     else:
         st.info("暂无历史数据")
 
-# ========== 商品分析（修复关联） ==========
+# ========== 商品分析（按货号汇总） ==========
 with tab6:
     st.subheader("📊 商品销售分析（按货号汇总）")
     
@@ -523,7 +521,6 @@ with tab6:
             st.warning("商品库（product_master）为空，将无法显示图片和分类。请检查 RLS 设置或导入数据。")
         else:
             # 合并：product_sales 的 style_code 匹配 product_master 的 master_code
-            # 注意：master_df 已经将 product_code 重命名为 master_code
             prod_df = prod_df.merge(master_df[["master_code", "image_url", "category"]], left_on="style_code", right_on="master_code", how="left")
             prod_df.rename(columns={"category": "master_category"}, inplace=True)
         
@@ -639,3 +636,50 @@ with tab6:
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
                 export_df.to_excel(writer, index=False)
             st.download_button("💾 导出分析结果", data=output.getvalue(), file_name="商品分析.xlsx")
+
+# ========== 调试选项卡 ==========
+with tab_debug:
+    st.subheader("🔧 数据库调试信息")
+    st.markdown("此选项卡用于排查 `product_master` 表数据问题，请查看以下信息：")
+    
+    if supabase is None:
+        st.error("Supabase 未连接")
+    else:
+        # 尝试查询 product_master 表
+        try:
+            st.write("正在查询 product_master 表...")
+            resp = supabase.table("product_master").select("*").execute()
+            st.write(f"✅ 查询成功！返回数据条数: {len(resp.data)}")
+            if resp.data:
+                df_debug = pd.DataFrame(resp.data)
+                st.write("前10行数据:")
+                st.dataframe(df_debug.head(10), use_container_width=True)
+                st.write(f"列名: {df_debug.columns.tolist()}")
+                # 统计各列非空情况
+                st.write("各列非空计数:")
+                st.dataframe(df_debug.count().to_frame("非空数量"))
+            else:
+                st.warning("product_master 表查询成功但无数据。请检查是否已导入商品数据。")
+                # 尝试执行计数查询
+                try:
+                    count_resp = supabase.table("product_master").select("count", count="exact").execute()
+                    st.write(f"精确计数查询结果: {count_resp.count}")
+                except:
+                    pass
+        except Exception as e:
+            st.error(f"查询 product_master 表失败: {e}")
+            import traceback
+            st.code(traceback.format_exc())
+        
+        # 尝试查询 product_sales 表（辅助）
+        try:
+            st.write("---")
+            st.write("product_sales 表状态:")
+            resp2 = supabase.table("product_sales").select("count", count="exact").execute()
+            st.write(f"product_sales 表记录数: {resp2.count}")
+            if resp2.count > 0:
+                sample = supabase.table("product_sales").select("*").limit(3).execute()
+                st.write("前3条数据示例:")
+                st.dataframe(pd.DataFrame(sample.data))
+        except Exception as e:
+            st.error(f"查询 product_sales 表失败: {e}")
