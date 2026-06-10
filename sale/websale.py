@@ -668,8 +668,17 @@ with tab5:
         st.info("暂无历史数据")
 
 # ========== 商品分析 ==========
+# ========== 商品分析 ==========
 with tab6:
     st.subheader("📊 商品销售分析（按货号汇总）")
+    
+    # 新增：刷新按钮
+    col_btn, _ = st.columns([1, 5])
+    with col_btn:
+        if st.button("🔄 刷新数据", key="refresh_analysis", help="清除缓存并重新从数据库加载最新数据"):
+            st.cache_data.clear()
+            st.rerun()
+    
     prod_df = load_product_sales(st.session_state.table_suffix)
     if prod_df.empty:
         st.warning("暂无商品销售数据，请先上传订单文件。")
@@ -837,7 +846,6 @@ with tab6:
                 # 1. 按分类饼图
                 with col1:
                     if grouped["master_category"].isnull().all():
-                        # 全为空，构造一个“未分类”扇区
                         total_val = grouped[grouped_metric_col].sum()
                         if total_val > 0:
                             pie_data = pd.DataFrame({name_col: ["未分类"], value_col: [total_val]})
@@ -909,7 +917,6 @@ with tab6:
                 with pd.ExcelWriter(output, engine='openpyxl') as writer:
                     export_df.to_excel(writer, index=False)
                 st.download_button("💾 导出分析结果", data=output.getvalue(), file_name="商品分析.xlsx")
-
 # ========== 调试选项卡 ==========
 with tab_debug:
     st.subheader("🔧 数据库调试信息")
