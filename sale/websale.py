@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """
-订单业绩统计工具 - 完整版（含商品库导出）
+订单业绩统计工具 - 最终完整版
 访问密码：94949468
+所有功能：店铺业绩（含平台合计）、商品分析（图片/分类/饼图/品牌柱状图）、商品库导出（分页支持超1000条）
 """
 
 import streamlit as st
@@ -163,15 +164,25 @@ def parse_product_code(remark):
     except:
         return None
 
+# 商品库加载（分页，解决超过1000条限制）
 @st.cache_data(ttl=600)
 def load_product_master():
     if supabase is None:
         return pd.DataFrame()
     try:
-        resp = supabase.table("product_master").select("*").execute()
-        if resp.data:
-            df = pd.DataFrame(resp.data)
-            return df
+        all_data = []
+        page = 0
+        page_size = 1000
+        while True:
+            resp = supabase.table("product_master").select("*").range(page * page_size, (page + 1) * page_size - 1).execute()
+            if not resp.data:
+                break
+            all_data.extend(resp.data)
+            if len(resp.data) < page_size:
+                break
+            page += 1
+        if all_data:
+            return pd.DataFrame(all_data)
         else:
             return pd.DataFrame()
     except Exception as e:
@@ -222,14 +233,25 @@ def save_product_sales(df_orders):
     if records:
         supabase.table("product_sales").upsert(records, on_conflict="remark").execute()
 
+# 商品销售数据加载（分页）
 @st.cache_data(ttl=600)
 def load_product_sales():
     if supabase is None:
         return pd.DataFrame()
     try:
-        resp = supabase.table("product_sales").select("*").execute()
-        if resp.data:
-            df = pd.DataFrame(resp.data)
+        all_data = []
+        page = 0
+        page_size = 1000
+        while True:
+            resp = supabase.table("product_sales").select("*").range(page * page_size, (page + 1) * page_size - 1).execute()
+            if not resp.data:
+                break
+            all_data.extend(resp.data)
+            if len(resp.data) < page_size:
+                break
+            page += 1
+        if all_data:
+            df = pd.DataFrame(all_data)
             df["sale_date"] = pd.to_datetime(df["sale_date"])
             if "style_code" not in df.columns or df["style_code"].isnull().all():
                 df["style_code"] = df["product_code"].str[:8]
@@ -740,10 +762,10 @@ with tab_debug:
         except Exception as e:
             st.error(f"查询失败: {e}")
 
-# ========== 商品库导出选项卡 ==========
+# ========== 商品库导出选项卡（分页导出所有数据） ==========
 with tab_export:
     st.subheader("📚 导出商品库数据（product_master）")
-    master_df = load_product_master()
+    master_df = load_product_master()  # 使用分页函数，可获取全部数据
     if master_df.empty:
         st.warning("商品库（product_master）为空，无法导出。")
     else:
