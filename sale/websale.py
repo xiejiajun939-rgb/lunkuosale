@@ -390,49 +390,51 @@ with st.sidebar:
             st.rerun()
         
         st.markdown("---")
-        st.subheader("📁 非直播数据上传")
-        uploaded_order_normal = st.file_uploader("选择订单文件 (Excel)", type=["xlsx", "xls"], key="order_uploader_normal")
-        if uploaded_order_normal is not None:
-            file_id = f"{uploaded_order_normal.name}_{uploaded_order_normal.size}"
-            if st.session_state.uploaded_order_hash != file_id:
-                ok, msg = process_uploaded_file(uploaded_order_normal, "")
+        
+        # 根据当前数据源显示对应的上传板块
+        if data_source == "非直播数据":
+            st.subheader("📁 非直播数据上传")
+            uploaded_order = st.file_uploader("选择订单文件 (Excel)", type=["xlsx", "xls"], key="order_uploader_normal")
+            if uploaded_order is not None:
+                file_id = f"{uploaded_order.name}_{uploaded_order.size}"
+                if st.session_state.uploaded_order_hash != file_id:
+                    ok, msg = process_uploaded_file(uploaded_order, "")
+                    if ok:
+                        st.success(msg)
+                        st.session_state.uploaded_order_hash = file_id
+                        st.rerun()
+                    else:
+                        st.error(msg)
+
+            target_file = st.file_uploader("选择目标文件 (Excel)", type=["xlsx", "xls"], key="target_upload_normal")
+            if target_file is not None:
+                ok, msg = load_target_file(target_file, "")
                 if ok:
                     st.success(msg)
-                    st.session_state.uploaded_order_hash = file_id
-                    st.rerun()
                 else:
                     st.error(msg)
+        else:  # 直播数据
+            st.subheader("🎥 直播数据上传")
+            uploaded_order = st.file_uploader("选择订单文件 (Excel)", type=["xlsx", "xls"], key="order_uploader_live")
+            if uploaded_order is not None:
+                file_id = f"{uploaded_order.name}_{uploaded_order.size}"
+                if st.session_state.uploaded_order_hash != file_id:
+                    ok, msg = process_uploaded_file(uploaded_order, "_live")
+                    if ok:
+                        st.success(msg)
+                        st.session_state.uploaded_order_hash = file_id
+                        st.rerun()
+                    else:
+                        st.error(msg)
 
-        target_file_normal = st.file_uploader("选择目标文件 (Excel)", type=["xlsx", "xls"], key="target_upload_normal")
-        if target_file_normal is not None:
-            ok, msg = load_target_file(target_file_normal, "")
-            if ok:
-                st.success(msg)
-            else:
-                st.error(msg)
-
-        st.markdown("---")
-        st.subheader("🎥 直播数据上传")
-        uploaded_order_live = st.file_uploader("选择订单文件 (Excel)", type=["xlsx", "xls"], key="order_uploader_live")
-        if uploaded_order_live is not None:
-            file_id = f"{uploaded_order_live.name}_{uploaded_order_live.size}"
-            if st.session_state.uploaded_order_hash != file_id:
-                ok, msg = process_uploaded_file(uploaded_order_live, "_live")
+            target_file = st.file_uploader("选择目标文件 (Excel)", type=["xlsx", "xls"], key="target_upload_live")
+            if target_file is not None:
+                ok, msg = load_target_file(target_file, "_live")
                 if ok:
                     st.success(msg)
-                    st.session_state.uploaded_order_hash = file_id
-                    st.rerun()
                 else:
                     st.error(msg)
-
-        target_file_live = st.file_uploader("选择目标文件 (Excel)", type=["xlsx", "xls"], key="target_upload_live")
-        if target_file_live is not None:
-            ok, msg = load_target_file(target_file_live, "_live")
-            if ok:
-                st.success(msg)
-            else:
-                st.error(msg)
-
+        
         st.markdown("---")
         st.header("⚙️ 工具")
         template_df = pd.DataFrame({"店铺名称": ["示例店铺A", "示例店铺B"], "目标金额": [100000, 200000]})
