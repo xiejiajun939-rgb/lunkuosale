@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-订单业绩统计工具 - 最终版（商品分析实时关联 product_master）
+订单业绩统计工具 - 最终版（商品分析适配已有 product_master）
 访问密码：94949468
 """
 
@@ -171,13 +171,15 @@ def load_product_master():
         resp = supabase.table("product_master").select("*").execute()
         if resp.data:
             df = pd.DataFrame(resp.data)
-            # 确保列名统一
             if "product_code" in df.columns:
                 df = df.rename(columns={"product_code": "master_code"})
             return df
         else:
+            # 调试输出
+            st.warning("product_master 表查询成功但无数据")
             return pd.DataFrame()
-    except Exception:
+    except Exception as e:
+        st.error(f"加载商品库失败：{e}")
         return pd.DataFrame()
 
 def save_product_sales(df_orders):
@@ -507,37 +509,34 @@ with tab5:
     else:
         st.info("暂无历史数据")
 
-# ========== 商品分析（实时关联 product_master） ==========
+# ========== 商品分析（优先使用 product_sales 中的字段） ==========
 with tab6:
     st.subheader("📊 商品销售分析（按货号汇总）")
     
-    # 加载数据
     prod_df = load_product_sales()
     if prod_df.empty:
         st.warning("暂无商品销售数据，请先上传订单文件。")
     else:
-        # 加载商品库
+        # 如果 product_sales 中已经有 image_url 和 master_category，则直接使用；否则尝试从 product_master 补充
         master_df = load_product_master()
-        if master_df.empty:
-            st.warning("商品库（product_master）为空，将无法显示图片和分类。")
-        else:
-            # 重命名以备合并
+        if not master_df.empty and ("image_url" not in prod_df.columns or prod_df["image_url"].isnull().all()):
+            # 只有当 product_sales 中缺失时才关联
             master_df = master_df.rename(columns={"master_code": "style_code"})
-        
-        # 确保 style_code 存在（已在 load_product_sales 中处理）
-        # 合并商品库获取图片和分类（左连接）
-        if not master_df.empty:
             prod_df = prod_df.merge(master_df[["style_code", "image_url", "category"]], on="style_code", how="left")
             prod_df.rename(columns={"category": "master_category"}, inplace=True)
         else:
-            prod_df["master_category"] = None
-            prod_df["image_url"] = None
+            # 确保列存在
+            if "master_category" not in prod_df.columns:
+                prod_df["master_category"] = None
+            if "image_url" not in prod_df.columns:
+                prod_df["image_url"] = None
         
         # 确保必要列
         if "brand" not in prod_df.columns or prod_df["brand"].isnull().all():
             prod_df["brand"] = prod_df["product_code"].str[0]
         else:
             prod_df["brand"] = prod_df["brand"].fillna(prod_df["product_code"].str[0])
+        
         if "year" not in prod_df.columns:
             prod_df["year"] = None
         if "season" not in prod_df.columns:
