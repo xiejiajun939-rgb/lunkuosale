@@ -49,7 +49,7 @@ if not st.session_state.authenticated:
 
 # 已登录，显示主界面
 st.title("📊 店铺业绩汇总分析")
-st.markdown(f"欢迎，**{st.session_state.username}** ({'管理员' if st.session_state.role == 'admin' else '普通用户'})")
+st.markdown(f"欢迎，**{st.session_state.username}** ({'管理员' if st.session_state.role == 'admin' else '小店成员'})")
 st.markdown("---")
 
 # ========== Supabase 连接 ==========
