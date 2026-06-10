@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-订单业绩统计工具 - 最终修复版（适配 product_master.style_code）
+订单业绩统计工具 - 最终稳定版（适配现有表结构）
 访问密码：94949468
 """
 
@@ -61,8 +61,6 @@ if "target_dict" not in st.session_state:
     st.session_state.target_dict = {}
 if "latest_date" not in st.session_state:
     st.session_state.latest_date = None
-
-# 用于防止重复上传文件（简单标记，不使用动态 key）
 if "uploaded_order_hash" not in st.session_state:
     st.session_state.uploaded_order_hash = None
 
@@ -167,7 +165,6 @@ def parse_product_code(remark):
 
 @st.cache_data(ttl=600)
 def load_product_master():
-    """加载商品库，此时表中有 style_code, image_url, category 等列"""
     if supabase is None:
         return pd.DataFrame()
     try:
@@ -189,7 +186,7 @@ def save_product_sales(df_orders):
     master_map = {}
     if not master_df.empty:
         for _, row in master_df.iterrows():
-            code = row["style_code"]   # 直接使用 style_code 列
+            code = row["style_code"]
             master_map[code] = {
                 "image_url": row.get("image_url", None),
                 "master_category": row.get("category", None)
@@ -235,6 +232,7 @@ def load_product_sales():
         if resp.data:
             df = pd.DataFrame(resp.data)
             df["sale_date"] = pd.to_datetime(df["sale_date"])
+            # 确保 style_code 存在
             if "style_code" not in df.columns or df["style_code"].isnull().all():
                 df["style_code"] = df["product_code"].str[:8]
             else:
@@ -267,7 +265,6 @@ def process_uploaded_file(uploaded_file):
 
         save_product_sales(df)
 
-        # 店铺业绩汇总
         existing = load_daily_sales()
         if existing.empty:
             existing_df = pd.DataFrame(columns=["日期", "店铺名称", "当日金额"])
@@ -510,23 +507,25 @@ with tab5:
     else:
         st.info("暂无历史数据")
 
-# ========== 商品分析（修复分组错误，适配 style_code） ==========
+# ========== 商品分析（正确合并，处理非标量） ==========
 with tab6:
     st.subheader("📊 商品销售分析（按货号汇总）")
     
-    # 加载数据
     prod_df = load_product_sales()
     if prod_df.empty:
         st.warning("暂无商品销售数据，请先上传订单文件。")
     else:
-        # 加载商品库
         master_df = load_product_master()
         if master_df.empty:
             st.warning("商品库（product_master）为空，将无法显示图片和分类。请检查 RLS 设置或导入数据。")
         else:
-            # 合并：直接使用 style_code 关联
-            prod_df = prod_df.merge(master_df[["style_code", "image_url", "category"]], on="style_code", how="left")
-            prod_df.rename(columns={"category": "master_category"}, inplace=True)
+            # 确保 master_df 有需要的列
+            if "style_code" not in master_df.columns:
+                st.error("product_master 表缺少 style_code 列，请检查表结构。")
+            else:
+                # 合并：左连接，保留所有销售记录
+                prod_df = prod_df.merge(master_df[["style_code", "image_url", "category"]], on="style_code", how="left")
+                prod_df.rename(columns={"category": "master_category"}, inplace=True)
         
         # 确保必要列
         if "brand" not in prod_df.columns or prod_df["brand"].isnull().all():
@@ -546,7 +545,7 @@ with tab6:
             if col in prod_df.columns:
                 prod_df[col] = pd.to_numeric(prod_df[col], errors="coerce").fillna(0)
         
-        # 修复 master_category 和 image_url 可能为非标量的问题
+        # 修复可能存在的列表/字典问题
         for col in ["master_category", "image_url"]:
             if col in prod_df.columns:
                 prod_df[col] = prod_df[col].apply(
@@ -555,8 +554,12 @@ with tab6:
                 prod_df[col] = prod_df[col].astype(str).replace("nan", "").replace("None", "")
         
         # 日期筛选
-        min_date = prod_df["sale_date"].min().date()
-        max_date = prod_df["sale_date"].max().date()
+        if prod_df["sale_date"].notna().any():
+            min_date = prod_df["sale_date"].min().date()
+            max_date = prod_df["sale_date"].max().date()
+        else:
+            min_date = date.today()
+            max_date = date.today()
         col1, col2 = st.columns(2)
         with col1:
             start_date = st.date_input("开始日期", value=min_date, key="prod_start", min_value=min_date, max_value=max_date)
@@ -593,7 +596,7 @@ with tab6:
         if filtered.empty:
             st.warning("所选条件下无销售数据")
         else:
-            # 再次确保分组列为字符串
+            # 确保分组列为字符串
             for col in ["style_code", "master_category", "image_url"]:
                 if col in filtered.columns:
                     filtered[col] = filtered[col].astype(str)
@@ -656,44 +659,28 @@ with tab6:
 # ========== 调试选项卡 ==========
 with tab_debug:
     st.subheader("🔧 数据库调试信息")
-    st.markdown("此选项卡用于排查 `product_master` 表数据问题，请查看以下信息：")
-    
     if supabase is None:
         st.error("Supabase 未连接")
     else:
-        # 尝试查询 product_master 表
         try:
-            st.write("正在查询 product_master 表...")
+            st.write("product_master 表内容:")
             resp = supabase.table("product_master").select("*").execute()
-            st.write(f"✅ 查询成功！返回数据条数: {len(resp.data)}")
+            st.write(f"记录数: {len(resp.data)}")
             if resp.data:
                 df_debug = pd.DataFrame(resp.data)
-                st.write("前10行数据:")
-                st.dataframe(df_debug.head(10), use_container_width=True)
+                st.dataframe(df_debug.head(10))
                 st.write(f"列名: {df_debug.columns.tolist()}")
-                st.write("各列非空计数:")
-                st.dataframe(df_debug.count().to_frame("非空数量"))
-            else:
-                st.warning("product_master 表查询成功但无数据。请检查是否已导入商品数据。")
-                try:
-                    count_resp = supabase.table("product_master").select("count", count="exact").execute()
-                    st.write(f"精确计数查询结果: {count_resp.count}")
-                except:
-                    pass
         except Exception as e:
-            st.error(f"查询 product_master 表失败: {e}")
-            import traceback
-            st.code(traceback.format_exc())
+            st.error(f"查询失败: {e}")
         
-        # 辅助查询 product_sales 表
         try:
             st.write("---")
-            st.write("product_sales 表状态:")
-            resp2 = supabase.table("product_sales").select("count", count="exact").execute()
-            st.write(f"product_sales 表记录数: {resp2.count}")
-            if resp2.count > 0:
+            st.write("product_sales 表统计:")
+            count_resp = supabase.table("product_sales").select("count", count="exact").execute()
+            st.write(f"总记录数: {count_resp.count}")
+            if count_resp.count > 0:
                 sample = supabase.table("product_sales").select("*").limit(3).execute()
-                st.write("前3条数据示例:")
+                st.write("前3行示例:")
                 st.dataframe(pd.DataFrame(sample.data))
         except Exception as e:
-            st.error(f"查询 product_sales 表失败: {e}")
+            st.error(f"查询失败: {e}")
