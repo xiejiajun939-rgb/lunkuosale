@@ -392,7 +392,7 @@ with st.sidebar:
         if st.button("🗑️ 清除目标记忆"):
             clear_targets()
     else:
-        st.info("普通用户：只能查看数据，无法上传或修改")
+        st.info("暂无权限上传文件或修改权限")
 
 # ========== 创建选项卡 ==========
 tab1, tab2, tab3, tab4, tab5, tab6, tab_debug, tab_export = st.tabs([
