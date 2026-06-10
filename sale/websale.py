@@ -516,132 +516,147 @@ with tab6:
     if prod_df.empty:
         st.warning("暂无商品销售数据，请先上传订单文件。")
     else:
-        # 1. 按货号聚合销售金额
-        grouped = prod_df.groupby("style_code").agg(
-            发货金额=("ship_amount", "sum"),
-            退货金额=("return_amount", "sum"),
-            净销售金额=("net_amount", "sum")
-        ).reset_index()
-        grouped = grouped.sort_values("净销售金额", ascending=False)
-        grouped.rename(columns={"style_code": "货号"}, inplace=True)
+        # 日期筛选（应用于所有分析）
+        min_date = prod_df["sale_date"].min().date()
+        max_date = prod_df["sale_date"].max().date()
+        col_date1, col_date2 = st.columns(2)
+        with col_date1:
+            start_date = st.date_input("开始日期", value=min_date, key="prod_start", min_value=min_date, max_value=max_date)
+        with col_date2:
+            end_date = st.date_input("结束日期", value=max_date, key="prod_end", min_value=min_date, max_value=max_date)
         
-        # 2. 关联商品库获取图片和分类
-        master_df = load_product_master()
-        if not master_df.empty and "style_code" in master_df.columns:
-            attr = master_df[["style_code", "image_url", "category"]].drop_duplicates(subset="style_code")
-            attr.rename(columns={"style_code": "货号", "category": "master_category"}, inplace=True)
-            grouped = grouped.merge(attr, on="货号", how="left")
+        mask = (prod_df["sale_date"] >= pd.to_datetime(start_date)) & (prod_df["sale_date"] <= pd.to_datetime(end_date))
+        filtered = prod_df[mask].copy()
+        
+        if filtered.empty:
+            st.warning("所选日期范围内无销售数据")
         else:
-            grouped["master_category"] = None
-            grouped["image_url"] = None
-        
-        # 确保列顺序
-        col_order = ["货号", "master_category", "发货金额", "退货金额", "净销售金额", "image_url"]
-        grouped = grouped[col_order]
-        
-        # 显示表格（图片列以缩略图展示）
-        st.dataframe(
-            grouped,
-            column_config={
-                "货号": st.column_config.TextColumn("货号"),
-                "master_category": "商品分类",
-                "发货金额": st.column_config.NumberColumn("发货金额", format="%.2f"),
-                "退货金额": st.column_config.NumberColumn("退货金额", format="%.2f"),
-                "净销售金额": st.column_config.NumberColumn("净销售金额", format="%.2f"),
-                "image_url": st.column_config.ImageColumn("商品图片", help="点击放大")
-            },
-            hide_index=True,
-            use_container_width=True
-        )
-        
-        # 饼图指标选择器
-        pie_metric = st.radio("饼图指标", ["净销售金额", "发货金额", "退货金额"], horizontal=True, key="pie_metric")
-        if pie_metric == "净销售金额":
-            metric_col = "net_amount"
-            grouped_metric_col = "净销售金额"
-        elif pie_metric == "发货金额":
-            metric_col = "ship_amount"
-            grouped_metric_col = "发货金额"
-        else:
-            metric_col = "return_amount"
-            grouped_metric_col = "退货金额"
-        
-        st.subheader("📊 销售分布")
-        col1, col2, col3 = st.columns(3)
-        
-        # 按商品分类
-        with col1:
-            if not grouped["master_category"].isnull().all():
-                pie_data = grouped.groupby("master_category")[grouped_metric_col].sum().reset_index()
-                pie_data = pie_data[pie_data["master_category"].notna()]
-                if not pie_data.empty:
-                    fig = px.pie(pie_data, names="master_category", values=grouped_metric_col, 
-                                 title=f"按分类 - {pie_metric}", hole=0.3,
-                                 color_discrete_sequence=px.colors.qualitative.Pastel)
-                    fig.update_traces(textposition='inside', textinfo='percent+label')
-                    st.plotly_chart(fig, use_container_width=True)
+            # 1. 按货号聚合销售金额（基于日期筛选后的数据）
+            grouped = filtered.groupby("style_code").agg(
+                发货金额=("ship_amount", "sum"),
+                退货金额=("return_amount", "sum"),
+                净销售金额=("net_amount", "sum")
+            ).reset_index()
+            grouped = grouped.sort_values("净销售金额", ascending=False)
+            grouped.rename(columns={"style_code": "货号"}, inplace=True)
+            
+            # 2. 关联商品库获取图片和分类
+            master_df = load_product_master()
+            if not master_df.empty and "style_code" in master_df.columns:
+                attr = master_df[["style_code", "image_url", "category"]].drop_duplicates(subset="style_code")
+                attr.rename(columns={"style_code": "货号", "category": "master_category"}, inplace=True)
+                grouped = grouped.merge(attr, on="货号", how="left")
+            else:
+                grouped["master_category"] = None
+                grouped["image_url"] = None
+            
+            # 确保列顺序
+            col_order = ["货号", "master_category", "发货金额", "退货金额", "净销售金额", "image_url"]
+            grouped = grouped[col_order]
+            
+            # 显示表格
+            st.dataframe(
+                grouped,
+                column_config={
+                    "货号": st.column_config.TextColumn("货号"),
+                    "master_category": "商品分类",
+                    "发货金额": st.column_config.NumberColumn("发货金额", format="%.2f"),
+                    "退货金额": st.column_config.NumberColumn("退货金额", format="%.2f"),
+                    "净销售金额": st.column_config.NumberColumn("净销售金额", format="%.2f"),
+                    "image_url": st.column_config.ImageColumn("商品图片", help="点击放大")
+                },
+                hide_index=True,
+                use_container_width=True
+            )
+            
+            # 饼图指标选择器
+            pie_metric = st.radio("饼图指标", ["净销售金额", "发货金额", "退货金额"], horizontal=True, key="pie_metric")
+            if pie_metric == "净销售金额":
+                metric_col = "net_amount"
+                grouped_metric_col = "净销售金额"
+            elif pie_metric == "发货金额":
+                metric_col = "ship_amount"
+                grouped_metric_col = "发货金额"
+            else:
+                metric_col = "return_amount"
+                grouped_metric_col = "退货金额"
+            
+            st.subheader("📊 销售分布")
+            col1, col2, col3 = st.columns(3)
+            
+            # 按商品分类
+            with col1:
+                if not grouped["master_category"].isnull().all():
+                    pie_data = grouped.groupby("master_category")[grouped_metric_col].sum().reset_index()
+                    pie_data = pie_data[pie_data["master_category"].notna()]
+                    if not pie_data.empty:
+                        fig = px.pie(pie_data, names="master_category", values=grouped_metric_col, 
+                                     title=f"按分类 - {pie_metric}", hole=0.3,
+                                     color_discrete_sequence=px.colors.qualitative.Pastel)
+                        fig.update_traces(textposition='inside', textinfo='percent+label')
+                        st.plotly_chart(fig, use_container_width=True)
+                    else:
+                        st.info("无分类数据")
                 else:
                     st.info("无分类数据")
-            else:
-                st.info("无分类数据")
-        
-        # 按年份
-        with col2:
-            if "year" in prod_df.columns and not prod_df["year"].isnull().all():
-                year_data = prod_df.groupby("year")[metric_col].sum().reset_index()
-                year_data = year_data[year_data["year"].notna()]
-                if not year_data.empty:
-                    fig = px.pie(year_data, names="year", values=metric_col, 
-                                 title=f"按年份 - {pie_metric}", hole=0.3,
-                                 color_discrete_sequence=px.colors.qualitative.Set2)
-                    fig.update_traces(textposition='inside', textinfo='percent+label')
-                    st.plotly_chart(fig, use_container_width=True)
+            
+            # 按年份
+            with col2:
+                if "year" in filtered.columns and not filtered["year"].isnull().all():
+                    year_data = filtered.groupby("year")[metric_col].sum().reset_index()
+                    year_data = year_data[year_data["year"].notna()]
+                    if not year_data.empty:
+                        fig = px.pie(year_data, names="year", values=metric_col, 
+                                     title=f"按年份 - {pie_metric}", hole=0.3,
+                                     color_discrete_sequence=px.colors.qualitative.Set2)
+                        fig.update_traces(textposition='inside', textinfo='percent+label')
+                        st.plotly_chart(fig, use_container_width=True)
+                    else:
+                        st.info("无年份数据")
                 else:
                     st.info("无年份数据")
-            else:
-                st.info("无年份数据")
-        
-        # 按季节
-        with col3:
-            if "season" in prod_df.columns and not prod_df["season"].isnull().all():
-                season_data = prod_df.groupby("season")[metric_col].sum().reset_index()
-                season_data = season_data[season_data["season"].notna()]
-                if not season_data.empty:
-                    fig = px.pie(season_data, names="season", values=metric_col, 
-                                 title=f"按季节 - {pie_metric}", hole=0.3,
-                                 color_discrete_sequence=px.colors.qualitative.Set1)
-                    fig.update_traces(textposition='inside', textinfo='percent+label')
-                    st.plotly_chart(fig, use_container_width=True)
+            
+            # 按季节
+            with col3:
+                if "season" in filtered.columns and not filtered["season"].isnull().all():
+                    season_data = filtered.groupby("season")[metric_col].sum().reset_index()
+                    season_data = season_data[season_data["season"].notna()]
+                    if not season_data.empty:
+                        fig = px.pie(season_data, names="season", values=metric_col, 
+                                     title=f"按季节 - {pie_metric}", hole=0.3,
+                                     color_discrete_sequence=px.colors.qualitative.Set1)
+                        fig.update_traces(textposition='inside', textinfo='percent+label')
+                        st.plotly_chart(fig, use_container_width=True)
+                    else:
+                        st.info("无季节数据")
                 else:
                     st.info("无季节数据")
-            else:
-                st.info("无季节数据")
-        
-        # 品牌柱状图（独立指标选择）
-        if "brand" in prod_df.columns:
-            st.subheader("📈 品牌销售分析")
-            brand_metric = st.radio("品牌图表指标", ["净销售金额", "发货金额", "退货金额"], horizontal=True, key="brand_metric")
-            if brand_metric == "净销售金额":
-                brand_col = "net_amount"
-                brand_title = "净销售金额"
-            elif brand_metric == "发货金额":
-                brand_col = "ship_amount"
-                brand_title = "发货金额"
-            else:
-                brand_col = "return_amount"
-                brand_title = "退货金额"
-            brand_data = prod_df.groupby("brand")[brand_col].sum().reset_index()
-            brand_data = brand_data.sort_values(brand_col, ascending=False)
-            if not brand_data.empty:
-                fig = px.bar(brand_data, x="brand", y=brand_col, title=f"各品牌{brand_title}", color="brand")
-                st.plotly_chart(fig, use_container_width=True)
-        
-        # 导出（保留所有列，顺序与展示一致）
-        export_df = grouped.copy()
-        output = io.BytesIO()
-        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            export_df.to_excel(writer, index=False)
-        st.download_button("💾 导出分析结果", data=output.getvalue(), file_name="商品分析.xlsx")
+            
+            # 品牌柱状图（独立指标选择）
+            if "brand" in filtered.columns:
+                st.subheader("📈 品牌销售分析")
+                brand_metric = st.radio("品牌图表指标", ["净销售金额", "发货金额", "退货金额"], horizontal=True, key="brand_metric")
+                if brand_metric == "净销售金额":
+                    brand_col = "net_amount"
+                    brand_title = "净销售金额"
+                elif brand_metric == "发货金额":
+                    brand_col = "ship_amount"
+                    brand_title = "发货金额"
+                else:
+                    brand_col = "return_amount"
+                    brand_title = "退货金额"
+                brand_data = filtered.groupby("brand")[brand_col].sum().reset_index()
+                brand_data = brand_data.sort_values(brand_col, ascending=False)
+                if not brand_data.empty:
+                    fig = px.bar(brand_data, x="brand", y=brand_col, title=f"各品牌{brand_title}", color="brand")
+                    st.plotly_chart(fig, use_container_width=True)
+            
+            # 导出
+            export_df = grouped.copy()
+            output = io.BytesIO()
+            with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                export_df.to_excel(writer, index=False)
+            st.download_button("💾 导出分析结果", data=output.getvalue(), file_name="商品分析.xlsx")
 # ========== 调试选项卡 ==========
 with tab_debug:
     st.subheader("🔧 数据库调试信息")
