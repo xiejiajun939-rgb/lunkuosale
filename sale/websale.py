@@ -724,6 +724,7 @@ with tabs[4]:
         st.info("暂无历史数据")
 
 # ========== 商品分析 ==========
+# ========== 商品分析 ==========
 with tabs[5]:
     st.subheader("📊 商品销售分析（按货号汇总）")
     
@@ -743,6 +744,21 @@ with tabs[5]:
             prod_df["style_code"] = prod_df["style_code"].astype(str).str.strip().str.upper()
         else:
             prod_df["style_code"] = prod_df["product_code"].str[:8].str.strip().str.upper()
+        
+        # ================= 新增：提取主播（仅全部数据）=================
+        if st.session_state.table_suffix == "_all":
+            # 定义提取主播的函数
+            def extract_anchor(remark):
+                if not isinstance(remark, str):
+                    return None
+                # 匹配 "主播:xxx" 或 "主播：xxx"，直到下划线或字符串结束
+                import re
+                match = re.search(r'主播[：:]([^_]+)', remark)
+                if match:
+                    return match.group(1).strip()
+                return None
+            prod_df["anchor"] = prod_df["remark"].apply(extract_anchor)
+        # ============================================================
         
         # 日期选择器
         min_date = prod_df["sale_date"].min().date()
@@ -782,6 +798,19 @@ with tabs[5]:
                 brands = ["全部"] + sorted(filtered["brand"].dropna().unique())
                 selected_brand = st.selectbox("品牌", brands, key="brand_filter")
             
+            # ================= 新增：主播筛选（仅全部数据）=================
+            selected_anchors = []
+            if st.session_state.table_suffix == "_all" and "anchor" in filtered.columns:
+                all_anchors = filtered["anchor"].dropna().unique()
+                if len(all_anchors) > 0:
+                    selected_anchors = st.multiselect(
+                        "主播（可多选）",
+                        options=sorted(all_anchors),
+                        default=[],
+                        key="anchor_filter"
+                    )
+            # ============================================================
+            
             # 应用筛选
             if selected_platform == "抖音":
                 filtered = filtered[filtered["shop_name"].str.contains("抖音", case=False, na=False)]
@@ -795,6 +824,8 @@ with tabs[5]:
                     filtered = filtered[filtered["style_code"].isin(target_codes)]
             if selected_brand != "全部":
                 filtered = filtered[filtered["brand"] == selected_brand]
+            if selected_anchors:
+                filtered = filtered[filtered["anchor"].isin(selected_anchors)]
             
             if filtered.empty:
                 st.warning("所选条件下无销售数据")
