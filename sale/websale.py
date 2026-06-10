@@ -440,17 +440,33 @@ with tab2:
                 if range_data.empty:
                     st.warning("无数据")
                 else:
+                    # 按店铺汇总累计金额
                     summary = range_data.groupby("店铺名称")["当日金额"].sum().reset_index()
                     summary["累计金额"] = summary["当日金额"].round(2)
                     summary = summary[["店铺名称", "累计金额"]].sort_values("店铺名称")
                     st.dataframe(summary, use_container_width=True, hide_index=True)
+                    
+                    # 合计卡片
+                    douyin_df = summary[summary["店铺名称"].str.contains("抖音", case=False, na=False)]
+                    video_df = summary[summary["店铺名称"].str.contains("视频号", case=False, na=False)]
+                    douyin_total = douyin_df["累计金额"].sum()
+                    video_total = video_df["累计金额"].sum()
+                    overall_total = summary["累计金额"].sum()
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.metric("📱 抖音合计", f"{douyin_total:,.2f}")
+                    with col2:
+                        st.metric("📺 视频号合计", f"{video_total:,.2f}")
+                    with col3:
+                        st.metric("📊 总业绩合计", f"{overall_total:,.2f}")
+                    
+                    # 导出按钮
                     output = io.BytesIO()
                     with pd.ExcelWriter(output, engine='openpyxl') as writer:
                         summary.to_excel(writer, index=False)
                     st.download_button("💾 导出", data=output.getvalue(), file_name=f"累计_{start}_{end}.xlsx")
     else:
         st.info("暂无数据")
-
 # ========== 日期查询 ==========
 with tab3:
     if st.session_state.get("df_all_daily") is not None and not st.session_state.df_all_daily.empty:
@@ -465,6 +481,24 @@ with tab3:
                 res["月累计金额"] = res["月累计金额"].round(2)
                 cols = ["日期", "店铺名称", "当日金额", "月累计金额"]
                 st.dataframe(res[cols], use_container_width=True, hide_index=True)
+                
+                # 合计卡片
+                douyin_df = res[res["店铺名称"].str.contains("抖音", case=False, na=False)]
+                video_df = res[res["店铺名称"].str.contains("视频号", case=False, na=False)]
+                douyin_today = douyin_df["当日金额"].sum()
+                douyin_cum = douyin_df["月累计金额"].sum()
+                video_today = video_df["当日金额"].sum()
+                video_cum = video_df["月累计金额"].sum()
+                overall_today = res["当日金额"].sum()
+                overall_cum = res["月累计金额"].sum()
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("📱 抖音合计", f"当日: {douyin_today:,.2f}", delta=f"月累: {douyin_cum:,.2f}")
+                with col2:
+                    st.metric("📺 视频号合计", f"当日: {video_today:,.2f}", delta=f"月累: {video_cum:,.2f}")
+                with col3:
+                    st.metric("📊 总业绩合计", f"当日: {overall_today:,.2f}", delta=f"月累: {overall_cum:,.2f}")
+                
                 output = io.BytesIO()
                 with pd.ExcelWriter(output, engine='openpyxl') as writer:
                     res[cols].to_excel(writer, index=False)
@@ -483,11 +517,31 @@ with tab4:
         if dates:
             selected_date = st.selectbox("选择日期", dates, format_func=lambda x: x.strftime("%Y-%m-%d"))
             filtered = prod_df[prod_df["sale_date"] == selected_date]
+            # 按店铺汇总发货和退货
             summary = filtered.groupby("shop_name").agg(
                 当日发货=("ship_amount", "sum"),
                 当日退货=("return_amount", "sum")
             ).reset_index()
             st.dataframe(summary, use_container_width=True, hide_index=True)
+            
+            # 合计卡片（抖音、视频号、整体）
+            douyin_df = summary[summary["shop_name"].str.contains("抖音", case=False, na=False)]
+            video_df = summary[summary["shop_name"].str.contains("视频号", case=False, na=False)]
+            douyin_ship = douyin_df["当日发货"].sum()
+            douyin_return = douyin_df["当日退货"].sum()
+            video_ship = video_df["当日发货"].sum()
+            video_return = video_df["当日退货"].sum()
+            overall_ship = summary["当日发货"].sum()
+            overall_return = summary["当日退货"].sum()
+            
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("📱 抖音合计", f"发货: {douyin_ship:,.2f}", delta=f"退货: {douyin_return:,.2f}")
+            with col2:
+                st.metric("📺 视频号合计", f"发货: {video_ship:,.2f}", delta=f"退货: {video_return:,.2f}")
+            with col3:
+                st.metric("📊 总业绩合计", f"发货: {overall_ship:,.2f}", delta=f"退货: {overall_return:,.2f}")
+            
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
                 summary.to_excel(writer, index=False)
@@ -501,6 +555,48 @@ with tab5:
     daily_df = load_daily_sales()
     if not daily_df.empty:
         st.dataframe(daily_df, use_container_width=True, hide_index=True)
+        
+        # 合计卡片：计算所有店铺的当日金额合计（抖音、视频号、整体）
+        # 注意：daily_df 中的列名为 shop_name, amount（当日金额）
+        douyin_df = daily_df[daily_df["shop_name"].str.contains("抖音", case=False, na=False)]
+        video_df = daily_df[daily_df["shop_name"].str.contains("视频号", case=False, na=False)]
+        douyin_total = douyin_df["amount"].sum()
+        video_total = video_df["amount"].sum()
+        overall_total = daily_df["amount"].sum()
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("📱 抖音合计", f"{douyin_total:,.2f}")
+        with col2:
+            st.metric("📺 视频号合计", f"{video_total:,.2f}")
+        with col3:
+            st.metric("📊 总业绩合计", f"{overall_total:,.2f}")
+        
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            daily_df.to_excel(writer, index=False)
+        st.download_button("💾 导出全部", data=output.getvalue(), file_name="历史业绩.xlsx")
+    else:
+        st.info("暂无历史数据")with tab5:
+    st.subheader("所有已保存的每日业绩")
+    daily_df = load_daily_sales()
+    if not daily_df.empty:
+        st.dataframe(daily_df, use_container_width=True, hide_index=True)
+        
+        # 合计卡片：计算所有店铺的当日金额合计（抖音、视频号、整体）
+        # 注意：daily_df 中的列名为 shop_name, amount（当日金额）
+        douyin_df = daily_df[daily_df["shop_name"].str.contains("抖音", case=False, na=False)]
+        video_df = daily_df[daily_df["shop_name"].str.contains("视频号", case=False, na=False)]
+        douyin_total = douyin_df["amount"].sum()
+        video_total = video_df["amount"].sum()
+        overall_total = daily_df["amount"].sum()
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("📱 抖音合计", f"{douyin_total:,.2f}")
+        with col2:
+            st.metric("📺 视频号合计", f"{video_total:,.2f}")
+        with col3:
+            st.metric("📊 总业绩合计", f"{overall_total:,.2f}")
+        
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             daily_df.to_excel(writer, index=False)
