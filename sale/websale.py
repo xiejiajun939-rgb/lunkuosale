@@ -517,15 +517,13 @@ with tab6:
     else:
         master_df = load_product_master()
         if master_df.empty:
-            st.warning("商品库（product_master）为空，将无法显示图片和分类。请检查 RLS 设置或导入数据。")
+            st.warning("商品库（product_master）为空，将无法显示图片和分类。")
         else:
-            # 确保 master_df 有需要的列
-            if "style_code" not in master_df.columns:
-                st.error("product_master 表缺少 style_code 列，请检查表结构。")
-            else:
-                # 合并：左连接，保留所有销售记录
+            if "style_code" in master_df.columns:
                 prod_df = prod_df.merge(master_df[["style_code", "image_url", "category"]], on="style_code", how="left")
                 prod_df.rename(columns={"category": "master_category"}, inplace=True)
+            else:
+                st.error("product_master 表缺少 style_code 列")
         
         # 确保必要列
         if "brand" not in prod_df.columns or prod_df["brand"].isnull().all():
@@ -533,25 +531,9 @@ with tab6:
         else:
             prod_df["brand"] = prod_df["brand"].fillna(prod_df["product_code"].str[0])
         
-        if "year" not in prod_df.columns:
-            prod_df["year"] = None
-        if "season" not in prod_df.columns:
-            prod_df["season"] = None
-        if "size_code" not in prod_df.columns:
-            prod_df["size_code"] = None
-        
-        # 数值转换
         for col in ["ship_amount", "return_amount", "net_amount"]:
             if col in prod_df.columns:
                 prod_df[col] = pd.to_numeric(prod_df[col], errors="coerce").fillna(0)
-        
-        # 修复可能存在的列表/字典问题
-        for col in ["master_category", "image_url"]:
-            if col in prod_df.columns:
-                prod_df[col] = prod_df[col].apply(
-                    lambda x: x[0] if isinstance(x, list) else (str(list(x.values())[0]) if isinstance(x, dict) else x)
-                )
-                prod_df[col] = prod_df[col].astype(str).replace("nan", "").replace("None", "")
         
         # 日期筛选
         if prod_df["sale_date"].notna().any():
@@ -596,18 +578,21 @@ with tab6:
         if filtered.empty:
             st.warning("所选条件下无销售数据")
         else:
-            # 确保分组列为字符串
-            for col in ["style_code", "master_category", "image_url"]:
-                if col in filtered.columns:
-                    filtered[col] = filtered[col].astype(str)
-            
-            grouped = filtered.groupby(["style_code", "master_category", "image_url"]).agg(
+            # 按货号聚合（不包含分类和图片，避免分组维度错误）
+            grouped = filtered.groupby("style_code").agg(
                 发货金额=("ship_amount", "sum"),
                 退货金额=("return_amount", "sum"),
                 净销售金额=("net_amount", "sum")
             ).reset_index()
             grouped = grouped.sort_values("净销售金额", ascending=False)
             grouped.rename(columns={"style_code": "货号"}, inplace=True)
+            
+            # 从合并后的数据中获取每个货号对应的图片和分类（取第一个非空值）
+            # 因为合并后 master_category 和 image_url 可能有多行（同一货号多条销售记录），但我们的分组已经按货号聚合，需要取回这些属性
+            # 方法：从 filtered 中按货号去重，取第一条记录的 master_category 和 image_url
+            attr_df = filtered.groupby("style_code")[["master_category", "image_url"]].first().reset_index()
+            attr_df.rename(columns={"style_code": "货号"}, inplace=True)
+            grouped = grouped.merge(attr_df, on="货号", how="left")
             
             st.subheader("📋 商品销售汇总（按货号）")
             st.dataframe(
@@ -624,7 +609,7 @@ with tab6:
                 use_container_width=True
             )
             
-            # 饼图
+            # 饼图（如果 master_category 非空）
             cat_summary = filtered.groupby("master_category")["net_amount"].sum().reset_index()
             cat_summary = cat_summary[cat_summary["master_category"].notna() & (cat_summary["master_category"] != "")]
             if not cat_summary.empty:
@@ -650,7 +635,7 @@ with tab6:
             st.plotly_chart(fig, use_container_width=True)
             
             # 导出
-            export_df = grouped.drop(columns=["image_url"]) if "image_url" in grouped.columns else grouped
+            export_df = grouped.drop(columns=["image_url"])
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
                 export_df.to_excel(writer, index=False)
