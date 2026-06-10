@@ -386,6 +386,8 @@ with st.sidebar:
         new_suffix = "" if data_source == "非直播数据" else "_live"
         if new_suffix != current_suffix:
             st.session_state.table_suffix = new_suffix
+            # 切换数据源时清除商品销售相关缓存，强制重新加载
+            st.cache_data.clear()
             st.rerun()
         
         st.markdown("---")
@@ -600,7 +602,7 @@ with tab3:
 # ========== 发货退货明细 ==========
 with tab4:
     st.subheader("📦 发货退货明细（按店铺）")
-    # 【修改点】传入当前数据源后缀
+    # 传入当前数据源后缀
     prod_df = load_product_sales(st.session_state.table_suffix)
     if prod_df.empty:
         st.info("暂无商品数据，请先上传订单文件")
@@ -668,7 +670,7 @@ with tab5:
 # ========== 商品分析 ==========
 with tab6:
     st.subheader("📊 商品销售分析（按货号汇总）")
-    # 【修改点】传入当前数据源后缀
+    # 传入当前数据源后缀
     prod_df = load_product_sales(st.session_state.table_suffix)
     if prod_df.empty:
         st.warning("暂无商品销售数据，请先上传订单文件。")
@@ -781,50 +783,81 @@ with tab6:
                 st.subheader("📊 销售分布")
                 col1, col2, col3 = st.columns(3)
                 
+                # 1. 按分类饼图（即使全为空也显示一个扇区）
                 with col1:
-                    if not grouped["master_category"].isnull().all():
-                        pie_data = grouped.groupby("master_category")[grouped_metric_col].sum().reset_index()
-                        pie_data = pie_data[pie_data["master_category"].notna()]
-                        if not pie_data.empty:
-                            fig = px.pie(pie_data, names="master_category", values=grouped_metric_col, 
+                    if grouped["master_category"].isnull().all():
+                        # 所有分类为空：显示一个饼图，标记为“未分类”
+                        total_val = grouped[grouped_metric_col].sum()
+                        if total_val > 0:
+                            pie_data = pd.DataFrame({"master_category": ["未分类 (请检查商品库映射)"], grouped_metric_col: [total_val]})
+                            fig = px.pie(pie_data, names="master_category", values=grouped_metric_col,
                                          title=f"按分类 - {pie_metric}", hole=0.3,
                                          color_discrete_sequence=px.colors.qualitative.Pastel)
                             fig.update_traces(textposition='inside', textinfo='percent+label')
                             st.plotly_chart(fig, use_container_width=True)
                         else:
-                            st.info("无分类数据")
+                            st.info("无销售金额，无法生成饼图")
                     else:
-                        st.info("无分类数据")
+                        pie_data = grouped.groupby("master_category")[grouped_metric_col].sum().reset_index()
+                        pie_data = pie_data[pie_data["master_category"].notna()]
+                        if not pie_data.empty:
+                            fig = px.pie(pie_data, names="master_category", values=grouped_metric_col,
+                                         title=f"按分类 - {pie_metric}", hole=0.3,
+                                         color_discrete_sequence=px.colors.qualitative.Pastel)
+                            fig.update_traces(textposition='inside', textinfo='percent+label')
+                            st.plotly_chart(fig, use_container_width=True)
+                        else:
+                            st.info("无有效分类数据")
                 
+                # 2. 按年份饼图
                 with col2:
-                    if "year" in filtered.columns and not filtered["year"].isnull().all():
-                        year_data = filtered.groupby("year")[metric_col].sum().reset_index()
-                        year_data = year_data[year_data["year"].notna()]
-                        if not year_data.empty:
-                            fig = px.pie(year_data, names="year", values=metric_col, 
+                    if "year" not in filtered.columns or filtered["year"].isnull().all():
+                        total_val = filtered[metric_col].sum()
+                        if total_val > 0:
+                            year_data = pd.DataFrame({"year": ["无年份信息"], metric_col: [total_val]})
+                            fig = px.pie(year_data, names="year", values=metric_col,
                                          title=f"按年份 - {pie_metric}", hole=0.3,
                                          color_discrete_sequence=px.colors.qualitative.Set2)
                             fig.update_traces(textposition='inside', textinfo='percent+label')
                             st.plotly_chart(fig, use_container_width=True)
                         else:
-                            st.info("无年份数据")
+                            st.info("无销售金额")
                     else:
-                        st.info("无年份数据")
+                        year_data = filtered.groupby("year")[metric_col].sum().reset_index()
+                        year_data = year_data[year_data["year"].notna()]
+                        if not year_data.empty:
+                            fig = px.pie(year_data, names="year", values=metric_col,
+                                         title=f"按年份 - {pie_metric}", hole=0.3,
+                                         color_discrete_sequence=px.colors.qualitative.Set2)
+                            fig.update_traces(textposition='inside', textinfo='percent+label')
+                            st.plotly_chart(fig, use_container_width=True)
+                        else:
+                            st.info("无有效年份数据")
                 
+                # 3. 按季节饼图
                 with col3:
-                    if "season" in filtered.columns and not filtered["season"].isnull().all():
-                        season_data = filtered.groupby("season")[metric_col].sum().reset_index()
-                        season_data = season_data[season_data["season"].notna()]
-                        if not season_data.empty:
-                            fig = px.pie(season_data, names="season", values=metric_col, 
+                    if "season" not in filtered.columns or filtered["season"].isnull().all():
+                        total_val = filtered[metric_col].sum()
+                        if total_val > 0:
+                            season_data = pd.DataFrame({"season": ["无季节信息"], metric_col: [total_val]})
+                            fig = px.pie(season_data, names="season", values=metric_col,
                                          title=f"按季节 - {pie_metric}", hole=0.3,
                                          color_discrete_sequence=px.colors.qualitative.Set1)
                             fig.update_traces(textposition='inside', textinfo='percent+label')
                             st.plotly_chart(fig, use_container_width=True)
                         else:
-                            st.info("无季节数据")
+                            st.info("无销售金额")
                     else:
-                        st.info("无季节数据")
+                        season_data = filtered.groupby("season")[metric_col].sum().reset_index()
+                        season_data = season_data[season_data["season"].notna()]
+                        if not season_data.empty:
+                            fig = px.pie(season_data, names="season", values=metric_col,
+                                         title=f"按季节 - {pie_metric}", hole=0.3,
+                                         color_discrete_sequence=px.colors.qualitative.Set1)
+                            fig.update_traces(textposition='inside', textinfo='percent+label')
+                            st.plotly_chart(fig, use_container_width=True)
+                        else:
+                            st.info("无有效季节数据")
                 
                 if "brand" in filtered.columns:
                     st.subheader("📈 品牌销售分析")
