@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-订单业绩统计工具 - 最终版（商品分析适配已有 product_master）
+订单业绩统计工具 - 最终修复版（商品库关联正常）
 访问密码：94949468
 """
 
@@ -163,7 +163,7 @@ def parse_product_code(remark):
     except:
         return None
 
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=600)
 def load_product_master():
     if supabase is None:
         return pd.DataFrame()
@@ -171,12 +171,12 @@ def load_product_master():
         resp = supabase.table("product_master").select("*").execute()
         if resp.data:
             df = pd.DataFrame(resp.data)
+            # 原表列名：product_code, image_url, category
+            # 重命名为 master_code 以便合并
             if "product_code" in df.columns:
                 df = df.rename(columns={"product_code": "master_code"})
             return df
         else:
-            # 调试输出
-            st.warning("product_master 表查询成功但无数据")
             return pd.DataFrame()
     except Exception as e:
         st.error(f"加载商品库失败：{e}")
@@ -235,7 +235,6 @@ def load_product_sales():
         if resp.data:
             df = pd.DataFrame(resp.data)
             df["sale_date"] = pd.to_datetime(df["sale_date"])
-            # 确保 style_code 存在
             if "style_code" not in df.columns or df["style_code"].isnull().all():
                 df["style_code"] = df["product_code"].str[:8]
             else:
@@ -509,27 +508,24 @@ with tab5:
     else:
         st.info("暂无历史数据")
 
-# ========== 商品分析（优先使用 product_sales 中的字段） ==========
+# ========== 商品分析（修复关联） ==========
 with tab6:
     st.subheader("📊 商品销售分析（按货号汇总）")
     
+    # 加载数据
     prod_df = load_product_sales()
     if prod_df.empty:
         st.warning("暂无商品销售数据，请先上传订单文件。")
     else:
-        # 如果 product_sales 中已经有 image_url 和 master_category，则直接使用；否则尝试从 product_master 补充
+        # 加载商品库
         master_df = load_product_master()
-        if not master_df.empty and ("image_url" not in prod_df.columns or prod_df["image_url"].isnull().all()):
-            # 只有当 product_sales 中缺失时才关联
-            master_df = master_df.rename(columns={"master_code": "style_code"})
-            prod_df = prod_df.merge(master_df[["style_code", "image_url", "category"]], on="style_code", how="left")
-            prod_df.rename(columns={"category": "master_category"}, inplace=True)
+        if master_df.empty:
+            st.warning("商品库（product_master）为空，将无法显示图片和分类。请检查 RLS 设置或导入数据。")
         else:
-            # 确保列存在
-            if "master_category" not in prod_df.columns:
-                prod_df["master_category"] = None
-            if "image_url" not in prod_df.columns:
-                prod_df["image_url"] = None
+            # 合并：product_sales 的 style_code 匹配 product_master 的 master_code
+            # 注意：master_df 已经将 product_code 重命名为 master_code
+            prod_df = prod_df.merge(master_df[["master_code", "image_url", "category"]], left_on="style_code", right_on="master_code", how="left")
+            prod_df.rename(columns={"category": "master_category"}, inplace=True)
         
         # 确保必要列
         if "brand" not in prod_df.columns or prod_df["brand"].isnull().all():
