@@ -599,10 +599,20 @@ with tab5:
 with tab6:
     st.subheader("📊 商品销售分析（按货号汇总）")
     
+    # 可选：临时清除缓存（调试用，部署后可删除）
+    # st.cache_data.clear()
+    
     prod_df = load_product_sales()
     if prod_df.empty:
         st.warning("暂无商品销售数据，请先上传订单文件。")
     else:
+        # 清洗销售表中的 style_code（去除空格、转大写）
+        if "style_code" in prod_df.columns:
+            prod_df["style_code"] = prod_df["style_code"].astype(str).str.strip().str.upper()
+        else:
+            prod_df["style_code"] = prod_df["product_code"].str[:8].str.strip().str.upper()
+        
+        # 日期筛选
         min_date = prod_df["sale_date"].min().date()
         max_date = prod_df["sale_date"].max().date()
         col_date1, col_date2 = st.columns(2)
@@ -616,6 +626,7 @@ with tab6:
         if filtered.empty:
             st.warning("所选日期范围内无销售数据")
         else:
+            # 按货号聚合销售金额
             grouped = filtered.groupby("style_code").agg(
                 发货金额=("ship_amount", "sum"),
                 退货金额=("return_amount", "sum"),
@@ -624,18 +635,23 @@ with tab6:
             grouped = grouped.sort_values("净销售金额", ascending=False)
             grouped.rename(columns={"style_code": "货号"}, inplace=True)
             
+            # 加载商品库并清洗 style_code
             master_df = load_product_master()
             if not master_df.empty and "style_code" in master_df.columns:
-                attr = master_df[["style_code", "image_url", "category"]].drop_duplicates(subset="style_code")
+                master_df["style_code"] = master_df["style_code"].astype(str).str.strip().str.upper()
+                master_df = master_df.drop_duplicates(subset="style_code", keep="first")
+                attr = master_df[["style_code", "image_url", "category"]].copy()
                 attr.rename(columns={"style_code": "货号", "category": "master_category"}, inplace=True)
                 grouped = grouped.merge(attr, on="货号", how="left")
             else:
                 grouped["master_category"] = None
                 grouped["image_url"] = None
             
+            # 确保列顺序
             col_order = ["货号", "master_category", "发货金额", "退货金额", "净销售金额", "image_url"]
             grouped = grouped[col_order]
             
+            # 显示表格
             st.dataframe(
                 grouped,
                 column_config={
@@ -650,6 +666,7 @@ with tab6:
                 use_container_width=True
             )
             
+            # 饼图指标选择器（与之前相同，省略...）
             pie_metric = st.radio("饼图指标", ["净销售金额", "发货金额", "退货金额"], horizontal=True, key="pie_metric")
             if pie_metric == "净销售金额":
                 metric_col = "net_amount"
@@ -664,6 +681,7 @@ with tab6:
             st.subheader("📊 销售分布")
             col1, col2, col3 = st.columns(3)
             
+            # 按商品分类
             with col1:
                 if not grouped["master_category"].isnull().all():
                     pie_data = grouped.groupby("master_category")[grouped_metric_col].sum().reset_index()
@@ -679,6 +697,7 @@ with tab6:
                 else:
                     st.info("无分类数据")
             
+            # 按年份
             with col2:
                 if "year" in filtered.columns and not filtered["year"].isnull().all():
                     year_data = filtered.groupby("year")[metric_col].sum().reset_index()
@@ -694,6 +713,7 @@ with tab6:
                 else:
                     st.info("无年份数据")
             
+            # 按季节
             with col3:
                 if "season" in filtered.columns and not filtered["season"].isnull().all():
                     season_data = filtered.groupby("season")[metric_col].sum().reset_index()
@@ -709,6 +729,7 @@ with tab6:
                 else:
                     st.info("无季节数据")
             
+            # 品牌柱状图
             if "brand" in filtered.columns:
                 st.subheader("📈 品牌销售分析")
                 brand_metric = st.radio("品牌图表指标", ["净销售金额", "发货金额", "退货金额"], horizontal=True, key="brand_metric")
@@ -727,7 +748,8 @@ with tab6:
                     fig = px.bar(brand_data, x="brand", y=brand_col, title=f"各品牌{brand_title}", color="brand")
                     st.plotly_chart(fig, use_container_width=True)
             
-            export_df = grouped.copy()
+            # 导出
+            export_df = grouped.drop(columns=["image_url"])
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
                 export_df.to_excel(writer, index=False)
