@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-订单业绩统计工具 - 最终稳定版（商品分析已修复）
+订单业绩统计工具 - 最终版（商品分析饼图支持切换指标）
 访问密码：94949468
 """
 
@@ -235,7 +235,6 @@ def load_product_sales():
                 df["style_code"] = df["product_code"].str[:8]
             else:
                 df["style_code"] = df["style_code"].fillna(df["product_code"].str[:8])
-            # 确保金额列为数值
             for col in ["ship_amount", "return_amount", "net_amount"]:
                 if col in df.columns:
                     df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
@@ -509,7 +508,7 @@ with tab5:
     else:
         st.info("暂无历史数据")
 
-# ========== 商品分析（稳健版本） ==========
+# ========== 商品分析（饼图支持切换指标） ==========
 with tab6:
     st.subheader("📊 商品销售分析（按货号汇总）")
     
@@ -517,7 +516,7 @@ with tab6:
     if prod_df.empty:
         st.warning("暂无商品销售数据，请先上传订单文件。")
     else:
-        # 1. 销售聚合（按 style_code）
+        # 1. 按货号聚合销售金额
         grouped = prod_df.groupby("style_code").agg(
             发货金额=("ship_amount", "sum"),
             退货金额=("return_amount", "sum"),
@@ -526,7 +525,7 @@ with tab6:
         grouped = grouped.sort_values("净销售金额", ascending=False)
         grouped.rename(columns={"style_code": "货号"}, inplace=True)
         
-        # 2. 加载商品库获取图片和分类
+        # 2. 关联商品库获取图片和分类
         master_df = load_product_master()
         if not master_df.empty and "style_code" in master_df.columns:
             attr = master_df[["style_code", "image_url", "category"]].drop_duplicates(subset="style_code")
@@ -536,6 +535,7 @@ with tab6:
             grouped["master_category"] = None
             grouped["image_url"] = None
         
+        # 显示表格
         st.dataframe(
             grouped,
             column_config={
@@ -550,17 +550,21 @@ with tab6:
             use_container_width=True
         )
         
-        # 饼图（按分类）
+        # 饼图（按分类，可选择指标）
         if not grouped["master_category"].isnull().all():
-            pie_data = grouped.groupby("master_category")["净销售金额"].sum().reset_index()
+            pie_metric = st.radio("饼图指标", ["净销售金额", "发货金额", "退货金额"], horizontal=True)
+            pie_col = {"净销售金额": "净销售金额", "发货金额": "发货金额", "退货金额": "退货金额"}[pie_metric]
+            pie_data = grouped.groupby("master_category")[pie_col].sum().reset_index()
             pie_data = pie_data[pie_data["master_category"].notna()]
             if not pie_data.empty:
-                st.subheader("📊 按商品分类净销售占比")
-                fig = px.pie(pie_data, names="master_category", values="净销售金额", 
-                             title="净销售金额分布", hole=0.3,
+                st.subheader(f"📊 按商品分类{pie_metric}占比")
+                fig = px.pie(pie_data, names="master_category", values=pie_col, 
+                             title=f"{pie_metric}分布", hole=0.3,
                              color_discrete_sequence=px.colors.qualitative.Pastel)
                 fig.update_traces(textposition='inside', textinfo='percent+label')
                 st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("暂无商品分类数据，请检查商品库关联")
         
         # 柱状图（按品牌）
         if "brand" in prod_df.columns:
