@@ -647,8 +647,8 @@ with tab6:
                 grouped["master_category"] = None
                 grouped["image_url"] = None
             
-            # 确保列顺序
-            col_order = ["货号", "master_category", "发货金额", "退货金额", "净销售金额", "image_url"]
+            # 调整列顺序：货号 → 图片 → 商品分类 → 发货金额 → 退货金额 → 净销售金额
+            col_order = ["货号", "image_url", "master_category", "发货金额", "退货金额", "净销售金额"]
             grouped = grouped[col_order]
             
             # 显示表格
@@ -656,17 +656,17 @@ with tab6:
                 grouped,
                 column_config={
                     "货号": st.column_config.TextColumn("货号"),
+                    "image_url": st.column_config.ImageColumn("商品图片", help="点击放大"),
                     "master_category": "商品分类",
                     "发货金额": st.column_config.NumberColumn("发货金额", format="%.2f"),
                     "退货金额": st.column_config.NumberColumn("退货金额", format="%.2f"),
-                    "净销售金额": st.column_config.NumberColumn("净销售金额", format="%.2f"),
-                    "image_url": st.column_config.ImageColumn("商品图片", help="点击放大")
+                    "净销售金额": st.column_config.NumberColumn("净销售金额", format="%.2f")
                 },
                 hide_index=True,
                 use_container_width=True
             )
             
-            # 饼图指标选择器（与之前相同，省略...）
+            # 饼图指标选择器（与之前相同，保持不变）
             pie_metric = st.radio("饼图指标", ["净销售金额", "发货金额", "退货金额"], horizontal=True, key="pie_metric")
             if pie_metric == "净销售金额":
                 metric_col = "net_amount"
@@ -681,7 +681,7 @@ with tab6:
             st.subheader("📊 销售分布")
             col1, col2, col3 = st.columns(3)
             
-            # 按商品分类
+            # 按商品分类（使用 grouped 中的 master_category）
             with col1:
                 if not grouped["master_category"].isnull().all():
                     pie_data = grouped.groupby("master_category")[grouped_metric_col].sum().reset_index()
@@ -748,8 +748,9 @@ with tab6:
                     fig = px.bar(brand_data, x="brand", y=brand_col, title=f"各品牌{brand_title}", color="brand")
                     st.plotly_chart(fig, use_container_width=True)
             
-            # 导出
-            export_df = grouped.drop(columns=["image_url"])
+            # 导出（导出时移除图片列，保持剩余列顺序）
+            export_cols = ["货号", "master_category", "发货金额", "退货金额", "净销售金额"]
+            export_df = grouped[export_cols].copy()
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
                 export_df.to_excel(writer, index=False)
