@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-订单业绩统计工具 - 最终稳定版（适配现有表结构）
+订单业绩统计工具 - 最终稳定版（修复分组错误）
 访问密码：94949468
 """
 
@@ -171,7 +171,6 @@ def load_product_master():
         resp = supabase.table("product_master").select("*").execute()
         if resp.data:
             df = pd.DataFrame(resp.data)
-            # 确保列名正确：style_code, image_url, category
             return df
         else:
             return pd.DataFrame()
@@ -232,7 +231,6 @@ def load_product_sales():
         if resp.data:
             df = pd.DataFrame(resp.data)
             df["sale_date"] = pd.to_datetime(df["sale_date"])
-            # 确保 style_code 存在
             if "style_code" not in df.columns or df["style_code"].isnull().all():
                 df["style_code"] = df["product_code"].str[:8]
             else:
@@ -507,7 +505,7 @@ with tab5:
     else:
         st.info("暂无历史数据")
 
-# ========== 商品分析（正确合并，处理非标量） ==========
+# ========== 商品分析（修复分组错误） ==========
 with tab6:
     st.subheader("📊 商品销售分析（按货号汇总）")
     
@@ -519,6 +517,7 @@ with tab6:
         if master_df.empty:
             st.warning("商品库（product_master）为空，将无法显示图片和分类。")
         else:
+            # 合并商品库
             if "style_code" in master_df.columns:
                 prod_df = prod_df.merge(master_df[["style_code", "image_url", "category"]], on="style_code", how="left")
                 prod_df.rename(columns={"category": "master_category"}, inplace=True)
@@ -587,9 +586,7 @@ with tab6:
             grouped = grouped.sort_values("净销售金额", ascending=False)
             grouped.rename(columns={"style_code": "货号"}, inplace=True)
             
-            # 从合并后的数据中获取每个货号对应的图片和分类（取第一个非空值）
-            # 因为合并后 master_category 和 image_url 可能有多行（同一货号多条销售记录），但我们的分组已经按货号聚合，需要取回这些属性
-            # 方法：从 filtered 中按货号去重，取第一条记录的 master_category 和 image_url
+            # 获取每个货号对应的图片和分类（取第一条非空值）
             attr_df = filtered.groupby("style_code")[["master_category", "image_url"]].first().reset_index()
             attr_df.rename(columns={"style_code": "货号"}, inplace=True)
             grouped = grouped.merge(attr_df, on="货号", how="left")
@@ -609,7 +606,7 @@ with tab6:
                 use_container_width=True
             )
             
-            # 饼图（如果 master_category 非空）
+            # 饼图
             cat_summary = filtered.groupby("master_category")["net_amount"].sum().reset_index()
             cat_summary = cat_summary[cat_summary["master_category"].notna() & (cat_summary["master_category"] != "")]
             if not cat_summary.empty:
