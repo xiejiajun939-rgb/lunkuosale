@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-订单业绩统计工具 - 完整版（所有选项卡均含平台合计）
+订单业绩统计工具 - 完整版（含商品库导出）
 访问密码：94949468
 """
 
@@ -361,7 +361,10 @@ with st.sidebar:
         clear_targets()
 
 # ========== 创建选项卡 ==========
-tab1, tab2, tab3, tab4, tab5, tab6, tab_debug = st.tabs(["📅 最新日明细", "🏪 日期范围累计", "🔍 日期查询", "📦 发货退货明细", "🗄️ 历史业绩", "📊 商品分析", "🔧 调试"])
+tab1, tab2, tab3, tab4, tab5, tab6, tab_debug, tab_export = st.tabs([
+    "📅 最新日明细", "🏪 日期范围累计", "🔍 日期查询", "📦 发货退货明细", 
+    "🗄️ 历史业绩", "📊 商品分析", "🔧 调试", "📚 商品库导出"
+])
 
 # ========== 最新日明细 ==========
 with tab1:
@@ -445,7 +448,6 @@ with tab2:
                     summary = summary[["店铺名称", "累计金额"]].sort_values("店铺名称")
                     st.dataframe(summary, use_container_width=True, hide_index=True)
                     
-                    # 合计卡片
                     douyin_df = summary[summary["店铺名称"].str.contains("抖音", case=False, na=False)]
                     video_df = summary[summary["店铺名称"].str.contains("视频号", case=False, na=False)]
                     douyin_total = douyin_df["累计金额"].sum()
@@ -481,7 +483,6 @@ with tab3:
                 cols = ["日期", "店铺名称", "当日金额", "月累计金额"]
                 st.dataframe(res[cols], use_container_width=True, hide_index=True)
                 
-                # 合计卡片
                 douyin_df = res[res["店铺名称"].str.contains("抖音", case=False, na=False)]
                 video_df = res[res["店铺名称"].str.contains("视频号", case=False, na=False)]
                 douyin_today = douyin_df["当日金额"].sum()
@@ -522,7 +523,6 @@ with tab4:
             ).reset_index()
             st.dataframe(summary, use_container_width=True, hide_index=True)
             
-            # 合计卡片
             douyin_df = summary[summary["shop_name"].str.contains("抖音", case=False, na=False)]
             video_df = summary[summary["shop_name"].str.contains("视频号", case=False, na=False)]
             douyin_ship = douyin_df["当日发货"].sum()
@@ -553,7 +553,6 @@ with tab5:
     if not daily_df.empty:
         st.dataframe(daily_df, use_container_width=True, hide_index=True)
         
-        # 合计卡片
         douyin_df = daily_df[daily_df["shop_name"].str.contains("抖音", case=False, na=False)]
         video_df = daily_df[daily_df["shop_name"].str.contains("视频号", case=False, na=False)]
         douyin_total = douyin_df["amount"].sum()
@@ -574,7 +573,7 @@ with tab5:
     else:
         st.info("暂无历史数据")
 
-# ========== 商品分析（带时间筛选和饼图） ==========
+# ========== 商品分析 ==========
 with tab6:
     st.subheader("📊 商品销售分析（按货号汇总）")
     
@@ -582,7 +581,6 @@ with tab6:
     if prod_df.empty:
         st.warning("暂无商品销售数据，请先上传订单文件。")
     else:
-        # 日期筛选
         min_date = prod_df["sale_date"].min().date()
         max_date = prod_df["sale_date"].max().date()
         col_date1, col_date2 = st.columns(2)
@@ -596,7 +594,6 @@ with tab6:
         if filtered.empty:
             st.warning("所选日期范围内无销售数据")
         else:
-            # 1. 按货号聚合销售金额
             grouped = filtered.groupby("style_code").agg(
                 发货金额=("ship_amount", "sum"),
                 退货金额=("return_amount", "sum"),
@@ -605,7 +602,6 @@ with tab6:
             grouped = grouped.sort_values("净销售金额", ascending=False)
             grouped.rename(columns={"style_code": "货号"}, inplace=True)
             
-            # 2. 关联商品库获取图片和分类
             master_df = load_product_master()
             if not master_df.empty and "style_code" in master_df.columns:
                 attr = master_df[["style_code", "image_url", "category"]].drop_duplicates(subset="style_code")
@@ -615,11 +611,9 @@ with tab6:
                 grouped["master_category"] = None
                 grouped["image_url"] = None
             
-            # 确保列顺序
             col_order = ["货号", "master_category", "发货金额", "退货金额", "净销售金额", "image_url"]
             grouped = grouped[col_order]
             
-            # 显示表格
             st.dataframe(
                 grouped,
                 column_config={
@@ -634,7 +628,6 @@ with tab6:
                 use_container_width=True
             )
             
-            # 饼图指标选择器
             pie_metric = st.radio("饼图指标", ["净销售金额", "发货金额", "退货金额"], horizontal=True, key="pie_metric")
             if pie_metric == "净销售金额":
                 metric_col = "net_amount"
@@ -649,7 +642,6 @@ with tab6:
             st.subheader("📊 销售分布")
             col1, col2, col3 = st.columns(3)
             
-            # 按商品分类
             with col1:
                 if not grouped["master_category"].isnull().all():
                     pie_data = grouped.groupby("master_category")[grouped_metric_col].sum().reset_index()
@@ -665,7 +657,6 @@ with tab6:
                 else:
                     st.info("无分类数据")
             
-            # 按年份
             with col2:
                 if "year" in filtered.columns and not filtered["year"].isnull().all():
                     year_data = filtered.groupby("year")[metric_col].sum().reset_index()
@@ -681,7 +672,6 @@ with tab6:
                 else:
                     st.info("无年份数据")
             
-            # 按季节
             with col3:
                 if "season" in filtered.columns and not filtered["season"].isnull().all():
                     season_data = filtered.groupby("season")[metric_col].sum().reset_index()
@@ -697,7 +687,6 @@ with tab6:
                 else:
                     st.info("无季节数据")
             
-            # 品牌柱状图
             if "brand" in filtered.columns:
                 st.subheader("📈 品牌销售分析")
                 brand_metric = st.radio("品牌图表指标", ["净销售金额", "发货金额", "退货金额"], horizontal=True, key="brand_metric")
@@ -716,7 +705,6 @@ with tab6:
                     fig = px.bar(brand_data, x="brand", y=brand_col, title=f"各品牌{brand_title}", color="brand")
                     st.plotly_chart(fig, use_container_width=True)
             
-            # 导出
             export_df = grouped.copy()
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
@@ -751,3 +739,25 @@ with tab_debug:
                 st.dataframe(pd.DataFrame(sample.data))
         except Exception as e:
             st.error(f"查询失败: {e}")
+
+# ========== 商品库导出选项卡 ==========
+with tab_export:
+    st.subheader("📚 导出商品库数据（product_master）")
+    master_df = load_product_master()
+    if master_df.empty:
+        st.warning("商品库（product_master）为空，无法导出。")
+    else:
+        st.write(f"当前商品库共有 **{len(master_df)}** 条记录。")
+        with st.expander("点击预览商品库数据"):
+            st.dataframe(master_df.head(10), use_container_width=True)
+        
+        # 导出为 Excel
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            master_df.to_excel(writer, index=False)
+        st.download_button(
+            label="📥 导出全部商品库数据 (Excel)",
+            data=output.getvalue(),
+            file_name=f"product_master_{date.today()}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
