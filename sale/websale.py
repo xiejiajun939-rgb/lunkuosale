@@ -600,7 +600,8 @@ with tab3:
 # ========== 发货退货明细 ==========
 with tab4:
     st.subheader("📦 发货退货明细（按店铺）")
-    prod_df = load_product_sales()
+    # 【修改点】传入当前数据源后缀
+    prod_df = load_product_sales(st.session_state.table_suffix)
     if prod_df.empty:
         st.info("暂无商品数据，请先上传订单文件")
     else:
@@ -667,7 +668,8 @@ with tab5:
 # ========== 商品分析 ==========
 with tab6:
     st.subheader("📊 商品销售分析（按货号汇总）")
-    prod_df = load_product_sales()
+    # 【修改点】传入当前数据源后缀
+    prod_df = load_product_sales(st.session_state.table_suffix)
     if prod_df.empty:
         st.warning("暂无商品销售数据，请先上传订单文件。")
     else:
