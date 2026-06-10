@@ -637,23 +637,49 @@ with tab6:
         else:
             # 筛选条件区域
             st.subheader("🔍 筛选条件")
-            col_filters = st.columns([2, 1])
-            with col_filters[0]:
+            
+            # 第一行：平台 + 店铺
+            col_platform, col_shop = st.columns(2)
+            with col_platform:
+                platform_options = ["全部", "抖音", "视频号"]
+                selected_platform = st.selectbox("平台", platform_options, key="platform_filter")
+            
+            # 店铺筛选（根据平台动态更新选项）
+            all_shops = filtered["shop_name"].unique()
+            if selected_platform == "抖音":
+                shop_options = [shop for shop in all_shops if "抖音" in shop]
+            elif selected_platform == "视频号":
+                shop_options = [shop for shop in all_shops if "视频号" in shop]
+            else:
+                shop_options = list(all_shops)
+            selected_shops = st.multiselect("店铺（可多选）", options=sorted(shop_options), default=[], key="shop_filter")
+            
+            # 第二行：货号 + 品牌
+            col_code, col_brand = st.columns(2)
+            with col_code:
                 style_codes_input = st.text_input(
-                    "按货号筛选（多个请用英文逗号分隔）",
+                    "货号筛选（多个用英文逗号分隔）",
                     placeholder="例如: L262Y050, G262Y030",
                     key="style_code_filter"
                 )
-            with col_filters[1]:
+            with col_brand:
                 brands = ["全部"] + sorted(filtered["brand"].dropna().unique())
                 selected_brand = st.selectbox("品牌", brands, key="brand_filter")
             
-            # 处理货号筛选
+            # 应用筛选
+            # 平台筛选
+            if selected_platform == "抖音":
+                filtered = filtered[filtered["shop_name"].str.contains("抖音", case=False, na=False)]
+            elif selected_platform == "视频号":
+                filtered = filtered[filtered["shop_name"].str.contains("视频号", case=False, na=False)]
+            # 店铺筛选
+            if selected_shops:
+                filtered = filtered[filtered["shop_name"].isin(selected_shops)]
+            # 货号筛选
             if style_codes_input.strip():
                 target_codes = [code.strip().upper() for code in style_codes_input.split(",") if code.strip()]
                 if target_codes:
                     filtered = filtered[filtered["style_code"].isin(target_codes)]
-            
             # 品牌筛选
             if selected_brand != "全部":
                 filtered = filtered[filtered["brand"] == selected_brand]
@@ -786,7 +812,6 @@ with tab6:
                 with pd.ExcelWriter(output, engine='openpyxl') as writer:
                     export_df.to_excel(writer, index=False)
                 st.download_button("💾 导出分析结果", data=output.getvalue(), file_name="商品分析.xlsx")
-
 # ========== 调试选项卡 ==========
 with tab_debug:
     st.subheader("🔧 数据库调试信息")
