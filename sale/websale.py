@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-订单业绩统计工具 - 最终版（商品分析饼图支持切换指标）
+订单业绩统计工具 - 最终版（商品分析三饼图：分类/年份/季节）
 访问密码：94949468
 """
 
@@ -508,7 +508,7 @@ with tab5:
     else:
         st.info("暂无历史数据")
 
-# ========== 商品分析（饼图支持切换指标） ==========
+# ========== 商品分析（三个饼图：分类、年份、季节） ==========
 with tab6:
     st.subheader("📊 商品销售分析（按货号汇总）")
     
@@ -550,21 +550,61 @@ with tab6:
             use_container_width=True
         )
         
-        # 饼图（按分类，可选择指标）
-        if not grouped["master_category"].isnull().all():
-            pie_metric = st.radio("饼图指标", ["净销售金额", "发货金额", "退货金额"], horizontal=True)
-            pie_col = {"净销售金额": "净销售金额", "发货金额": "发货金额", "退货金额": "退货金额"}[pie_metric]
-            pie_data = grouped.groupby("master_category")[pie_col].sum().reset_index()
-            pie_data = pie_data[pie_data["master_category"].notna()]
-            if not pie_data.empty:
-                st.subheader(f"📊 按商品分类{pie_metric}占比")
-                fig = px.pie(pie_data, names="master_category", values=pie_col, 
-                             title=f"{pie_metric}分布", hole=0.3,
-                             color_discrete_sequence=px.colors.qualitative.Pastel)
-                fig.update_traces(textposition='inside', textinfo='percent+label')
-                st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.info("暂无商品分类数据，请检查商品库关联")
+        # 指标选择器（用于所有饼图）
+        pie_metric = st.radio("饼图指标", ["净销售金额", "发货金额", "退货金额"], horizontal=True)
+        metric_col = {"净销售金额": "净销售金额", "发货金额": "发货金额", "退货金额": "退货金额"}[pie_metric]
+        
+        st.subheader("📊 销售分布")
+        # 三列饼图
+        col1, col2, col3 = st.columns(3)
+        
+        # 1. 按商品分类
+        with col1:
+            if not grouped["master_category"].isnull().all():
+                pie_data = grouped.groupby("master_category")[metric_col].sum().reset_index()
+                pie_data = pie_data[pie_data["master_category"].notna()]
+                if not pie_data.empty:
+                    fig = px.pie(pie_data, names="master_category", values=metric_col, 
+                                 title=f"按分类 - {pie_metric}", hole=0.3,
+                                 color_discrete_sequence=px.colors.qualitative.Pastel)
+                    fig.update_traces(textposition='inside', textinfo='percent+label')
+                    st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.info("无分类数据")
+            else:
+                st.info("无分类数据")
+        
+        # 2. 按年份
+        with col2:
+            if "year" in prod_df.columns and not prod_df["year"].isnull().all():
+                year_data = prod_df.groupby("year")[metric_col].sum().reset_index()
+                year_data = year_data[year_data["year"].notna()]
+                if not year_data.empty:
+                    fig = px.pie(year_data, names="year", values=metric_col, 
+                                 title=f"按年份 - {pie_metric}", hole=0.3,
+                                 color_discrete_sequence=px.colors.qualitative.Set2)
+                    fig.update_traces(textposition='inside', textinfo='percent+label')
+                    st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.info("无年份数据")
+            else:
+                st.info("无年份数据")
+        
+        # 3. 按季节
+        with col3:
+            if "season" in prod_df.columns and not prod_df["season"].isnull().all():
+                season_data = prod_df.groupby("season")[metric_col].sum().reset_index()
+                season_data = season_data[season_data["season"].notna()]
+                if not season_data.empty:
+                    fig = px.pie(season_data, names="season", values=metric_col, 
+                                 title=f"按季节 - {pie_metric}", hole=0.3,
+                                 color_discrete_sequence=px.colors.qualitative.Set1)
+                    fig.update_traces(textposition='inside', textinfo='percent+label')
+                    st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.info("无季节数据")
+            else:
+                st.info("无季节数据")
         
         # 柱状图（按品牌）
         if "brand" in prod_df.columns:
