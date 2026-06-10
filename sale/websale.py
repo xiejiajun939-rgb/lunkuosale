@@ -535,7 +535,11 @@ with tab6:
             grouped["master_category"] = None
             grouped["image_url"] = None
         
-        # 显示表格
+        # 确保列顺序
+        col_order = ["货号", "master_category", "发货金额", "退货金额", "净销售金额", "image_url"]
+        grouped = grouped[col_order]
+        
+        # 显示表格（图片列以缩略图展示）
         st.dataframe(
             grouped,
             column_config={
@@ -632,13 +636,12 @@ with tab6:
                 fig = px.bar(brand_data, x="brand", y=brand_col, title=f"各品牌{brand_title}", color="brand")
                 st.plotly_chart(fig, use_container_width=True)
         
-        # 导出
-        export_df = grouped.drop(columns=["image_url"])
+        # 导出（保留所有列，顺序与展示一致）
+        export_df = grouped.copy()
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             export_df.to_excel(writer, index=False)
         st.download_button("💾 导出分析结果", data=output.getvalue(), file_name="商品分析.xlsx")
-
 # ========== 调试选项卡 ==========
 with tab_debug:
     st.subheader("🔧 数据库调试信息")
