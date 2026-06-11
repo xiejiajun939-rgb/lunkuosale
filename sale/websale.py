@@ -36,6 +36,8 @@ def login():
                 st.session_state.username = username
                 st.session_state.role = USERS[username]["role"]
                 st.session_state.table_suffix = USERS[username]["default_suffix"]
+                # 强制清除所有缓存，确保初始加载正确数据源
+                st.cache_data.clear()
                 st.rerun()
             else:
                 st.error("用户名或密码错误")
@@ -79,7 +81,6 @@ if "latest_date" not in st.session_state:
     st.session_state.latest_date = None
 if "uploaded_order_hash" not in st.session_state:
     st.session_state.uploaded_order_hash = None
-# 确保这些变量存在（防止空数据时缺少）
 if "daily_latest" not in st.session_state:
     st.session_state.daily_latest = None
 if "monthly_actual" not in st.session_state:
@@ -267,7 +268,6 @@ def save_product_sales(df_orders, suffix=None):
                 "master_category": cat
             }
         else:
-            # 合并金额
             existing = temp_records[remark]
             existing["ship_amount"] += max(amount, 0)
             existing["return_amount"] += max(-amount, 0)
@@ -509,6 +509,10 @@ with st.sidebar:
         if st.button("🔄 强制刷新所有数据"):
             st.cache_data.clear()
             st.rerun()
+        if st.button("🔁 重置为非直播数据"):
+            st.session_state.table_suffix = ""
+            st.cache_data.clear()
+            st.rerun()
     else:
         st.info("普通用户仅可查看数据，无法上传。")
     
@@ -526,10 +530,8 @@ base_tab_labels = [
     "📦 发货退货明细", "🗄️ 历史业绩", "📊 商品分析"
 ]
 admin_extra_tabs = []
-# 管理员专属的额外选项卡
 if st.session_state.role == "admin":
     admin_extra_tabs = ["🔧 调试", "📚 商品库导出"]
-    # 如果是全部数据，增加主播业绩选项卡
     if st.session_state.table_suffix == "_all":
         all_tab_labels = base_tab_labels + ["🎤 主播业绩"] + admin_extra_tabs
     else:
@@ -546,7 +548,7 @@ tab_index_query = 2
 tab_index_ship_return = 3
 tab_index_history = 4
 tab_index_product = 5
-# 主播业绩选项卡的索引（仅在全部数据时存在）
+# 主播业绩选项卡的索引（仅在全部数据且管理员时存在）
 if st.session_state.role == "admin" and st.session_state.table_suffix == "_all":
     tab_index_anchor = 6
     tab_index_debug = 7
@@ -789,7 +791,6 @@ with tabs[tab_index_product]:
             def extract_anchor(remark):
                 if not isinstance(remark, str):
                     return None
-                import re
                 match = re.search(r'主播[：:]([^_]+)', remark)
                 if match:
                     return match.group(1).strip()
@@ -1026,16 +1027,14 @@ with tabs[tab_index_product]:
                     export_df.to_excel(writer, index=False)
                 st.download_button("💾 导出分析结果", data=output.getvalue(), file_name="商品分析.xlsx")
 
-# ========== 主播业绩（仅全部数据） ==========
+# ========== 主播业绩（仅全部数据且管理员） ==========
 if st.session_state.role == "admin" and st.session_state.table_suffix == "_all":
     with tabs[tab_index_anchor]:
         st.subheader("🎤 主播最新日明细（按主播汇总）")
-        # 加载商品销售数据
         prod_df_anchor = load_product_sales("_all")
         if prod_df_anchor.empty:
             st.info("暂无商品数据，请先上传全部数据订单文件")
         else:
-            # 提取主播字段
             def extract_anchor(remark):
                 if not isinstance(remark, str):
                     return None
@@ -1044,25 +1043,19 @@ if st.session_state.role == "admin" and st.session_state.table_suffix == "_all":
                     return match.group(1).strip()
                 return None
             prod_df_anchor["anchor"] = prod_df_anchor["remark"].apply(extract_anchor)
-            # 过滤掉无主播的记录
             prod_df_anchor = prod_df_anchor[prod_df_anchor["anchor"].notna()]
             if prod_df_anchor.empty:
                 st.info("暂无包含主播信息的订单数据")
             else:
-                # 获取最新日期
                 latest_date = prod_df_anchor["sale_date"].max().date()
                 st.caption(f"📅 最新日期：{latest_date}")
-                # 筛选最新日期的数据
                 latest_data = prod_df_anchor[prod_df_anchor["sale_date"].dt.date == latest_date]
-                # 按主播汇总
                 anchor_summary = latest_data.groupby("anchor").agg(
                     发货金额=("ship_amount", "sum"),
                     退货金额=("return_amount", "sum"),
                     净销售金额=("net_amount", "sum")
                 ).reset_index()
-                # 排序
                 anchor_summary = anchor_summary.sort_values("净销售金额", ascending=False)
-                # 显示表格
                 st.dataframe(
                     anchor_summary,
                     column_config={
@@ -1074,7 +1067,6 @@ if st.session_state.role == "admin" and st.session_state.table_suffix == "_all":
                     hide_index=True,
                     use_container_width=True
                 )
-                # 总计
                 total_ship = anchor_summary["发货金额"].sum()
                 total_return = anchor_summary["退货金额"].sum()
                 total_net = anchor_summary["净销售金额"].sum()
@@ -1086,7 +1078,6 @@ if st.session_state.role == "admin" and st.session_state.table_suffix == "_all":
                 with col3:
                     st.metric("💰 总净销售", f"{total_net:,.2f}")
                 
-                # 导出按钮
                 output = io.BytesIO()
                 with pd.ExcelWriter(output, engine='openpyxl') as writer:
                     anchor_summary.to_excel(writer, index=False)
@@ -1101,7 +1092,7 @@ if st.session_state.role == "admin":
             st.error("Supabase 未连接")
         else:
             current_suffix = st.session_state.table_suffix
-            st.write(f"**当前数据源后缀**: `{current_suffix}`")
+            st.write(f"**当前 session_state.table_suffix**: `{current_suffix}`")
             st.write(f"**当前使用的每日业绩表**: `daily_sales{current_suffix}`")
             st.write(f"**当前使用的商品销售表**: `product_sales{current_suffix}`")
             st.write(f"**当前使用的目标表**: `shop_targets{current_suffix}`")
