@@ -795,6 +795,7 @@ with tabs[tab_index_history]:
         st.info("暂无历史数据")
 
 # ========== 商品分析 ==========
+# ========== 商品分析 ==========
 with tabs[tab_index_product]:
     st.subheader("📊 商品销售分析（按货号汇总）")
     col_btn, _ = st.columns([1, 5])
@@ -802,6 +803,11 @@ with tabs[tab_index_product]:
         if st.button("🔄 刷新数据", key="refresh_analysis_final", help="清除缓存并重新从数据库加载最新数据"):
             st.cache_data.clear()
             st.rerun()
+    
+    # 初始化详情显示状态
+    if "selected_style_detail" not in st.session_state:
+        st.session_state.selected_style_detail = None
+    
     prod_df = load_product_sales(st.session_state.table_suffix)
     if prod_df.empty:
         st.warning("暂无商品销售数据，请先上传订单文件。")
@@ -864,6 +870,7 @@ with tabs[tab_index_product]:
                         default=[],
                         key="anchor_filter_final"
                     )
+            # 应用筛选
             if selected_platform == "抖音":
                 filtered = filtered[filtered["shop_name"].str.contains("抖音", case=False, na=False)]
             elif selected_platform == "视频号":
@@ -881,6 +888,43 @@ with tabs[tab_index_product]:
             if filtered.empty:
                 st.warning("所选条件下无销售数据")
             else:
+                # ========== 新增：每日净销售走势折线图 ==========
+                st.subheader("📈 每日净销售走势（按货号）")
+                # 获取当前筛选条件下的所有货号
+                all_style_codes = sorted(filtered["style_code"].unique())
+                if all_style_codes:
+                    selected_styles = st.multiselect(
+                        "选择要查看的货号（可多选）",
+                        options=all_style_codes,
+                        default=all_style_codes[:3] if len(all_style_codes) > 3 else all_style_codes,
+                        key="trend_styles"
+                    )
+                    if selected_styles:
+                        trend_df = filtered[filtered["style_code"].isin(selected_styles)]
+                        daily_trend = trend_df.groupby(["sale_date", "style_code"])["net_amount"].sum().reset_index()
+                        # 转换为宽格式
+                        pivot_df = daily_trend.pivot(index="sale_date", columns="style_code", values="net_amount").fillna(0)
+                        # 绘制折线图
+                        if not pivot_df.empty:
+                            fig_line = px.line(
+                                pivot_df, 
+                                x=pivot_df.index, 
+                                y=pivot_df.columns,
+                                title="每日净销售走势",
+                                labels={"value": "净销售金额(¥)", "sale_date": "日期", "variable": "货号"},
+                                markers=True
+                            )
+                            fig_line.update_layout(legend_title_text="货号", xaxis_title="日期", yaxis_title="净销售金额(¥)")
+                            st.plotly_chart(fig_line, use_container_width=True)
+                        else:
+                            st.info("所选货号无足够数据绘制趋势图")
+                    else:
+                        st.info("请至少选择一个货号查看趋势")
+                else:
+                    st.info("当前筛选条件下无货号数据")
+                st.markdown("---")
+                # ========== 原有汇总表和饼图继续 ==========
+                # 按货号汇总
                 grouped = filtered.groupby("style_code").agg(
                     发货金额=("ship_amount", "sum"),
                     退货金额=("return_amount", "sum"),
@@ -918,22 +962,57 @@ with tabs[tab_index_product]:
                     lambda row: f"{(row['退货金额'] / row['发货金额'] * 100):.2f}%" 
                     if row['发货金额'] != 0 else "-", axis=1
                 )
-                col_order = ["货号", "image_url", "master_category", "发货金额", "退货金额", "净销售金额", "退款率"]
-                grouped = grouped[col_order]
-                st.dataframe(
-                    grouped,
-                    column_config={
-                        "货号": st.column_config.TextColumn("货号"),
-                        "image_url": st.column_config.ImageColumn("商品图片", help="点击放大"),
-                        "master_category": "商品分类",
-                        "发货金额": st.column_config.NumberColumn("发货金额", format="%.2f"),
-                        "退货金额": st.column_config.NumberColumn("退货金额", format="%.2f"),
-                        "净销售金额": st.column_config.NumberColumn("净销售金额", format="%.2f"),
-                        "退款率": st.column_config.TextColumn("退款率")
-                    },
-                    hide_index=True,
-                    use_container_width=True
-                )
+                
+                # 显示货号汇总表（手动构建，增加“查看详情”按钮）
+                st.markdown("#### 货号汇总表")
+                cols = st.columns([2, 1.5, 1.2, 1.2, 1.2, 1, 1.2])
+                headers = ["货号", "商品分类", "发货金额(¥)", "退货金额(¥)", "净销售金额(¥)", "退款率", "操作"]
+                for col, header in zip(cols, headers):
+                    col.markdown(f"**{header}**")
+                
+                for idx, row in grouped.iterrows():
+                    col1, col2, col3, col4, col5, col6, col7 = st.columns([2, 1.5, 1.2, 1.2, 1.2, 1, 1.2])
+                    col1.write(row["货号"])
+                    col2.write(row["master_category"] if pd.notna(row["master_category"]) else "-")
+                    col3.write(f"{row['发货金额']:,.2f}")
+                    col4.write(f"{row['退货金额']:,.2f}")
+                    col5.write(f"{row['净销售金额']:,.2f}")
+                    col6.write(row["退款率"])
+                    if col7.button("📊 查看详情", key=f"detail_btn_{row['货号']}"):
+                        st.session_state.selected_style_detail = row["货号"]
+                        st.rerun()
+                
+                # 显示详情
+                if st.session_state.selected_style_detail:
+                    style_code = st.session_state.selected_style_detail
+                    st.markdown(f"#### 📋 货号 `{style_code}` 店铺销售明细")
+                    detail_df = filtered[filtered["style_code"] == style_code]
+                    if not detail_df.empty:
+                        # 按店铺汇总
+                        shop_detail = detail_df.groupby("shop_name").agg(
+                            发货金额=("ship_amount", "sum"),
+                            退货金额=("return_amount", "sum"),
+                            净销售金额=("net_amount", "sum")
+                        ).reset_index()
+                        shop_detail = shop_detail.sort_values("净销售金额", ascending=False)
+                        st.dataframe(shop_detail, use_container_width=True, hide_index=True)
+                        # 按日期明细
+                        with st.expander("查看按日期的明细"):
+                            date_detail = detail_df.groupby(["sale_date", "shop_name"]).agg(
+                                发货金额=("ship_amount", "sum"),
+                                退货金额=("return_amount", "sum"),
+                                净销售金额=("net_amount", "sum")
+                            ).reset_index()
+                            date_detail["sale_date"] = date_detail["sale_date"].dt.strftime("%Y-%m-%d")
+                            st.dataframe(date_detail, use_container_width=True, hide_index=True)
+                        if st.button("关闭详情", key="close_detail"):
+                            st.session_state.selected_style_detail = None
+                            st.rerun()
+                    else:
+                        st.info("该货号无明细数据")
+                        st.session_state.selected_style_detail = None
+                
+                # 饼图和柱状图（保持原有逻辑）
                 pie_metric = st.radio("饼图指标", ["净销售金额", "发货金额", "退货金额"], horizontal=True, key="pie_metric_final")
                 if pie_metric == "净销售金额":
                     metric_col = "net_amount"
@@ -965,6 +1044,7 @@ with tabs[tab_index_product]:
                                  title=title, hole=0.3, color_discrete_sequence=color_seq)
                     fig.update_traces(textposition='inside', textinfo='percent+label')
                     st.plotly_chart(fig, use_container_width=True)
+                # 分类饼图
                 with col1:
                     if grouped["master_category"].isnull().all():
                         total_val = grouped[grouped_metric_col].sum()
@@ -979,6 +1059,7 @@ with tabs[tab_index_product]:
                         pie_data = grouped.groupby("master_category")[grouped_metric_col].sum().reset_index()
                         pie_data = pie_data[pie_data["master_category"].notna()]
                         safe_pie_chart(pie_data, "master_category", grouped_metric_col, f"按分类 - {pie_metric}", px.colors.qualitative.Pastel)
+                # 年份饼图
                 with col2:
                     if "year" not in filtered.columns or filtered["year"].isnull().all():
                         total_val = filtered[metric_col].sum()
@@ -993,6 +1074,7 @@ with tabs[tab_index_product]:
                         year_data = filtered.groupby("year")[metric_col].sum().reset_index()
                         year_data = year_data[year_data["year"].notna()]
                         safe_pie_chart(year_data, "year", metric_col, f"按年份 - {pie_metric}", px.colors.qualitative.Set2)
+                # 季节饼图
                 with col3:
                     if "season" not in filtered.columns or filtered["season"].isnull().all():
                         total_val = filtered[metric_col].sum()
