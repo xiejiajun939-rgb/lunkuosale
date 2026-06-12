@@ -808,6 +808,9 @@ with tabs[tab_index_product]:
         st.session_state.dialog_style_code = None
     if "show_dialog" not in st.session_state:
         st.session_state.show_dialog = False
+    # 分页页码
+    if "product_page_num" not in st.session_state:
+        st.session_state.product_page_num = 1
     
     prod_df = load_product_sales(st.session_state.table_suffix)
     if prod_df.empty:
@@ -921,7 +924,7 @@ with tabs[tab_index_product]:
                 else:
                     st.info("当前筛选条件下无货号数据")
                 st.markdown("---")
-                # ========== 按货号汇总表（分页） ==========
+                # ========== 按货号汇总表 ==========
                 grouped = filtered.groupby("style_code").agg(
                     发货金额=("ship_amount", "sum"),
                     退货金额=("return_amount", "sum"),
@@ -960,36 +963,38 @@ with tabs[tab_index_product]:
                     if row['发货金额'] != 0 else "-", axis=1
                 )
                 
-                # 分页设置
+                # 分页逻辑
                 st.markdown("#### 货号汇总表")
                 page_size = 20
-                total_pages = (len(grouped) + page_size - 1) // page_size
-                if "product_page_num" not in st.session_state:
-                    st.session_state.product_page_num = 1
-                # 页码控制
+                total_rows = len(grouped)
+                total_pages = (total_rows + page_size - 1) // page_size if total_rows > 0 else 1
+                
+                # 页码控件
                 col_prev, col_page, col_next = st.columns([1, 2, 1])
                 with col_prev:
-                    if st.button("◀ 上一页", key="product_prev"):
+                    if st.button("◀ 上一页", key="product_prev_page"):
                         if st.session_state.product_page_num > 1:
                             st.session_state.product_page_num -= 1
                             st.rerun()
                 with col_page:
                     st.write(f"第 {st.session_state.product_page_num} / {total_pages} 页")
                 with col_next:
-                    if st.button("下一页 ▶", key="product_next"):
+                    if st.button("下一页 ▶", key="product_next_page"):
                         if st.session_state.product_page_num < total_pages:
                             st.session_state.product_page_num += 1
                             st.rerun()
+                
                 start_idx = (st.session_state.product_page_num - 1) * page_size
-                end_idx = start_idx + page_size
+                end_idx = min(start_idx + page_size, total_rows)
                 page_df = grouped.iloc[start_idx:end_idx]
                 
-                # 显示当前页表格（带查看详情按钮）
+                # 显示表头
                 cols = st.columns([2, 1.5, 1.2, 1.2, 1.2, 1, 1.2])
                 headers = ["货号", "商品分类", "发货金额(¥)", "退货金额(¥)", "净销售金额(¥)", "退款率", "操作"]
                 for col, header in zip(cols, headers):
                     col.markdown(f"**{header}**")
                 
+                # 显示数据行，每行一个查看详情按钮
                 for idx, row in page_df.iterrows():
                     col1, col2, col3, col4, col5, col6, col7 = st.columns([2, 1.5, 1.2, 1.2, 1.2, 1, 1.2])
                     col1.write(row["货号"])
@@ -1003,7 +1008,11 @@ with tabs[tab_index_product]:
                         st.session_state.show_dialog = True
                         st.rerun()
                 
-                # ========== 饼图和柱状图（保持原样） ==========
+                # 如果筛选后总页数发生变化，确保当前页码不超过总页数
+                if st.session_state.product_page_num > total_pages:
+                    st.session_state.product_page_num = 1
+                
+                # ========== 饼图和柱状图 ==========
                 pie_metric = st.radio("饼图指标", ["净销售金额", "发货金额", "退货金额"], horizontal=True, key="pie_metric_final")
                 if pie_metric == "净销售金额":
                     metric_col = "net_amount"
@@ -1106,7 +1115,6 @@ with tabs[tab_index_product]:
         style_code = st.session_state.dialog_style_code
         @st.dialog(f"📋 货号 {style_code} 销售明细")
         def show_style_detail():
-            # 重新加载商品数据（不受当前筛选影响，显示完整明细）
             detail_df = load_product_sales(st.session_state.table_suffix)
             detail_df["style_code"] = detail_df["style_code"].astype(str).str.strip().str.upper()
             detail_style = detail_df[detail_df["style_code"] == style_code]
