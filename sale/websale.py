@@ -1625,7 +1625,7 @@ with st.sidebar:
         st.info(f"📌 当前正在查看：**{current_source_name}**")
         source_options = {"非直播数据": "", "直播数据": "_live", "全部数据": "_all"}
         default_index = list(source_options.keys()).index(current_source_name) if current_source_name in source_options else 0
-        selected_source = st.selectbox("选择要切换到的数据源", options=list(source_options.keys()), index=default_index, key="source_selectbox")
+        selected_source = st.selectbox("选择要切换到的数据源", options=list(source_options.keys()), index=default_index, key="source_selectbox_admin")
         if st.button("✅ 确认切换", key="confirm_switch"):
             new_suffix = source_options[selected_source]
             if new_suffix != st.session_state.table_suffix:
