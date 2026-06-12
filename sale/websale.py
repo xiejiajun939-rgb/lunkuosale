@@ -808,6 +808,10 @@ with tabs[tab_index_product]:
         st.session_state.dialog_style_code = None
     if "show_dialog" not in st.session_state:
         st.session_state.show_dialog = False
+    # 缓存详情数据
+    if "cached_detail_data" not in st.session_state:
+        st.session_state.cached_detail_data = None
+    
     # 分页和排序
     if "product_page_num" not in st.session_state:
         st.session_state.product_page_num = 1
@@ -1032,7 +1036,32 @@ with tabs[tab_index_product]:
                     col6.write(f"{row['净销售金额']:,.2f}")
                     col7.write(row["退款率"])
                     if col8.button("📊 查看详情", key=f"detail_btn_{row['货号']}_{idx}"):
-                        st.session_state.dialog_style_code = row["货号"]
+                        # 预计算详情数据并缓存
+                        style_code = row["货号"]
+                        detail_df = filtered[filtered["style_code"] == style_code].copy()
+                        if not detail_df.empty:
+                            # 按店铺汇总
+                            shop_detail = detail_df.groupby("shop_name").agg(
+                                发货金额=("ship_amount", "sum"),
+                                退货金额=("return_amount", "sum"),
+                                净销售金额=("net_amount", "sum")
+                            ).reset_index()
+                            shop_detail = shop_detail.sort_values("净销售金额", ascending=False)
+                            # 按日期明细
+                            date_detail = detail_df.groupby(["sale_date", "shop_name"]).agg(
+                                发货金额=("ship_amount", "sum"),
+                                退货金额=("return_amount", "sum"),
+                                净销售金额=("net_amount", "sum")
+                            ).reset_index()
+                            date_detail["sale_date"] = date_detail["sale_date"].dt.strftime("%Y-%m-%d")
+                            st.session_state.cached_detail_data = {
+                                "style_code": style_code,
+                                "shop_detail": shop_detail,
+                                "date_detail": date_detail
+                            }
+                        else:
+                            st.session_state.cached_detail_data = None
+                        st.session_state.dialog_style_code = style_code
                         st.session_state.show_dialog = True
                         st.rerun()
                 
@@ -1134,38 +1163,25 @@ with tabs[tab_index_product]:
                     export_df.to_excel(writer, index=False)
                 st.download_button("💾 导出分析结果", data=output.getvalue(), file_name="商品分析.xlsx")
 
-    # ========== 弹窗显示明细 ==========
+    # ========== 弹窗显示明细（使用缓存数据） ==========
     if st.session_state.show_dialog and st.session_state.dialog_style_code:
         style_code = st.session_state.dialog_style_code
+        cached = st.session_state.cached_detail_data
         @st.dialog(f"📋 货号 {style_code} 销售明细")
         def show_style_detail():
-            detail_df = load_product_sales(st.session_state.table_suffix)
-            detail_df["style_code"] = detail_df["style_code"].astype(str).str.strip().str.upper()
-            detail_style = detail_df[detail_df["style_code"] == style_code]
-            if detail_style.empty:
-                st.info("该货号无销售数据")
-            else:
-                # 按店铺汇总
-                shop_detail = detail_style.groupby("shop_name").agg(
-                    发货金额=("ship_amount", "sum"),
-                    退货金额=("return_amount", "sum"),
-                    净销售金额=("net_amount", "sum")
-                ).reset_index()
-                shop_detail = shop_detail.sort_values("净销售金额", ascending=False)
+            if cached and cached.get("style_code") == style_code:
+                shop_detail = cached["shop_detail"]
+                date_detail = cached["date_detail"]
                 st.markdown("#### 店铺销售汇总")
                 st.dataframe(shop_detail, use_container_width=True, hide_index=True)
-                # 按日期明细
                 with st.expander("查看按日期的明细"):
-                    date_detail = detail_style.groupby(["sale_date", "shop_name"]).agg(
-                        发货金额=("ship_amount", "sum"),
-                        退货金额=("return_amount", "sum"),
-                        净销售金额=("net_amount", "sum")
-                    ).reset_index()
-                    date_detail["sale_date"] = date_detail["sale_date"].dt.strftime("%Y-%m-%d")
                     st.dataframe(date_detail, use_container_width=True, hide_index=True)
+            else:
+                st.info("该货号无销售数据")
             if st.button("关闭"):
                 st.session_state.show_dialog = False
                 st.session_state.dialog_style_code = None
+                st.session_state.cached_detail_data = None
                 st.rerun()
         show_style_detail()
 # ========== 主播业绩（仅全部数据且管理员） ==========
