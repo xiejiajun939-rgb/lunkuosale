@@ -795,7 +795,6 @@ with tabs[tab_index_history]:
         st.info("暂无历史数据")
 
 # ========== 商品分析 ==========
-# ========== 商品分析 ==========
 with tabs[tab_index_product]:
     st.subheader("📊 商品销售分析（按货号汇总）")
     col_btn, _ = st.columns([1, 5])
@@ -804,11 +803,11 @@ with tabs[tab_index_product]:
             st.cache_data.clear()
             st.rerun()
     
-    # 用于控制弹窗的 session state
-    if "detail_style_code" not in st.session_state:
-        st.session_state.detail_style_code = None
-    if "show_detail_dialog" not in st.session_state:
-        st.session_state.show_detail_dialog = False
+    # 弹窗控制
+    if "dialog_style_code" not in st.session_state:
+        st.session_state.dialog_style_code = None
+    if "show_dialog" not in st.session_state:
+        st.session_state.show_dialog = False
     
     prod_df = load_product_sales(st.session_state.table_suffix)
     if prod_df.empty:
@@ -922,7 +921,7 @@ with tabs[tab_index_product]:
                 else:
                     st.info("当前筛选条件下无货号数据")
                 st.markdown("---")
-                # ========== 按货号汇总表 ==========
+                # ========== 按货号汇总表（分页） ==========
                 grouped = filtered.groupby("style_code").agg(
                     发货金额=("ship_amount", "sum"),
                     退货金额=("return_amount", "sum"),
@@ -961,14 +960,37 @@ with tabs[tab_index_product]:
                     if row['发货金额'] != 0 else "-", axis=1
                 )
                 
-                # 显示汇总表（增加“查看详情”按钮）
+                # 分页设置
                 st.markdown("#### 货号汇总表")
+                page_size = 20
+                total_pages = (len(grouped) + page_size - 1) // page_size
+                if "product_page_num" not in st.session_state:
+                    st.session_state.product_page_num = 1
+                # 页码控制
+                col_prev, col_page, col_next = st.columns([1, 2, 1])
+                with col_prev:
+                    if st.button("◀ 上一页", key="product_prev"):
+                        if st.session_state.product_page_num > 1:
+                            st.session_state.product_page_num -= 1
+                            st.rerun()
+                with col_page:
+                    st.write(f"第 {st.session_state.product_page_num} / {total_pages} 页")
+                with col_next:
+                    if st.button("下一页 ▶", key="product_next"):
+                        if st.session_state.product_page_num < total_pages:
+                            st.session_state.product_page_num += 1
+                            st.rerun()
+                start_idx = (st.session_state.product_page_num - 1) * page_size
+                end_idx = start_idx + page_size
+                page_df = grouped.iloc[start_idx:end_idx]
+                
+                # 显示当前页表格（带查看详情按钮）
                 cols = st.columns([2, 1.5, 1.2, 1.2, 1.2, 1, 1.2])
                 headers = ["货号", "商品分类", "发货金额(¥)", "退货金额(¥)", "净销售金额(¥)", "退款率", "操作"]
                 for col, header in zip(cols, headers):
                     col.markdown(f"**{header}**")
                 
-                for idx, row in grouped.iterrows():
+                for idx, row in page_df.iterrows():
                     col1, col2, col3, col4, col5, col6, col7 = st.columns([2, 1.5, 1.2, 1.2, 1.2, 1, 1.2])
                     col1.write(row["货号"])
                     col2.write(row["master_category"] if pd.notna(row["master_category"]) else "-")
@@ -976,12 +998,12 @@ with tabs[tab_index_product]:
                     col4.write(f"{row['退货金额']:,.2f}")
                     col5.write(f"{row['净销售金额']:,.2f}")
                     col6.write(row["退款率"])
-                    if col7.button("📊 查看详情", key=f"detail_btn_{row['货号']}"):
-                        st.session_state.detail_style_code = row["货号"]
-                        st.session_state.show_detail_dialog = True
+                    if col7.button("📊 查看详情", key=f"detail_btn_{row['货号']}_{idx}"):
+                        st.session_state.dialog_style_code = row["货号"]
+                        st.session_state.show_dialog = True
                         st.rerun()
                 
-                # 饼图和柱状图（与原代码一致）
+                # ========== 饼图和柱状图（保持原样） ==========
                 pie_metric = st.radio("饼图指标", ["净销售金额", "发货金额", "退货金额"], horizontal=True, key="pie_metric_final")
                 if pie_metric == "净销售金额":
                     metric_col = "net_amount"
@@ -1079,13 +1101,12 @@ with tabs[tab_index_product]:
                     export_df.to_excel(writer, index=False)
                 st.download_button("💾 导出分析结果", data=output.getvalue(), file_name="商品分析.xlsx")
 
-    # ========== 弹窗显示详情 ==========
-    if st.session_state.show_detail_dialog and st.session_state.detail_style_code:
-        style_code = st.session_state.detail_style_code
-        @st.dialog("📋 货号销售明细")
-        def show_detail():
-            st.subheader(f"货号：{style_code}")
-            # 重新加载商品数据（全部，不受当前筛选影响，以便查看完整明细）
+    # ========== 弹窗显示明细 ==========
+    if st.session_state.show_dialog and st.session_state.dialog_style_code:
+        style_code = st.session_state.dialog_style_code
+        @st.dialog(f"📋 货号 {style_code} 销售明细")
+        def show_style_detail():
+            # 重新加载商品数据（不受当前筛选影响，显示完整明细）
             detail_df = load_product_sales(st.session_state.table_suffix)
             detail_df["style_code"] = detail_df["style_code"].astype(str).str.strip().str.upper()
             detail_style = detail_df[detail_df["style_code"] == style_code]
@@ -1111,11 +1132,10 @@ with tabs[tab_index_product]:
                     date_detail["sale_date"] = date_detail["sale_date"].dt.strftime("%Y-%m-%d")
                     st.dataframe(date_detail, use_container_width=True, hide_index=True)
             if st.button("关闭"):
-                st.session_state.show_detail_dialog = False
-                st.session_state.detail_style_code = None
+                st.session_state.show_dialog = False
+                st.session_state.dialog_style_code = None
                 st.rerun()
-        show_detail()
-
+        show_style_detail()
 # ========== 主播业绩（仅全部数据且管理员） ==========
 if st.session_state.role == "admin" and st.session_state.table_suffix == "_all":
     with tabs[tab_index_anchor]:
