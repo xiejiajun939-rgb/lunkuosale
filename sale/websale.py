@@ -379,52 +379,70 @@ def validate_order_data(df):
 
 def process_uploaded_file(uploaded_file, suffix):
     try:
+        # 1. 读取文件
         try:
             df = pd.read_excel(uploaded_file, header=1)
         except Exception as e:
             return False, f"文件读取失败：{str(e)}。请确保文件为 Excel 格式（.xlsx 或 .xls）且未损坏。"
+        
+        # 2. 验证数据
         is_valid, err_msg, df_valid = validate_order_data(df)
         if not is_valid:
             return False, err_msg
+        
+        # 3. 保存商品销售明细（product_sales）
         try:
             save_product_sales(df_valid, suffix)
         except Exception as e:
-            if "duplicate key" in str(e).lower() or "unique constraint" in str(e).lower():
-                return False, "数据重复：该文件中的订单备注与已存在数据冲突。请检查是否重复上传。"
             return False, f"保存商品销售明细失败：{str(e)}。"
-        try:
-            existing = load_daily_sales(suffix)
-            if existing.empty:
-                existing_df = pd.DataFrame(columns=["日期", "店铺名称", "当日金额"])
-            else:
-                existing_df = existing[["sale_date", "shop_name", "amount"]].copy()
-                existing_df.columns = ["日期", "店铺名称", "当日金额"]
-            new_daily = df_valid.groupby(["日期", "店铺名称"])["金额/时间"].sum().reset_index()
-            new_daily.columns = ["日期", "店铺名称", "当日金额"]
-            if not existing_df.empty:
-                existing_df["日期"] = pd.to_datetime(existing_df["日期"])
-            new_daily["日期"] = pd.to_datetime(new_daily["日期"])
+        
+        # 4. 计算本次上传的每日汇总（按日期+店铺）
+        new_daily = df_valid.groupby(["日期", "店铺名称"])["金额/时间"].sum().reset_index()
+        new_daily.columns = ["日期", "店铺名称", "当日金额"]
+        new_daily["日期"] = pd.to_datetime(new_daily["日期"])
+        
+        # 5. 获取数据库中现有的 daily_sales 数据
+        existing = load_daily_sales(suffix)
+        
+        # 关键修复：从 existing 中删除与新文件日期重合的所有记录（按日期，不区分店铺）
+        if not existing.empty:
+            new_dates = new_daily["日期"].dt.date.unique()
+            # 保留那些 sale_date 不在新文件日期范围内的旧数据
+            existing = existing[~existing["sale_date"].dt.date.isin(new_dates)]
+        
+        # 6. 构建合并后的 DataFrame（旧数据已无冲突日期，加上新数据）
+        if not existing.empty:
+            existing_df = existing[["sale_date", "shop_name", "amount"]].rename(
+                columns={"sale_date": "日期", "shop_name": "店铺名称", "amount": "当日金额"}
+            )
             merged = pd.concat([existing_df, new_daily], ignore_index=True)
-            merged = merged.groupby(["日期", "店铺名称"])["当日金额"].sum().reset_index()
-            merged = merged.sort_values(["店铺名称", "日期"])
-            merged["当日金额"] = pd.to_numeric(merged["当日金额"], errors="coerce").fillna(0)
-            merged["月累计金额"] = merged.groupby("店铺名称")["当日金额"].cumsum().round(2)
-            records = []
-            for _, row in merged.iterrows():
-                records.append({
-                    "sale_date": row["日期"].strftime("%Y-%m-%d"),
-                    "shop_name": row["店铺名称"],
-                    "amount": float(row["当日金额"]),
-                    "cumulative_amount": float(row["月累计金额"])
-                })
-            save_daily_sales(records, suffix)
-        except Exception as e:
-            return False, f"更新每日业绩失败：{str(e)}。商品销售明细已保存，但每日业绩未更新。请稍后点击「从商品明细重建每日业绩」按钮修复。"
+        else:
+            merged = new_daily.copy()
+        
+        # 7. 重新计算月度累计（按店铺，按日期升序累加）
+        merged = merged.sort_values(["店铺名称", "日期"])
+        merged["当日金额"] = pd.to_numeric(merged["当日金额"], errors="coerce").fillna(0)
+        merged["月累计金额"] = merged.groupby("店铺名称")["当日金额"].cumsum().round(2)
+        
+        # 8. 保存到 daily_sales 表（使用 upsert 或直接插入）
+        records = []
+        for _, row in merged.iterrows():
+            records.append({
+                "sale_date": row["日期"].strftime("%Y-%m-%d"),
+                "shop_name": row["店铺名称"],
+                "amount": float(row["当日金额"]),
+                "cumulative_amount": float(row["月累计金额"])
+            })
+        save_daily_sales(records, suffix)
+        
+        # 9. 更新当前会话缓存
         if suffix == st.session_state.get("table_suffix", ""):
             rebuild_daily_data(suffix)
             st.session_state.target_dict = load_targets(suffix)
+        
         latest_date = merged["日期"].max().strftime('%Y-%m-%d') if not merged.empty else "无数据"
         return True, f"处理完成！最新日期：{latest_date}"
+        
     except Exception as e:
         return False, f"未预料的错误：{str(e)}"
 
