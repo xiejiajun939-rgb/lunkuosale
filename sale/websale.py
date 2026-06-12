@@ -828,7 +828,9 @@ with tabs[tab_index_product]:
             prod_df["style_code"] = prod_df["style_code"].astype(str).str.strip().str.upper()
         else:
             prod_df["style_code"] = prod_df["product_code"].str[:8].str.strip().str.upper()
-        if st.session_state.table_suffix == "_all":
+        
+        # 提取主播（全部数据需要，直播数据也需要）
+        if st.session_state.table_suffix in ["_live", "_all"]:
             def extract_anchor(remark):
                 if not isinstance(remark, str):
                     return None
@@ -837,6 +839,7 @@ with tabs[tab_index_product]:
                     return match.group(1).strip()
                 return None
             prod_df["anchor"] = prod_df["remark"].apply(extract_anchor)
+        
         min_date = prod_df["sale_date"].min().date()
         max_date = prod_df["sale_date"].max().date()
         col_date1, col_date2 = st.columns(2)
@@ -872,8 +875,9 @@ with tabs[tab_index_product]:
             with col_brand:
                 brands = ["全部"] + sorted(filtered["brand"].dropna().unique())
                 selected_brand = st.selectbox("品牌", brands, key="brand_filter_final")
+            
             selected_anchors = []
-            if st.session_state.table_suffix == "_all" and "anchor" in filtered.columns:
+            if st.session_state.table_suffix in ["_live", "_all"] and "anchor" in filtered.columns:
                 all_anchors = filtered["anchor"].dropna().unique()
                 if len(all_anchors) > 0:
                     selected_anchors = st.multiselect(
@@ -1048,8 +1052,8 @@ with tabs[tab_index_product]:
                                 if match:
                                     return match.group(1).strip()
                                 return None
-                            if suffix == "_live":
-                                # 直播数据：按主播汇总
+                            # 直播或全部数据：按主播汇总
+                            if suffix in ["_live", "_all"]:
                                 detail_df["anchor"] = detail_df["remark"].apply(extract_anchor_fn)
                                 detail_df = detail_df[detail_df["anchor"].notna()]
                                 if not detail_df.empty:
@@ -1072,7 +1076,7 @@ with tabs[tab_index_product]:
                                     date_detail = pd.DataFrame()
                                     detail_type = "anchor"
                             else:
-                                # 非直播或全部数据：按店铺汇总
+                                # 非直播数据：按店铺汇总
                                 shop_detail = detail_df.groupby("shop_name").agg(
                                     发货金额=("ship_amount", "sum"),
                                     退货金额=("return_amount", "sum"),
@@ -1196,7 +1200,7 @@ with tabs[tab_index_product]:
                     export_df.to_excel(writer, index=False)
                 st.download_button("💾 导出分析结果", data=output.getvalue(), file_name="商品分析.xlsx")
 
-       # ========== 弹窗显示明细（使用缓存数据） ==========
+    # ========== 弹窗显示明细（使用缓存数据） ==========
     if st.session_state.show_dialog and st.session_state.dialog_style_code:
         style_code = st.session_state.dialog_style_code
         cached = st.session_state.cached_detail_data
