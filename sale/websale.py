@@ -1063,17 +1063,9 @@ with tabs[tab_index_product]:
                                         净销售金额=("net_amount", "sum")
                                     ).reset_index().rename(columns={"anchor": "主播"})
                                     shop_detail = shop_detail.sort_values("净销售金额", ascending=False)
-                                    date_detail = detail_df.groupby(["sale_date", "anchor"]).agg(
-                                        发货金额=("ship_amount", "sum"),
-                                        退货金额=("return_amount", "sum"),
-                                        净销售金额=("net_amount", "sum")
-                                    ).reset_index()
-                                    date_detail["sale_date"] = date_detail["sale_date"].dt.strftime("%Y-%m-%d")
-                                    date_detail.rename(columns={"anchor": "主播"}, inplace=True)
                                     detail_type = "anchor"
                                 else:
                                     shop_detail = pd.DataFrame()
-                                    date_detail = pd.DataFrame()
                                     detail_type = "anchor"
                             else:
                                 # 非直播数据：按店铺汇总
@@ -1083,17 +1075,10 @@ with tabs[tab_index_product]:
                                     净销售金额=("net_amount", "sum")
                                 ).reset_index()
                                 shop_detail = shop_detail.sort_values("净销售金额", ascending=False)
-                                date_detail = detail_df.groupby(["sale_date", "shop_name"]).agg(
-                                    发货金额=("ship_amount", "sum"),
-                                    退货金额=("return_amount", "sum"),
-                                    净销售金额=("net_amount", "sum")
-                                ).reset_index()
-                                date_detail["sale_date"] = date_detail["sale_date"].dt.strftime("%Y-%m-%d")
                                 detail_type = "shop"
                             st.session_state.cached_detail_data = {
                                 "style_code": style_code,
                                 "shop_detail": shop_detail,
-                                "date_detail": date_detail,
                                 "type": detail_type
                             }
                         else:
@@ -1200,7 +1185,7 @@ with tabs[tab_index_product]:
                     export_df.to_excel(writer, index=False)
                 st.download_button("💾 导出分析结果", data=output.getvalue(), file_name="商品分析.xlsx")
 
-    # ========== 弹窗显示明细（使用缓存数据） ==========
+    # ========== 弹窗显示明细（去掉日期明细） ==========
     if st.session_state.show_dialog and st.session_state.dialog_style_code:
         style_code = st.session_state.dialog_style_code
         cached = st.session_state.cached_detail_data
@@ -1208,7 +1193,6 @@ with tabs[tab_index_product]:
         def show_style_detail():
             if cached and cached.get("style_code") == style_code:
                 shop_detail = cached["shop_detail"]
-                date_detail = cached["date_detail"]
                 if cached.get("type") == "anchor":
                     st.markdown("#### 主播销售汇总")
                 else:
@@ -1217,11 +1201,6 @@ with tabs[tab_index_product]:
                     st.dataframe(shop_detail, use_container_width=True, hide_index=True)
                 else:
                     st.info("无有效数据")
-                with st.expander("查看按日期的明细"):
-                    if not date_detail.empty:
-                        st.dataframe(date_detail, use_container_width=True, hide_index=True)
-                    else:
-                        st.info("无明细数据")
             else:
                 st.info("该货号无销售数据")
             if st.button("关闭"):
