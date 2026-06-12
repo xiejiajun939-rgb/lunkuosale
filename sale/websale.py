@@ -83,6 +83,8 @@ if "daily_latest" not in st.session_state:
     st.session_state.daily_latest = None
 if "monthly_actual" not in st.session_state:
     st.session_state.monthly_actual = None
+if "processing_upload" not in st.session_state:
+    st.session_state.processing_upload = False
 
 # ========== 店铺业绩数据函数 ==========
 def load_daily_sales(suffix=None):
@@ -457,7 +459,6 @@ with st.sidebar:
         st.info(f"📌 当前正在查看：**{current_source_name}**")
         source_options = {"非直播数据": "", "直播数据": "_live", "全部数据": "_all"}
         default_index = list(source_options.keys()).index(current_source_name) if current_source_name in source_options else 0
-        # 使用唯一 key
         selected_source = st.selectbox("选择要切换到的数据源", options=list(source_options.keys()), index=default_index, key="source_selectbox")
         if st.button("✅ 确认切换", key="confirm_switch"):
             new_suffix = source_options[selected_source]
@@ -467,96 +468,60 @@ with st.sidebar:
                 st.rerun()
         st.markdown("---")
         current_display_suffix = st.session_state.table_suffix
+
+        # 通用上传处理函数（带防重复锁）
+        def handle_upload(uploaded_file, suffix, file_type="order"):
+            if st.session_state.processing_upload:
+                st.warning("上一个文件正在处理中，请稍后...")
+                return
+            if uploaded_file is None:
+                st.warning("请先选择文件")
+                return
+            file_id = f"{uploaded_file.name}_{uploaded_file.size}"
+            if st.session_state.get("uploaded_order_hash") == file_id and file_type == "order":
+                st.info("该文件已上传过，无需重复处理")
+                return
+            st.session_state.processing_upload = True
+            with st.spinner("正在处理文件，请稍候..."):
+                if file_type == "order":
+                    ok, msg = process_uploaded_file(uploaded_file, suffix)
+                else:
+                    ok, msg = load_target_file(uploaded_file, suffix)
+            if ok:
+                st.success(msg)
+                if file_type == "order":
+                    st.session_state.uploaded_order_hash = file_id
+                st.cache_data.clear()
+                st.session_state.processing_upload = False
+                st.rerun()
+            else:
+                st.error(msg)
+                st.session_state.processing_upload = False
+
         if current_display_suffix == "":
             st.subheader("📁 非直播数据上传")
             uploaded_order = st.file_uploader("选择订单文件 (Excel)", type=["xlsx", "xls"], key="order_uploader_normal")
             if st.button("📤 确认上传", key="confirm_upload_normal"):
-                if uploaded_order is not None:
-                    file_id = f"{uploaded_order.name}_{uploaded_order.size}"
-                    if st.session_state.get("uploaded_order_hash") != file_id:
-                        with st.spinner("正在处理订单文件，请稍候..."):
-                            ok, msg = process_uploaded_file(uploaded_order, "")
-                        if ok:
-                            st.success(msg)
-                            st.session_state.uploaded_order_hash = file_id
-                            st.cache_data.clear()
-                            st.rerun()
-                        else:
-                            st.error(msg)
-                    else:
-                        st.info("该文件已上传过，无需重复处理")
-                else:
-                    st.warning("请先选择文件")
+                handle_upload(uploaded_order, "", "order")
             target_file = st.file_uploader("选择目标文件 (Excel)", type=["xlsx", "xls"], key="target_upload_normal")
             if st.button("📤 确认上传目标", key="confirm_target_normal"):
-                if target_file is not None:
-                    ok, msg = load_target_file(target_file, "")
-                    if ok:
-                        st.success(msg)
-                    else:
-                        st.error(msg)
-                else:
-                    st.warning("请先选择目标文件")
+                handle_upload(target_file, "", "target")
         elif current_display_suffix == "_live":
             st.subheader("🎥 直播数据上传")
             uploaded_order = st.file_uploader("选择订单文件 (Excel)", type=["xlsx", "xls"], key="order_uploader_live")
             if st.button("📤 确认上传", key="confirm_upload_live"):
-                if uploaded_order is not None:
-                    file_id = f"{uploaded_order.name}_{uploaded_order.size}"
-                    if st.session_state.get("uploaded_order_hash") != file_id:
-                        with st.spinner("正在处理订单文件，请稍候..."):
-                            ok, msg = process_uploaded_file(uploaded_order, "_live")
-                        if ok:
-                            st.success(msg)
-                            st.session_state.uploaded_order_hash = file_id
-                            st.cache_data.clear()
-                            st.rerun()
-                        else:
-                            st.error(msg)
-                    else:
-                        st.info("该文件已上传过，无需重复处理")
-                else:
-                    st.warning("请先选择文件")
+                handle_upload(uploaded_order, "_live", "order")
             target_file = st.file_uploader("选择目标文件 (Excel)", type=["xlsx", "xls"], key="target_upload_live")
             if st.button("📤 确认上传目标", key="confirm_target_live"):
-                if target_file is not None:
-                    ok, msg = load_target_file(target_file, "_live")
-                    if ok:
-                        st.success(msg)
-                    else:
-                        st.error(msg)
-                else:
-                    st.warning("请先选择目标文件")
+                handle_upload(target_file, "_live", "target")
         else:  # "_all"
             st.subheader("📊 全部数据上传")
             uploaded_order = st.file_uploader("选择订单文件 (Excel)", type=["xlsx", "xls"], key="order_uploader_all")
             if st.button("📤 确认上传", key="confirm_upload_all"):
-                if uploaded_order is not None:
-                    file_id = f"{uploaded_order.name}_{uploaded_order.size}"
-                    if st.session_state.get("uploaded_order_hash") != file_id:
-                        with st.spinner("正在处理订单文件，请稍候..."):
-                            ok, msg = process_uploaded_file(uploaded_order, "_all")
-                        if ok:
-                            st.success(msg)
-                            st.session_state.uploaded_order_hash = file_id
-                            st.cache_data.clear()
-                            st.rerun()
-                        else:
-                            st.error(msg)
-                    else:
-                        st.info("该文件已上传过，无需重复处理")
-                else:
-                    st.warning("请先选择文件")
+                handle_upload(uploaded_order, "_all", "order")
             target_file = st.file_uploader("选择目标文件 (Excel)", type=["xlsx", "xls"], key="target_upload_all")
             if st.button("📤 确认上传目标", key="confirm_target_all"):
-                if target_file is not None:
-                    ok, msg = load_target_file(target_file, "_all")
-                    if ok:
-                        st.success(msg)
-                    else:
-                        st.error(msg)
-                else:
-                    st.warning("请先选择目标文件")
+                handle_upload(target_file, "_all", "target")
         st.markdown("---")
         st.header("⚙️ 工具")
         template_df = pd.DataFrame({"店铺名称": ["示例店铺A", "示例店铺B"], "目标金额": [100000, 200000]})
