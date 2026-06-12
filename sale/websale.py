@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-订单业绩统计工具 - 最终版（管理员可切换数据源：非直播/直播/全部，独立数据库表）
+订单业绩统计工具 - 最终完整版（管理员可切换数据源：非直播/直播/全部，独立数据库表）
 修复重复上传、key冲突、同日期累加等问题
 管理员账号：admin / 1234567890
 非直播账号：XDZ01 / 94949468
@@ -616,22 +616,54 @@ with tabs[tab_index_latest]:
         df["达成率"] = df.apply(calc_rate, axis=1)
         cols = ["日期", "店铺名称", "当日金额", "月累计金额", "目标金额", "达成率"]
         st.dataframe(df[cols], use_container_width=True, hide_index=True)
-        # ... 其余指标计算与之前相同（因篇幅省略，实际需保留完整）
+        df_all = st.session_state.df_all_daily
+        if df_all is not None and not df_all.empty:
+            latest_cum = df_all.groupby("店铺名称")["月累计金额"].last().reset_index()
+            douyin_shops = latest_cum[latest_cum["店铺名称"].str.contains("抖音", case=False, na=False)]
+            video_shops = latest_cum[latest_cum["店铺名称"].str.contains("视频号", case=False, na=False)]
+            douyin_cum = douyin_shops["月累计金额"].sum()
+            video_cum = video_shops["月累计金额"].sum()
+            total_cum = latest_cum["月累计金额"].sum()
+        else:
+            douyin_cum = 0
+            video_cum = 0
+            total_cum = 0
+        df_sales = st.session_state.daily_latest.copy()
+        douyin_df = df_sales[df_sales["店铺名称"].str.contains("抖音", case=False, na=False)]
+        video_df = df_sales[df_sales["店铺名称"].str.contains("视频号", case=False, na=False)]
+        target_dict = st.session_state.target_dict
+        douyin_target = sum(target_dict.get(shop, 0) for shop in douyin_df["店铺名称"])
+        video_target = sum(target_dict.get(shop, 0) for shop in video_df["店铺名称"])
+        total_target = sum(target_dict.values())
+        douyin_rate = f"{(douyin_cum / douyin_target * 100):.2f}%" if douyin_target > 0 else "未设目标"
+        video_rate = f"{(video_cum / video_target * 100):.2f}%" if video_target > 0 else "未设目标"
+        total_rate = f"{(total_cum / total_target * 100):.2f}%" if total_target > 0 else "未设目标"
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric(label="📱 抖音合计", value=f"当日: {douyin_df['当日金额'].sum():,.2f}", delta=f"月累: {douyin_cum:,.2f}")
+            st.caption(f"📈 月完成率: {douyin_rate}")
+        with col2:
+            st.metric(label="📺 视频号合计", value=f"当日: {video_df['当日金额'].sum():,.2f}", delta=f"月累: {video_cum:,.2f}")
+            st.caption(f"📈 月完成率: {video_rate}")
+        with col3:
+            st.metric(label="📊 总业绩合计", value=f"当日: {df_sales['当日金额'].sum():,.2f}", delta=f"月累: {total_cum:,.2f}")
+            st.caption(f"📈 月完成率: {total_rate}")
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df[cols].to_excel(writer, index=False)
+        st.download_button("💾 导出 Excel", data=output.getvalue(), file_name="最新日明细.xlsx")
     else:
         st.info("暂无店铺业绩数据，请先上传订单文件")
-
-# 由于篇幅限制，其余选项卡内容（日期范围累计、日期查询、发货退货明细、历史业绩、商品分析、主播业绩、调试、导出）与之前完全相同，但需确保所有 key 唯一。此处仅作占位，实际部署时请确保代码完整。
-# 建议您将之前稳定版本的选项卡内容复制进来，并修改其中可能的重复 key（如按钮、selectbox等）。
 
 # ========== 日期范围累计 ==========
 with tabs[tab_index_range]:
     if st.session_state.get("df_all_daily") is not None and not st.session_state.df_all_daily.empty:
         c1, c2 = st.columns(2)
         with c1:
-            start = st.date_input("开始日期", value=date.today().replace(day=1), key="range_start")
+            start = st.date_input("开始日期", value=date.today().replace(day=1), key="range_start_final")
         with c2:
-            end = st.date_input("结束日期", value=date.today(), key="range_end")
-        if st.button("计算累计", key="calc_range_btn"):
+            end = st.date_input("结束日期", value=date.today(), key="range_end_final")
+        if st.button("计算累计", key="calc_range_final"):
             if start > end:
                 st.error("开始日期不能晚于结束日期")
             else:
@@ -666,8 +698,8 @@ with tabs[tab_index_range]:
 # ========== 日期查询 ==========
 with tabs[tab_index_query]:
     if st.session_state.get("df_all_daily") is not None and not st.session_state.df_all_daily.empty:
-        query_date = st.date_input("查询日期", value=date.today(), key="query_date")
-        if st.button("查询", key="query_btn"):
+        query_date = st.date_input("查询日期", value=date.today(), key="query_date_final")
+        if st.button("查询", key="query_btn_final"):
             res = st.session_state.df_all_daily[st.session_state.df_all_daily["日期"] == pd.to_datetime(query_date)].copy()
             if res.empty:
                 st.warning("无数据")
@@ -708,7 +740,7 @@ with tabs[tab_index_ship_return]:
     else:
         dates = sorted(prod_df["sale_date"].unique(), reverse=True)
         if dates:
-            selected_date = st.selectbox("选择日期", dates, format_func=lambda x: x.strftime("%Y-%m-%d"), key="ship_return_date")
+            selected_date = st.selectbox("选择日期", dates, format_func=lambda x: x.strftime("%Y-%m-%d"), key="ship_return_date_final")
             filtered = prod_df[prod_df["sale_date"] == selected_date]
             summary = filtered.groupby("shop_name").agg(
                 当日发货=("ship_amount", "sum"),
@@ -767,7 +799,7 @@ with tabs[tab_index_product]:
     st.subheader("📊 商品销售分析（按货号汇总）")
     col_btn, _ = st.columns([1, 5])
     with col_btn:
-        if st.button("🔄 刷新数据", key="refresh_analysis", help="清除缓存并重新从数据库加载最新数据"):
+        if st.button("🔄 刷新数据", key="refresh_analysis_final", help="清除缓存并重新从数据库加载最新数据"):
             st.cache_data.clear()
             st.rerun()
     prod_df = load_product_sales(st.session_state.table_suffix)
@@ -791,9 +823,9 @@ with tabs[tab_index_product]:
         max_date = prod_df["sale_date"].max().date()
         col_date1, col_date2 = st.columns(2)
         with col_date1:
-            start_date = st.date_input("开始日期", value=min_date, key="prod_start", min_value=min_date, max_value=max_date)
+            start_date = st.date_input("开始日期", value=min_date, key="prod_start_final", min_value=min_date, max_value=max_date)
         with col_date2:
-            end_date = st.date_input("结束日期", value=max_date, key="prod_end", min_value=min_date, max_value=max_date)
+            end_date = st.date_input("结束日期", value=max_date, key="prod_end_final", min_value=min_date, max_value=max_date)
         mask = (prod_df["sale_date"] >= pd.to_datetime(start_date)) & (prod_df["sale_date"] <= pd.to_datetime(end_date))
         filtered = prod_df[mask].copy()
         if filtered.empty:
@@ -803,7 +835,7 @@ with tabs[tab_index_product]:
             col_platform, col_shop = st.columns(2)
             with col_platform:
                 platform_options = ["全部", "抖音", "视频号"]
-                selected_platform = st.selectbox("平台", platform_options, key="platform_filter")
+                selected_platform = st.selectbox("平台", platform_options, key="platform_filter_final")
             all_shops = filtered["shop_name"].unique()
             if selected_platform == "抖音":
                 shop_options = [shop for shop in all_shops if "抖音" in shop]
@@ -811,17 +843,17 @@ with tabs[tab_index_product]:
                 shop_options = [shop for shop in all_shops if "视频号" in shop]
             else:
                 shop_options = list(all_shops)
-            selected_shops = st.multiselect("店铺（可多选）", options=sorted(shop_options), default=[], key="shop_filter")
+            selected_shops = st.multiselect("店铺（可多选）", options=sorted(shop_options), default=[], key="shop_filter_final")
             col_code, col_brand = st.columns(2)
             with col_code:
                 style_codes_input = st.text_input(
                     "货号筛选（多个用英文逗号分隔）",
                     placeholder="例如: L262Y050, G262Y030",
-                    key="style_code_filter"
+                    key="style_code_filter_final"
                 )
             with col_brand:
                 brands = ["全部"] + sorted(filtered["brand"].dropna().unique())
-                selected_brand = st.selectbox("品牌", brands, key="brand_filter")
+                selected_brand = st.selectbox("品牌", brands, key="brand_filter_final")
             selected_anchors = []
             if st.session_state.table_suffix == "_all" and "anchor" in filtered.columns:
                 all_anchors = filtered["anchor"].dropna().unique()
@@ -830,7 +862,7 @@ with tabs[tab_index_product]:
                         "主播（可多选）",
                         options=sorted(all_anchors),
                         default=[],
-                        key="anchor_filter"
+                        key="anchor_filter_final"
                     )
             if selected_platform == "抖音":
                 filtered = filtered[filtered["shop_name"].str.contains("抖音", case=False, na=False)]
@@ -902,7 +934,7 @@ with tabs[tab_index_product]:
                     hide_index=True,
                     use_container_width=True
                 )
-                pie_metric = st.radio("饼图指标", ["净销售金额", "发货金额", "退货金额"], horizontal=True, key="pie_metric")
+                pie_metric = st.radio("饼图指标", ["净销售金额", "发货金额", "退货金额"], horizontal=True, key="pie_metric_final")
                 if pie_metric == "净销售金额":
                     metric_col = "net_amount"
                     grouped_metric_col = "净销售金额"
@@ -977,7 +1009,7 @@ with tabs[tab_index_product]:
                         safe_pie_chart(season_data, "season", metric_col, f"按季节 - {pie_metric}", px.colors.qualitative.Set1)
                 if "brand" in filtered.columns:
                     st.subheader("📈 品牌销售分析")
-                    brand_metric = st.radio("品牌图表指标", ["净销售金额", "发货金额", "退货金额"], horizontal=True, key="brand_metric")
+                    brand_metric = st.radio("品牌图表指标", ["净销售金额", "发货金额", "退货金额"], horizontal=True, key="brand_metric_final")
                     if brand_metric == "净销售金额":
                         brand_col = "net_amount"
                         brand_title = "净销售金额"
