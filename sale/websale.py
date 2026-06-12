@@ -803,18 +803,22 @@ with tabs[tab_index_product]:
             st.cache_data.clear()
             st.rerun()
     
-    # 弹窗控制
+    # 弹窗控制（基于 URL 参数）
+    query_params = st.query_params
+    if "style" in query_params:
+        style_code = query_params["style"]
+        if style_code and style_code != st.session_state.get("last_dialog_style", ""):
+            st.session_state.dialog_style_code = style_code
+            st.session_state.show_dialog = True
+            st.session_state.last_dialog_style = style_code
+    else:
+        if "last_dialog_style" in st.session_state:
+            del st.session_state.last_dialog_style
+    
     if "dialog_style_code" not in st.session_state:
         st.session_state.dialog_style_code = None
     if "show_dialog" not in st.session_state:
         st.session_state.show_dialog = False
-    # 分页页码和排序
-    if "product_page_num" not in st.session_state:
-        st.session_state.product_page_num = 1
-    if "sort_by" not in st.session_state:
-        st.session_state.sort_by = "净销售金额"
-    if "sort_ascending" not in st.session_state:
-        st.session_state.sort_ascending = False
     
     prod_df = load_product_sales(st.session_state.table_suffix)
     if prod_df.empty:
@@ -928,7 +932,7 @@ with tabs[tab_index_product]:
                 else:
                     st.info("当前筛选条件下无货号数据")
                 st.markdown("---")
-                # ========== 按货号汇总表 ==========
+                # ========== 按货号汇总表（使用 st.data_editor，支持点击列排序，并带链接列） ==========
                 grouped = filtered.groupby("style_code").agg(
                     发货金额=("ship_amount", "sum"),
                     退货金额=("return_amount", "sum"),
@@ -966,79 +970,28 @@ with tabs[tab_index_product]:
                     if row['发货金额'] != 0 else "-", axis=1
                 )
                 
-                # 排序控件
                 st.markdown("#### 货号汇总表")
-                col_sort1, col_sort2, _ = st.columns([1, 1, 2])
-                with col_sort1:
-                    sort_options = ["货号", "发货金额", "退货金额", "净销售金额", "退款率"]
-                    selected_sort = st.selectbox("排序字段", sort_options, index=sort_options.index(st.session_state.sort_by) if st.session_state.sort_by in sort_options else 3, key="sort_by_selector")
-                with col_sort2:
-                    sort_order = st.radio("排序顺序", ["降序", "升序"], horizontal=True, index=0 if not st.session_state.sort_ascending else 1, key="sort_order_radio")
-                # 更新排序状态
-                if selected_sort != st.session_state.sort_by or (sort_order == "降序" and st.session_state.sort_ascending) or (sort_order == "升序" and not st.session_state.sort_ascending):
-                    st.session_state.sort_by = selected_sort
-                    st.session_state.sort_ascending = (sort_order == "升序")
-                    st.session_state.product_page_num = 1
-                    st.rerun()
-                
-                # 应用排序
-                if st.session_state.sort_by == "货号":
-                    grouped = grouped.sort_values("货号", ascending=st.session_state.sort_ascending)
-                elif st.session_state.sort_by == "发货金额":
-                    grouped = grouped.sort_values("发货金额", ascending=st.session_state.sort_ascending)
-                elif st.session_state.sort_by == "退货金额":
-                    grouped = grouped.sort_values("退货金额", ascending=st.session_state.sort_ascending)
-                elif st.session_state.sort_by == "净销售金额":
-                    grouped = grouped.sort_values("净销售金额", ascending=st.session_state.sort_ascending)
-                elif st.session_state.sort_by == "退款率":
-                    grouped["退款率_num"] = grouped["退款率"].str.rstrip("%").astype(float)
-                    grouped = grouped.sort_values("退款率_num", ascending=st.session_state.sort_ascending)
-                    grouped = grouped.drop(columns=["退款率_num"])
-                
-                # 分页
-                page_size = 20
-                total_rows = len(grouped)
-                total_pages = (total_rows + page_size - 1) // page_size if total_rows > 0 else 1
-                if st.session_state.product_page_num > total_pages:
-                    st.session_state.product_page_num = 1
-                
-                col_prev, col_page, col_next = st.columns([1, 2, 1])
-                with col_prev:
-                    if st.button("◀ 上一页", key="product_prev_page"):
-                        if st.session_state.product_page_num > 1:
-                            st.session_state.product_page_num -= 1
-                            st.rerun()
-                with col_page:
-                    st.write(f"第 {st.session_state.product_page_num} / {total_pages} 页")
-                with col_next:
-                    if st.button("下一页 ▶", key="product_next_page"):
-                        if st.session_state.product_page_num < total_pages:
-                            st.session_state.product_page_num += 1
-                            st.rerun()
-                
-                start_idx = (st.session_state.product_page_num - 1) * page_size
-                end_idx = min(start_idx + page_size, total_rows)
-                page_df = grouped.iloc[start_idx:end_idx]
-                
-                # 表头
-                cols = st.columns([2, 1.5, 1.2, 1.2, 1.2, 1, 1.2])
-                headers = ["货号", "商品分类", "发货金额(¥)", "退货金额(¥)", "净销售金额(¥)", "退款率", "操作"]
-                for col, header in zip(cols, headers):
-                    col.markdown(f"**{header}**")
-                
-                # 显示数据行
-                for idx, row in page_df.iterrows():
-                    col1, col2, col3, col4, col5, col6, col7 = st.columns([2, 1.5, 1.2, 1.2, 1.2, 1, 1.2])
-                    col1.write(row["货号"])
-                    col2.write(row["master_category"] if pd.notna(row["master_category"]) else "-")
-                    col3.write(f"{row['发货金额']:,.2f}")
-                    col4.write(f"{row['退货金额']:,.2f}")
-                    col5.write(f"{row['净销售金额']:,.2f}")
-                    col6.write(row["退款率"])
-                    if col7.button("📊 查看详情", key=f"detail_btn_{row['货号']}_{idx}"):
-                        st.session_state.dialog_style_code = row["货号"]
-                        st.session_state.show_dialog = True
-                        st.rerun()
+                base_url = st.query_params.get_base_url()
+                # 添加详情链接列
+                grouped["详情"] = grouped["货号"].apply(lambda x: f"{base_url}?style={x}")
+                # 格式化金额列用于显示（保留数值以便排序）
+                # 直接使用原始数值，让 data_editor 自动格式化
+                display_cols = ["货号", "master_category", "发货金额", "退货金额", "净销售金额", "退款率", "详情"]
+                st.data_editor(
+                    grouped[display_cols],
+                    column_config={
+                        "货号": st.column_config.TextColumn("货号"),
+                        "master_category": st.column_config.TextColumn("商品分类"),
+                        "发货金额": st.column_config.NumberColumn("发货金额(¥)", format="%.2f"),
+                        "退货金额": st.column_config.NumberColumn("退货金额(¥)", format="%.2f"),
+                        "净销售金额": st.column_config.NumberColumn("净销售金额(¥)", format="%.2f"),
+                        "退款率": st.column_config.TextColumn("退款率"),
+                        "详情": st.column_config.LinkColumn("操作", display_text="查看详情"),
+                    },
+                    hide_index=True,
+                    use_container_width=True,
+                    disabled=True,  # 禁止编辑
+                )
                 
                 # ========== 饼图和柱状图 ==========
                 pie_metric = st.radio("饼图指标", ["净销售金额", "发货金额", "退货金额"], horizontal=True, key="pie_metric_final")
@@ -1168,6 +1121,8 @@ with tabs[tab_index_product]:
                     date_detail["sale_date"] = date_detail["sale_date"].dt.strftime("%Y-%m-%d")
                     st.dataframe(date_detail, use_container_width=True, hide_index=True)
             if st.button("关闭"):
+                # 清除 URL 参数
+                st.query_params.clear()
                 st.session_state.show_dialog = False
                 st.session_state.dialog_style_code = None
                 st.rerun()
