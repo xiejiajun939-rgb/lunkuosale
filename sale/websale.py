@@ -36,7 +36,6 @@ def login():
                 st.session_state.username = username
                 st.session_state.role = USERS[username]["role"]
                 st.session_state.table_suffix = USERS[username]["default_suffix"]
-                # 强制清除所有缓存，确保初始加载正确数据源
                 st.cache_data.clear()
                 st.rerun()
             else:
@@ -67,7 +66,6 @@ def init_supabase():
 supabase = init_supabase()
 
 def get_table_name(base_name, suffix=None):
-    """suffix: '' 非直播， '_live' 直播， '_all' 全部数据"""
     if suffix is None:
         suffix = st.session_state.get("table_suffix", "")
     return f"{base_name}{suffix}"
@@ -110,17 +108,14 @@ def save_daily_sales(records, suffix=None):
     supabase.table(table_name).upsert(records, on_conflict="sale_date,shop_name").execute()
 
 def rebuild_daily_data(suffix=None):
-    """加载指定后缀的每日业绩数据，并更新 session_state（包括空数据时的完全重置）"""
     df = load_daily_sales(suffix)
     if df.empty:
-        # 数据为空时，彻底清空所有相关变量，避免残留旧数据
         st.session_state.df_all_daily = None
         st.session_state.daily_latest = None
         st.session_state.monthly_actual = None
         st.session_state.latest_date = None
         return
-    
-    df = df.rename(columns={"sale_date": "日期", "shop_name": "店铺名称", 
+    df = df.rename(columns={"sale_date": "日期", "shop_name": "店铺名称",
                             "amount": "当日金额", "cumulative_amount": "月累计金额"})
     df_all = df.sort_values(["店铺名称", "日期"])
     latest_date = df_all["日期"].max()
@@ -128,11 +123,64 @@ def rebuild_daily_data(suffix=None):
     monthly_actual = df_all.groupby("店铺名称")["当日金额"].sum().reset_index()
     monthly_actual["月累计金额"] = monthly_actual["当日金额"].round(2)
     monthly_actual = monthly_actual[["店铺名称", "月累计金额"]].sort_values("店铺名称")
-    
     st.session_state.df_all_daily = df_all
     st.session_state.daily_latest = daily_latest
     st.session_state.monthly_actual = monthly_actual
     st.session_state.latest_date = latest_date
+
+# ========== 新增：从商品销售明细重建每日业绩 ==========
+def rebuild_daily_from_product(suffix=None):
+    """根据 product_sales 表汇总生成 daily_sales 表，并更新累计"""
+    if supabase is None:
+        return False, "Supabase 未连接"
+    try:
+        product_table = get_table_name("product_sales", suffix)
+        # 读取所有 product_sales 数据
+        all_data = []
+        page = 0
+        page_size = 1000
+        while True:
+            resp = supabase.table(product_table).select("sale_date, shop_name, net_amount").range(page * page_size, (page + 1) * page_size - 1).execute()
+            if not resp.data:
+                break
+            all_data.extend(resp.data)
+            if len(resp.data) < page_size:
+                break
+            page += 1
+        if not all_data:
+            # 无数据，清空 daily_sales
+            daily_table = get_table_name("daily_sales", suffix)
+            supabase.table(daily_table).delete().neq("id", 0).execute()
+            return True, "商品销售表无数据，已清空每日业绩表"
+        df = pd.DataFrame(all_data)
+        df["sale_date"] = pd.to_datetime(df["sale_date"])
+        # 按日期、店铺汇总净金额
+        daily_agg = df.groupby(["sale_date", "shop_name"])["net_amount"].sum().reset_index()
+        daily_agg.columns = ["sale_date", "shop_name", "amount"]
+        daily_agg = daily_agg.sort_values(["shop_name", "sale_date"])
+        # 计算月累计（按店铺分组，按日期累加）
+        daily_agg["cumulative_amount"] = daily_agg.groupby("shop_name")["amount"].cumsum().round(2)
+        # 转换为记录并 upsert
+        records = []
+        for _, row in daily_agg.iterrows():
+            records.append({
+                "sale_date": row["sale_date"].strftime("%Y-%m-%d"),
+                "shop_name": row["shop_name"],
+                "amount": float(row["amount"]),
+                "cumulative_amount": float(row["cumulative_amount"])
+            })
+        if records:
+            daily_table = get_table_name("daily_sales", suffix)
+            # 先清空原表（避免残留）
+            supabase.table(daily_table).delete().neq("id", 0).execute()
+            # 分批插入（Supabase 一次最多 1000 条）
+            batch_size = 1000
+            for i in range(0, len(records), batch_size):
+                batch = records[i:i+batch_size]
+                supabase.table(daily_table).insert(batch).execute()
+        return True, f"成功重建每日业绩，共 {len(records)} 条记录"
+    except Exception as e:
+        return False, str(e)
 
 def load_targets(suffix=None):
     if supabase is None:
@@ -222,7 +270,6 @@ def load_product_master():
         return pd.DataFrame()
 
 def save_product_sales(df_orders, suffix=None):
-    """保存商品销售明细，并合并相同remark的记录，避免 upsert 冲突"""
     if supabase is None:
         return
     master_df = load_product_master()
@@ -234,8 +281,6 @@ def save_product_sales(df_orders, suffix=None):
                 "image_url": row.get("image_url", None),
                 "master_category": row.get("category", None)
             }
-    
-    # 按 remark 合并记录
     temp_records = {}
     for _, row in df_orders.iterrows():
         remark = row["备注"]
@@ -246,7 +291,6 @@ def save_product_sales(df_orders, suffix=None):
         short_code = parsed["style_code"]
         img = master_map.get(short_code, {}).get("image_url")
         cat = master_map.get(short_code, {}).get("master_category")
-        
         if remark not in temp_records:
             temp_records[remark] = {
                 "remark": remark,
@@ -272,7 +316,6 @@ def save_product_sales(df_orders, suffix=None):
             existing["ship_amount"] += max(amount, 0)
             existing["return_amount"] += max(-amount, 0)
             existing["net_amount"] += amount
-    
     records = list(temp_records.values())
     if records:
         table_name = get_table_name("product_sales", suffix)
@@ -320,39 +363,31 @@ def process_uploaded_file(uploaded_file, suffix):
         for col in required:
             if col not in df.columns:
                 raise ValueError(f"缺少列: {col}")
-
         df["日期"] = pd.to_datetime(df["日期"])
         df["店铺名称"] = df["备注"].astype(str).str.split("_").str[-1]
         df["店铺名称"] = df["店铺名称"].str.replace(r'^商店[：:]', '', regex=True).str.strip()
         df = df[df["店铺名称"].notna() & (df["店铺名称"] != "")].copy()
         if df.empty:
             raise ValueError("未提取到有效的店铺名称")
-
         df["金额/时间"] = pd.to_numeric(df["金额/时间"], errors="coerce")
         df = df.dropna(subset=["金额/时间"])
-
         save_product_sales(df, suffix)
-
         existing = load_daily_sales(suffix)
         if existing.empty:
             existing_df = pd.DataFrame(columns=["日期", "店铺名称", "当日金额"])
         else:
             existing_df = existing[["sale_date", "shop_name", "amount"]].copy()
             existing_df.columns = ["日期", "店铺名称", "当日金额"]
-        
         new_daily = df.groupby(["日期", "店铺名称"])["金额/时间"].sum().reset_index()
         new_daily.columns = ["日期", "店铺名称", "当日金额"]
-        
         if not existing_df.empty:
             existing_df["日期"] = pd.to_datetime(existing_df["日期"])
         new_daily["日期"] = pd.to_datetime(new_daily["日期"])
-        
         merged = pd.concat([existing_df, new_daily], ignore_index=True)
         merged = merged.groupby(["日期", "店铺名称"])["当日金额"].sum().reset_index()
         merged = merged.sort_values(["店铺名称", "日期"])
         merged["当日金额"] = pd.to_numeric(merged["当日金额"], errors="coerce").fillna(0)
         merged["月累计金额"] = merged.groupby("店铺名称")["当日金额"].cumsum().round(2)
-        
         records = []
         for _, row in merged.iterrows():
             records.append({
@@ -362,7 +397,6 @@ def process_uploaded_file(uploaded_file, suffix):
                 "cumulative_amount": float(row["月累计金额"])
             })
         save_daily_sales(records, suffix)
-
         if suffix == st.session_state.get("table_suffix", ""):
             rebuild_daily_data(suffix)
             st.session_state.target_dict = load_targets(suffix)
@@ -399,39 +433,21 @@ if st.session_state.target_dict == {}:
 # ========== 侧边栏 ==========
 with st.sidebar:
     st.header("📂 数据加载")
-    
     if st.session_state.role == "admin":
         st.subheader("🔄 数据源切换")
-        suffix_names = {
-            "": "非直播数据",
-            "_live": "直播数据",
-            "_all": "全部数据"
-        }
+        suffix_names = {"": "非直播数据", "_live": "直播数据", "_all": "全部数据"}
         current_source_name = suffix_names.get(st.session_state.table_suffix, "未知")
         st.info(f"📌 当前正在查看：**{current_source_name}**")
-        
-        source_options = {
-            "非直播数据": "",
-            "直播数据": "_live",
-            "全部数据": "_all"
-        }
+        source_options = {"非直播数据": "", "直播数据": "_live", "全部数据": "_all"}
         default_index = list(source_options.keys()).index(current_source_name) if current_source_name in source_options else 0
-        selected_source = st.selectbox(
-            "选择要切换到的数据源",
-            options=list(source_options.keys()),
-            index=default_index,
-            key="source_select"
-        )
-        
+        selected_source = st.selectbox("选择要切换到的数据源", options=list(source_options.keys()), index=default_index, key="source_select")
         if st.button("✅ 确认切换", key="confirm_switch"):
             new_suffix = source_options[selected_source]
             if new_suffix != st.session_state.table_suffix:
                 st.session_state.table_suffix = new_suffix
                 st.cache_data.clear()
                 st.rerun()
-        
         st.markdown("---")
-        
         current_display_suffix = st.session_state.table_suffix
         if current_display_suffix == "":
             st.subheader("📁 非直播数据上传")
@@ -496,7 +512,6 @@ with st.sidebar:
                     st.success(msg)
                 else:
                     st.error(msg)
-        
         st.markdown("---")
         st.header("⚙️ 工具")
         template_df = pd.DataFrame({"店铺名称": ["示例店铺A", "示例店铺B"], "目标金额": [100000, 200000]})
@@ -513,9 +528,20 @@ with st.sidebar:
             st.session_state.table_suffix = ""
             st.cache_data.clear()
             st.rerun()
+        # 新增：从商品明细重建每日业绩
+        if st.button("🔄 从商品明细重建每日业绩", help="根据当前商品销售表重新生成每日业绩表（会覆盖现有数据）"):
+            with st.spinner("正在重建每日业绩，请稍候..."):
+                ok, msg = rebuild_daily_from_product(st.session_state.table_suffix)
+                if ok:
+                    st.success(msg)
+                    # 刷新页面显示
+                    rebuild_daily_data(st.session_state.table_suffix)
+                    st.cache_data.clear()
+                    st.rerun()
+                else:
+                    st.error(msg)
     else:
         st.info("普通用户仅可查看数据，无法上传。")
-    
     st.markdown("---")
     if st.button("🚪 退出登录"):
         st.session_state.authenticated = False
@@ -526,7 +552,7 @@ with st.sidebar:
 
 # ========== 动态创建选项卡（管理员可见全部，并根据数据源显示主播选项卡）==========
 base_tab_labels = [
-    "📅 最新日明细", "🏪 日期范围累计", "🔍 日期查询", 
+    "📅 最新日明细", "🏪 日期范围累计", "🔍 日期查询",
     "📦 发货退货明细", "🗄️ 历史业绩", "📊 商品分析"
 ]
 admin_extra_tabs = []
@@ -541,14 +567,12 @@ else:
 
 tabs = st.tabs(all_tab_labels)
 
-# 定义索引变量
 tab_index_latest = 0
 tab_index_range = 1
 tab_index_query = 2
 tab_index_ship_return = 3
 tab_index_history = 4
 tab_index_product = 5
-# 主播业绩选项卡的索引（仅在全部数据且管理员时存在）
 if st.session_state.role == "admin" and st.session_state.table_suffix == "_all":
     tab_index_anchor = 6
     tab_index_debug = 7
@@ -562,7 +586,6 @@ with tabs[tab_index_latest]:
     source_names = {"": "非直播数据", "_live": "直播数据", "_all": "全部数据"}
     current_source = source_names.get(st.session_state.table_suffix, "未知")
     st.info(f"📌 当前查看的数据源：**{current_source}**")
-    
     if st.session_state.get("daily_latest") is not None and not st.session_state.daily_latest.empty:
         df = st.session_state.daily_latest.copy()
         df["目标金额"] = df["店铺名称"].map(st.session_state.target_dict).fillna(0).round(2)
@@ -575,7 +598,6 @@ with tabs[tab_index_latest]:
         df["达成率"] = df.apply(calc_rate, axis=1)
         cols = ["日期", "店铺名称", "当日金额", "月累计金额", "目标金额", "达成率"]
         st.dataframe(df[cols], use_container_width=True, hide_index=True)
-        
         df_all = st.session_state.df_all_daily
         if df_all is not None and not df_all.empty:
             latest_cum = df_all.groupby("店铺名称")["月累计金额"].last().reset_index()
@@ -588,20 +610,16 @@ with tabs[tab_index_latest]:
             douyin_cum = 0
             video_cum = 0
             total_cum = 0
-        
         df_sales = st.session_state.daily_latest.copy()
         douyin_df = df_sales[df_sales["店铺名称"].str.contains("抖音", case=False, na=False)]
         video_df = df_sales[df_sales["店铺名称"].str.contains("视频号", case=False, na=False)]
         target_dict = st.session_state.target_dict
-        
         douyin_target = sum(target_dict.get(shop, 0) for shop in douyin_df["店铺名称"])
         video_target = sum(target_dict.get(shop, 0) for shop in video_df["店铺名称"])
         total_target = sum(target_dict.values())
-        
         douyin_rate = f"{(douyin_cum / douyin_target * 100):.2f}%" if douyin_target > 0 else "未设目标"
         video_rate = f"{(video_cum / video_target * 100):.2f}%" if video_target > 0 else "未设目标"
         total_rate = f"{(total_cum / total_target * 100):.2f}%" if total_target > 0 else "未设目标"
-        
         col1, col2, col3 = st.columns(3)
         with col1:
             st.metric(label="📱 抖音合计", value=f"当日: {douyin_df['当日金额'].sum():,.2f}", delta=f"月累: {douyin_cum:,.2f}")
@@ -612,13 +630,17 @@ with tabs[tab_index_latest]:
         with col3:
             st.metric(label="📊 总业绩合计", value=f"当日: {df_sales['当日金额'].sum():,.2f}", delta=f"月累: {total_cum:,.2f}")
             st.caption(f"📈 月完成率: {total_rate}")
-        
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             df[cols].to_excel(writer, index=False)
         st.download_button("💾 导出 Excel", data=output.getvalue(), file_name="最新日明细.xlsx")
     else:
         st.info("暂无店铺业绩数据，请先上传订单文件")
+
+# 其他选项卡（日期范围累计、日期查询、发货退货明细、历史业绩、商品分析、主播业绩、调试、商品库导出）与之前相同，因篇幅原因此处省略，实际您可从之前提供的完整代码中复制。
+# 注意：商品分析选项卡中已经包含主播筛选（仅全部数据），主播业绩选项卡也已添加。
+# 由于代码长度限制，这里只展示核心新增部分。实际使用时，请将上述所有函数和剩余选项卡内容补齐。
+# 为保持完整性，下面给出商品分析及主播业绩等剩余选项卡的代码（需要您自行整合，或者直接使用之前提供的完整版本，然后加上这个重建函数和按钮）。
 
 # ========== 日期范围累计 ==========
 with tabs[tab_index_range]:
