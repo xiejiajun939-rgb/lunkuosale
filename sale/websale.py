@@ -808,9 +808,13 @@ with tabs[tab_index_product]:
         st.session_state.dialog_style_code = None
     if "show_dialog" not in st.session_state:
         st.session_state.show_dialog = False
-    # 分页页码
+    # 分页页码和排序
     if "product_page_num" not in st.session_state:
         st.session_state.product_page_num = 1
+    if "sort_by" not in st.session_state:
+        st.session_state.sort_by = "净销售金额"
+    if "sort_ascending" not in st.session_state:
+        st.session_state.sort_ascending = False
     
     prod_df = load_product_sales(st.session_state.table_suffix)
     if prod_df.empty:
@@ -930,7 +934,6 @@ with tabs[tab_index_product]:
                     退货金额=("return_amount", "sum"),
                     净销售金额=("net_amount", "sum")
                 ).reset_index()
-                grouped = grouped.sort_values("净销售金额", ascending=False)
                 grouped.rename(columns={"style_code": "货号"}, inplace=True)
                 master_df = load_product_master()
                 if not master_df.empty and "style_code" in master_df.columns:
@@ -963,13 +966,42 @@ with tabs[tab_index_product]:
                     if row['发货金额'] != 0 else "-", axis=1
                 )
                 
-                # 分页逻辑
+                # 排序控件
                 st.markdown("#### 货号汇总表")
+                col_sort1, col_sort2, _ = st.columns([1, 1, 2])
+                with col_sort1:
+                    sort_options = ["货号", "发货金额", "退货金额", "净销售金额", "退款率"]
+                    selected_sort = st.selectbox("排序字段", sort_options, index=sort_options.index(st.session_state.sort_by) if st.session_state.sort_by in sort_options else 3, key="sort_by_selector")
+                with col_sort2:
+                    sort_order = st.radio("排序顺序", ["降序", "升序"], horizontal=True, index=0 if not st.session_state.sort_ascending else 1, key="sort_order_radio")
+                # 更新排序状态
+                if selected_sort != st.session_state.sort_by or (sort_order == "降序" and st.session_state.sort_ascending) or (sort_order == "升序" and not st.session_state.sort_ascending):
+                    st.session_state.sort_by = selected_sort
+                    st.session_state.sort_ascending = (sort_order == "升序")
+                    st.session_state.product_page_num = 1
+                    st.rerun()
+                
+                # 应用排序
+                if st.session_state.sort_by == "货号":
+                    grouped = grouped.sort_values("货号", ascending=st.session_state.sort_ascending)
+                elif st.session_state.sort_by == "发货金额":
+                    grouped = grouped.sort_values("发货金额", ascending=st.session_state.sort_ascending)
+                elif st.session_state.sort_by == "退货金额":
+                    grouped = grouped.sort_values("退货金额", ascending=st.session_state.sort_ascending)
+                elif st.session_state.sort_by == "净销售金额":
+                    grouped = grouped.sort_values("净销售金额", ascending=st.session_state.sort_ascending)
+                elif st.session_state.sort_by == "退款率":
+                    grouped["退款率_num"] = grouped["退款率"].str.rstrip("%").astype(float)
+                    grouped = grouped.sort_values("退款率_num", ascending=st.session_state.sort_ascending)
+                    grouped = grouped.drop(columns=["退款率_num"])
+                
+                # 分页
                 page_size = 20
                 total_rows = len(grouped)
                 total_pages = (total_rows + page_size - 1) // page_size if total_rows > 0 else 1
+                if st.session_state.product_page_num > total_pages:
+                    st.session_state.product_page_num = 1
                 
-                # 页码控件
                 col_prev, col_page, col_next = st.columns([1, 2, 1])
                 with col_prev:
                     if st.button("◀ 上一页", key="product_prev_page"):
@@ -988,13 +1020,13 @@ with tabs[tab_index_product]:
                 end_idx = min(start_idx + page_size, total_rows)
                 page_df = grouped.iloc[start_idx:end_idx]
                 
-                # 显示表头
+                # 表头
                 cols = st.columns([2, 1.5, 1.2, 1.2, 1.2, 1, 1.2])
                 headers = ["货号", "商品分类", "发货金额(¥)", "退货金额(¥)", "净销售金额(¥)", "退款率", "操作"]
                 for col, header in zip(cols, headers):
                     col.markdown(f"**{header}**")
                 
-                # 显示数据行，每行一个查看详情按钮
+                # 显示数据行
                 for idx, row in page_df.iterrows():
                     col1, col2, col3, col4, col5, col6, col7 = st.columns([2, 1.5, 1.2, 1.2, 1.2, 1, 1.2])
                     col1.write(row["货号"])
@@ -1007,10 +1039,6 @@ with tabs[tab_index_product]:
                         st.session_state.dialog_style_code = row["货号"]
                         st.session_state.show_dialog = True
                         st.rerun()
-                
-                # 如果筛选后总页数发生变化，确保当前页码不超过总页数
-                if st.session_state.product_page_num > total_pages:
-                    st.session_state.product_page_num = 1
                 
                 # ========== 饼图和柱状图 ==========
                 pie_metric = st.radio("饼图指标", ["净销售金额", "发货金额", "退货金额"], horizontal=True, key="pie_metric_final")
