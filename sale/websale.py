@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-订单业绩统计工具 - 最终完整版（管理员可切换数据源：非直播/直播/全部，独立数据库表）
+订单业绩统计工具 - 最终优化版（管理员可切换数据源：非直播/直播/全部，独立数据库表）
 修复重复上传、key冲突、同日期累加等问题
 全部数据下所有维度按主播汇总
+性能优化：向量化计算、去除循环、添加加载提示
 管理员账号：admin / 1234567890
 非直播账号：XDZ01 / 94949468
 直播账号：ZBZ01 / 123456
@@ -15,6 +16,7 @@ import io
 import hashlib
 import time
 import re
+import numpy as np
 from supabase import create_client
 import plotly.express as px
 
@@ -148,48 +150,49 @@ def rebuild_daily_from_product(suffix=None):
     if supabase is None:
         return False, "Supabase 未连接"
     try:
-        product_table = get_table_name("product_sales", suffix)
-        all_data = []
-        page = 0
-        page_size = 1000
-        while True:
-            resp = supabase.table(product_table).select("sale_date, shop_name, net_amount, remark").range(page * page_size, (page + 1) * page_size - 1).execute()
-            if not resp.data:
-                break
-            all_data.extend(resp.data)
-            if len(resp.data) < page_size:
-                break
-            page += 1
-        if not all_data:
-            daily_table = get_table_name("daily_sales", suffix)
-            supabase.table(daily_table).delete().neq("id", 0).execute()
-            return True, "商品销售表无数据，已清空每日业绩表"
-        df = pd.DataFrame(all_data)
-        df["sale_date"] = pd.to_datetime(df["sale_date"])
-        if suffix == "_all":
-            df["anchor"] = df["remark"].apply(extract_anchor)
-            daily_agg = df.groupby(["sale_date", "anchor"])["net_amount"].sum().reset_index()
-            daily_agg.columns = ["sale_date", "店铺名称", "amount"]
-        else:
-            daily_agg = df.groupby(["sale_date", "shop_name"])["net_amount"].sum().reset_index()
-            daily_agg.columns = ["sale_date", "店铺名称", "amount"]
-        daily_agg = daily_agg.sort_values(["店铺名称", "sale_date"])
-        daily_agg["cumulative_amount"] = daily_agg.groupby("店铺名称")["amount"].cumsum().round(2)
-        records = []
-        for _, row in daily_agg.iterrows():
-            records.append({
-                "sale_date": row["sale_date"].strftime("%Y-%m-%d"),
-                "shop_name": row["店铺名称"],
-                "amount": float(row["amount"]),
-                "cumulative_amount": float(row["cumulative_amount"])
-            })
-        if records:
-            daily_table = get_table_name("daily_sales", suffix)
-            supabase.table(daily_table).delete().neq("id", 0).execute()
-            batch_size = 1000
-            for i in range(0, len(records), batch_size):
-                batch = records[i:i+batch_size]
-                supabase.table(daily_table).insert(batch).execute()
+        with st.spinner("正在重建每日业绩，请稍候..."):
+            product_table = get_table_name("product_sales", suffix)
+            all_data = []
+            page = 0
+            page_size = 1000
+            while True:
+                resp = supabase.table(product_table).select("sale_date, shop_name, net_amount, remark").range(page * page_size, (page + 1) * page_size - 1).execute()
+                if not resp.data:
+                    break
+                all_data.extend(resp.data)
+                if len(resp.data) < page_size:
+                    break
+                page += 1
+            if not all_data:
+                daily_table = get_table_name("daily_sales", suffix)
+                supabase.table(daily_table).delete().neq("id", 0).execute()
+                return True, "商品销售表无数据，已清空每日业绩表"
+            df = pd.DataFrame(all_data)
+            df["sale_date"] = pd.to_datetime(df["sale_date"])
+            if suffix == "_all":
+                df["anchor"] = df["remark"].apply(extract_anchor)
+                daily_agg = df.groupby(["sale_date", "anchor"])["net_amount"].sum().reset_index()
+                daily_agg.columns = ["sale_date", "店铺名称", "amount"]
+            else:
+                daily_agg = df.groupby(["sale_date", "shop_name"])["net_amount"].sum().reset_index()
+                daily_agg.columns = ["sale_date", "店铺名称", "amount"]
+            daily_agg = daily_agg.sort_values(["店铺名称", "sale_date"])
+            daily_agg["cumulative_amount"] = daily_agg.groupby("店铺名称")["amount"].cumsum().round(2)
+            records = []
+            for _, row in daily_agg.iterrows():
+                records.append({
+                    "sale_date": row["sale_date"].strftime("%Y-%m-%d"),
+                    "shop_name": row["店铺名称"],
+                    "amount": float(row["amount"]),
+                    "cumulative_amount": float(row["cumulative_amount"])
+                })
+            if records:
+                daily_table = get_table_name("daily_sales", suffix)
+                supabase.table(daily_table).delete().neq("id", 0).execute()
+                batch_size = 1000
+                for i in range(0, len(records), batch_size):
+                    batch = records[i:i+batch_size]
+                    supabase.table(daily_table).insert(batch).execute()
         return True, f"成功重建每日业绩，共 {len(records)} 条记录"
     except Exception as e:
         return False, str(e)
@@ -571,15 +574,14 @@ with st.sidebar:
             st.cache_data.clear()
             st.rerun()
         if st.button("🔄 从商品明细重建每日业绩", key="rebuild_daily_final", help="根据当前商品销售表重新生成每日业绩表（会覆盖现有数据）"):
-            with st.spinner("正在重建每日业绩，请稍候..."):
-                ok, msg = rebuild_daily_from_product(st.session_state.table_suffix)
-                if ok:
-                    st.success(msg)
-                    rebuild_daily_data(st.session_state.table_suffix)
-                    st.cache_data.clear()
-                    st.rerun()
-                else:
-                    st.error(msg)
+            ok, msg = rebuild_daily_from_product(st.session_state.table_suffix)
+            if ok:
+                st.success(msg)
+                rebuild_daily_data(st.session_state.table_suffix)
+                st.cache_data.clear()
+                st.rerun()
+            else:
+                st.error(msg)
     else:
         st.info("普通用户仅可查看数据，无法上传。")
     st.markdown("---")
@@ -783,7 +785,8 @@ with tabs[tab_index_query]:
 # ========== 发货退货明细 ==========
 with tabs[tab_index_ship_return]:
     st.subheader("📦 发货退货明细（按主维）")
-    prod_df = load_product_sales(st.session_state.table_suffix)
+    with st.spinner("正在加载商品数据，请稍候..."):
+        prod_df = load_product_sales(st.session_state.table_suffix)
     if prod_df.empty:
         st.info("暂无商品数据，请先上传订单文件")
     else:
@@ -833,7 +836,8 @@ with tabs[tab_index_ship_return]:
 # ========== 历史业绩 ==========
 with tabs[tab_index_history]:
     st.subheader("所有已保存的每日业绩")
-    daily_df = load_daily_sales()
+    with st.spinner("正在加载历史数据，请稍候..."):
+        daily_df = load_daily_sales()
     if not daily_df.empty:
         if st.session_state.table_suffix == "_all":
             daily_df = daily_df.rename(columns={"shop_name": "主播名称"})
@@ -863,8 +867,6 @@ with tabs[tab_index_history]:
 
 # ========== 商品分析 ==========
 with tabs[tab_index_product]:
-    import numpy as np  # 确保 numpy 可用（若全局已导入可删除此行）
-
     # 弹窗状态管理
     if st.session_state.get("detail_clicked", False):
         st.session_state.detail_clicked = False
@@ -900,7 +902,8 @@ with tabs[tab_index_product]:
     if "sort_ascending" not in st.session_state:
         st.session_state.sort_ascending = False
     
-    prod_df = load_product_sales(st.session_state.table_suffix)
+    with st.spinner("正在加载商品销售数据，请稍候..."):
+        prod_df = load_product_sales(st.session_state.table_suffix)
     if prod_df.empty:
         st.warning("暂无商品销售数据，请先上传订单文件。")
     else:
@@ -909,7 +912,7 @@ with tabs[tab_index_product]:
         else:
             prod_df["style_code"] = prod_df["product_code"].str[:8].str.strip().str.upper()
         
-        # 【优化点三】使用 pandas 向量化正则提取主播
+        # 【性能优化】向量化提取主播
         if st.session_state.table_suffix in ["_live", "_all"]:
             prod_df["anchor"] = prod_df["remark"].astype(str).str.extract(r'主播[：:]([^_]+)')[0].str.strip()
         
@@ -1021,7 +1024,7 @@ with tabs[tab_index_product]:
                 img_map = master_df.set_index("style_code")["image_url"].to_dict()
                 cat_map = master_df.set_index("style_code")["category"].to_dict()
                 grouped["image_url"] = grouped["货号"].map(img_map).fillna(None)
-                # 【优化点二】分类匹配：无循环，纯映射 + fillna
+                # 【性能优化】向量化分类匹配
                 if "master_category" not in filtered.columns:
                     filtered["master_category"] = None
                 cat_series = filtered.groupby("style_code")["master_category"].first()
@@ -1030,7 +1033,7 @@ with tabs[tab_index_product]:
                 grouped["master_category"] = None
                 grouped["image_url"] = None
             
-            # 【优化点一】退款率向量化计算
+            # 【性能优化】向量化退款率计算
             grouped["退款率"] = np.where(
                 grouped["发货金额"] != 0,
                 ((grouped["退货金额"] / grouped["发货金额"].replace(0, np.nan)) * 100).map("{:.2f}%".format),
@@ -1290,11 +1293,13 @@ with tabs[tab_index_product]:
                 st.session_state.detail_clicked = False
                 st.rerun()
         show_style_detail()
+
 # ========== 主播业绩（仅全部数据且管理员） ==========
 if st.session_state.role == "admin" and st.session_state.table_suffix == "_all":
     with tabs[tab_index_anchor]:
         st.subheader("🎤 主播最新日明细（按主播汇总）")
-        prod_df_anchor = load_product_sales("_all")
+        with st.spinner("正在加载主播业绩数据，请稍候..."):
+            prod_df_anchor = load_product_sales("_all")
         if prod_df_anchor.empty:
             st.info("暂无商品数据，请先上传全部数据订单文件")
         else:
