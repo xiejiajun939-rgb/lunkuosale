@@ -1036,28 +1036,61 @@ with tabs[tab_index_product]:
                     col6.write(f"{row['净销售金额']:,.2f}")
                     col7.write(row["退款率"])
                     if col8.button("📊 查看详情", key=f"detail_btn_{row['货号']}_{idx}"):
-                        # 预计算详情数据并缓存
                         style_code = row["货号"]
                         detail_df = filtered[filtered["style_code"] == style_code].copy()
                         if not detail_df.empty:
-                            # 按店铺汇总
-                            shop_detail = detail_df.groupby("shop_name").agg(
-                                发货金额=("ship_amount", "sum"),
-                                退货金额=("return_amount", "sum"),
-                                净销售金额=("net_amount", "sum")
-                            ).reset_index()
-                            shop_detail = shop_detail.sort_values("净销售金额", ascending=False)
-                            # 按日期明细
-                            date_detail = detail_df.groupby(["sale_date", "shop_name"]).agg(
-                                发货金额=("ship_amount", "sum"),
-                                退货金额=("return_amount", "sum"),
-                                净销售金额=("net_amount", "sum")
-                            ).reset_index()
-                            date_detail["sale_date"] = date_detail["sale_date"].dt.strftime("%Y-%m-%d")
+                            suffix = st.session_state.table_suffix
+                            # 提取主播的函数
+                            def extract_anchor_fn(remark):
+                                if not isinstance(remark, str):
+                                    return None
+                                match = re.search(r'主播[：:]([^_]+)', remark)
+                                if match:
+                                    return match.group(1).strip()
+                                return None
+                            if suffix == "_live":
+                                # 直播数据：按主播汇总
+                                detail_df["anchor"] = detail_df["remark"].apply(extract_anchor_fn)
+                                detail_df = detail_df[detail_df["anchor"].notna()]
+                                if not detail_df.empty:
+                                    shop_detail = detail_df.groupby("anchor").agg(
+                                        发货金额=("ship_amount", "sum"),
+                                        退货金额=("return_amount", "sum"),
+                                        净销售金额=("net_amount", "sum")
+                                    ).reset_index().rename(columns={"anchor": "主播"})
+                                    shop_detail = shop_detail.sort_values("净销售金额", ascending=False)
+                                    date_detail = detail_df.groupby(["sale_date", "anchor"]).agg(
+                                        发货金额=("ship_amount", "sum"),
+                                        退货金额=("return_amount", "sum"),
+                                        净销售金额=("net_amount", "sum")
+                                    ).reset_index()
+                                    date_detail["sale_date"] = date_detail["sale_date"].dt.strftime("%Y-%m-%d")
+                                    date_detail.rename(columns={"anchor": "主播"}, inplace=True)
+                                    detail_type = "anchor"
+                                else:
+                                    shop_detail = pd.DataFrame()
+                                    date_detail = pd.DataFrame()
+                                    detail_type = "anchor"
+                            else:
+                                # 非直播或全部数据：按店铺汇总
+                                shop_detail = detail_df.groupby("shop_name").agg(
+                                    发货金额=("ship_amount", "sum"),
+                                    退货金额=("return_amount", "sum"),
+                                    净销售金额=("net_amount", "sum")
+                                ).reset_index()
+                                shop_detail = shop_detail.sort_values("净销售金额", ascending=False)
+                                date_detail = detail_df.groupby(["sale_date", "shop_name"]).agg(
+                                    发货金额=("ship_amount", "sum"),
+                                    退货金额=("return_amount", "sum"),
+                                    净销售金额=("net_amount", "sum")
+                                ).reset_index()
+                                date_detail["sale_date"] = date_detail["sale_date"].dt.strftime("%Y-%m-%d")
+                                detail_type = "shop"
                             st.session_state.cached_detail_data = {
                                 "style_code": style_code,
                                 "shop_detail": shop_detail,
-                                "date_detail": date_detail
+                                "date_detail": date_detail,
+                                "type": detail_type
                             }
                         else:
                             st.session_state.cached_detail_data = None
@@ -1172,10 +1205,19 @@ with tabs[tab_index_product]:
             if cached and cached.get("style_code") == style_code:
                 shop_detail = cached["shop_detail"]
                 date_detail = cached["date_detail"]
-                st.markdown("#### 店铺销售汇总")
-                st.dataframe(shop_detail, use_container_width=True, hide_index=True)
+                if cached.get("type") == "anchor":
+                    st.markdown("#### 主播销售汇总")
+                else:
+                    st.markdown("#### 店铺销售汇总")
+                if not shop_detail.empty:
+                    st.dataframe(shop_detail, use_container_width=True, hide_index=True)
+                else:
+                    st.info("无有效数据")
                 with st.expander("查看按日期的明细"):
-                    st.dataframe(date_detail, use_container_width=True, hide_index=True)
+                    if not date_detail.empty:
+                        st.dataframe(date_detail, use_container_width=True, hide_index=True)
+                    else:
+                        st.info("无明细数据")
             else:
                 st.info("该货号无销售数据")
             if st.button("关闭"):
