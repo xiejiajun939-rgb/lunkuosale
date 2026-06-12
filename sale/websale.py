@@ -863,6 +863,8 @@ with tabs[tab_index_history]:
 
 # ========== 商品分析 ==========
 with tabs[tab_index_product]:
+    import numpy as np  # 确保 numpy 可用（若全局已导入可删除此行）
+
     # 弹窗状态管理
     if st.session_state.get("detail_clicked", False):
         st.session_state.detail_clicked = False
@@ -906,15 +908,11 @@ with tabs[tab_index_product]:
             prod_df["style_code"] = prod_df["style_code"].astype(str).str.strip().str.upper()
         else:
             prod_df["style_code"] = prod_df["product_code"].str[:8].str.strip().str.upper()
+        
+        # 【优化点三】使用 pandas 向量化正则提取主播
         if st.session_state.table_suffix in ["_live", "_all"]:
-            def extract_anchor_local(remark):
-                if not isinstance(remark, str):
-                    return None
-                match = re.search(r'主播[：:]([^_]+)', remark)
-                if match:
-                    return match.group(1).strip()
-                return None
-            prod_df["anchor"] = prod_df["remark"].apply(extract_anchor_local)
+            prod_df["anchor"] = prod_df["remark"].astype(str).str.extract(r'主播[：:]([^_]+)')[0].str.strip()
+        
         min_date = prod_df["sale_date"].min().date()
         max_date = prod_df["sale_date"].max().date()
         col_date1, col_date2 = st.columns(2)
@@ -1023,21 +1021,23 @@ with tabs[tab_index_product]:
                 img_map = master_df.set_index("style_code")["image_url"].to_dict()
                 cat_map = master_df.set_index("style_code")["category"].to_dict()
                 grouped["image_url"] = grouped["货号"].map(img_map).fillna(None)
+                # 【优化点二】分类匹配：无循环，纯映射 + fillna
                 if "master_category" not in filtered.columns:
                     filtered["master_category"] = None
                 cat_series = filtered.groupby("style_code")["master_category"].first()
-                grouped["master_category"] = grouped["货号"].map(cat_series)
-                for idx, row in grouped.iterrows():
-                    if pd.isna(row["master_category"]) and row["货号"] in cat_map:
-                        grouped.at[idx, "master_category"] = cat_map[row["货号"]]
+                grouped["master_category"] = grouped["货号"].map(cat_series).fillna(grouped["货号"].map(cat_map))
             else:
                 grouped["master_category"] = None
                 grouped["image_url"] = None
-            grouped["退款率"] = grouped.apply(
-                lambda row: f"{(row['退货金额'] / row['发货金额'] * 100):.2f}%" 
-                if row['发货金额'] != 0 else "-", axis=1
+            
+            # 【优化点一】退款率向量化计算
+            grouped["退款率"] = np.where(
+                grouped["发货金额"] != 0,
+                ((grouped["退货金额"] / grouped["发货金额"].replace(0, np.nan)) * 100).map("{:.2f}%".format),
+                "-"
             )
-            # 排序
+            
+            # 排序控件
             st.markdown("#### 货号汇总表")
             col_sort1, col_sort2, _ = st.columns([1, 1, 2])
             with col_sort1:
@@ -1054,6 +1054,8 @@ with tabs[tab_index_product]:
                 st.session_state.sort_ascending = (sort_order == "升序")
                 st.session_state.product_page_num = 1
                 st.rerun()
+            
+            # 应用排序
             if st.session_state.sort_by == "货号":
                 grouped = grouped.sort_values("货号", ascending=st.session_state.sort_ascending)
             elif st.session_state.sort_by == "发货金额":
@@ -1063,15 +1065,18 @@ with tabs[tab_index_product]:
             elif st.session_state.sort_by == "净销售金额":
                 grouped = grouped.sort_values("净销售金额", ascending=st.session_state.sort_ascending)
             elif st.session_state.sort_by == "退款率":
+                # 退款率字符串排序需要转为数值
                 grouped["退款率_num"] = grouped["退款率"].str.rstrip("%").astype(float)
                 grouped = grouped.sort_values("退款率_num", ascending=st.session_state.sort_ascending)
                 grouped = grouped.drop(columns=["退款率_num"])
+            
             # 分页
             page_size = 20
             total_rows = len(grouped)
             total_pages = (total_rows + page_size - 1) // page_size if total_rows > 0 else 1
             if st.session_state.product_page_num > total_pages:
                 st.session_state.product_page_num = 1
+            
             col_prev, col_page, col_next = st.columns([1, 2, 1])
             with col_prev:
                 if st.button("◀ 上一页", key="product_prev_page"):
@@ -1093,14 +1098,17 @@ with tabs[tab_index_product]:
                     if st.session_state.product_page_num < total_pages:
                         st.session_state.product_page_num += 1
                         st.rerun()
+            
             start_idx = (st.session_state.product_page_num - 1) * page_size
             end_idx = min(start_idx + page_size, total_rows)
             page_df = grouped.iloc[start_idx:end_idx]
+            
             # 渲染表格
             cols = st.columns([2, 0.5, 1.5, 1.2, 1.2, 1.2, 1, 1.2])
             headers = ["货号", "图片", "商品分类", "发货金额(¥)", "退货金额(¥)", "净销售金额(¥)", "退款率", "操作"]
             for col, header in zip(cols, headers):
                 col.markdown(f"**{header}**")
+            
             for idx, row in page_df.iterrows():
                 col1, col2, col3, col4, col5, col6, col7, col8 = st.columns([2, 0.5, 1.5, 1.2, 1.2, 1.2, 1, 1.2])
                 col1.write(row["货号"])
@@ -1158,6 +1166,7 @@ with tabs[tab_index_product]:
                     st.session_state.show_dialog = True
                     st.session_state.detail_clicked = True
                     st.rerun()
+            
             # 饼图和柱状图
             pie_metric = st.radio("饼图指标", ["净销售金额", "发货金额", "退货金额"], horizontal=True, key="pie_metric_final")
             if pie_metric == "净销售金额":
@@ -1281,7 +1290,6 @@ with tabs[tab_index_product]:
                 st.session_state.detail_clicked = False
                 st.rerun()
         show_style_detail()
-
 # ========== 主播业绩（仅全部数据且管理员） ==========
 if st.session_state.role == "admin" and st.session_state.table_suffix == "_all":
     with tabs[tab_index_anchor]:
