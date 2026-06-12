@@ -800,6 +800,10 @@ with tabs[tab_index_product]:
     col_btn, _ = st.columns([1, 5])
     with col_btn:
         if st.button("🔄 刷新数据", key="refresh_analysis_final", help="清除缓存并重新从数据库加载最新数据"):
+            # 清除弹窗状态
+            st.session_state.show_dialog = False
+            st.session_state.dialog_style_code = None
+            st.session_state.cached_detail_data = None
             st.cache_data.clear()
             st.rerun()
     
@@ -886,7 +890,7 @@ with tabs[tab_index_product]:
                         default=[],
                         key="anchor_filter_final"
                     )
-            # 应用筛选
+            # 应用筛选（注意：筛选条件变化不会自动 rerun，所以无需清除弹窗）
             if selected_platform == "抖音":
                 filtered = filtered[filtered["shop_name"].str.contains("抖音", case=False, na=False)]
             elif selected_platform == "视频号":
@@ -974,8 +978,11 @@ with tabs[tab_index_product]:
                     selected_sort = st.selectbox("排序字段", sort_options, index=sort_options.index(st.session_state.sort_by) if st.session_state.sort_by in sort_options else 3, key="sort_by_selector")
                 with col_sort2:
                     sort_order = st.radio("排序顺序", ["降序", "升序"], horizontal=True, index=0 if not st.session_state.sort_ascending else 1, key="sort_order_radio")
-                # 更新排序状态
+                # 更新排序状态前先清除弹窗标志
                 if selected_sort != st.session_state.sort_by or (sort_order == "降序" and st.session_state.sort_ascending) or (sort_order == "升序" and not st.session_state.sort_ascending):
+                    st.session_state.show_dialog = False
+                    st.session_state.dialog_style_code = None
+                    st.session_state.cached_detail_data = None
                     st.session_state.sort_by = selected_sort
                     st.session_state.sort_ascending = (sort_order == "升序")
                     st.session_state.product_page_num = 1
@@ -1005,6 +1012,9 @@ with tabs[tab_index_product]:
                 col_prev, col_page, col_next = st.columns([1, 2, 1])
                 with col_prev:
                     if st.button("◀ 上一页", key="product_prev_page"):
+                        st.session_state.show_dialog = False
+                        st.session_state.dialog_style_code = None
+                        st.session_state.cached_detail_data = None
                         if st.session_state.product_page_num > 1:
                             st.session_state.product_page_num -= 1
                             st.rerun()
@@ -1012,6 +1022,9 @@ with tabs[tab_index_product]:
                     st.write(f"第 {st.session_state.product_page_num} / {total_pages} 页")
                 with col_next:
                     if st.button("下一页 ▶", key="product_next_page"):
+                        st.session_state.show_dialog = False
+                        st.session_state.dialog_style_code = None
+                        st.session_state.cached_detail_data = None
                         if st.session_state.product_page_num < total_pages:
                             st.session_state.product_page_num += 1
                             st.rerun()
