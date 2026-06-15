@@ -1070,10 +1070,13 @@ with tabs[tab_index_product]:
             brands_all = ["全部"] + sorted(prod_df["brand"].dropna().unique())
             selected_brand = st.selectbox("品牌", brands_all, key="brand_filter_final")
         
+        # 是否首单礼金款式筛选
+        coupon_filter_options = ["全部", "仅首单礼金", "非首单礼金"]
+        selected_coupon_filter = st.selectbox("是否首单礼金款式", coupon_filter_options, key="coupon_filter_final")
+        
         # 主播筛选（始终显示，若数据无主播则提示）
         selected_anchors = []
         if st.session_state.table_suffix in ["_live", "_all"]:
-            # 确保 anchor 列已存在
             if "anchor" not in prod_df.columns:
                 prod_df["anchor"] = prod_df["remark"].astype(str).apply(extract_anchor)
             all_anchors = prod_df["anchor"].dropna().unique().tolist()
@@ -1082,6 +1085,7 @@ with tabs[tab_index_product]:
             else:
                 st.info("当前数据中未识别到任何主播信息，请检查备注字段是否包含“主播：xxx”格式。")
         
+        # 日期筛选
         mask_date = (prod_df["sale_date"] >= pd.to_datetime(start_date)) & (prod_df["sale_date"] <= pd.to_datetime(end_date))
         filtered = prod_df[mask_date].copy()
         if selected_platform == "抖音":
@@ -1098,6 +1102,19 @@ with tabs[tab_index_product]:
             filtered = filtered[filtered["brand"] == selected_brand]
         if selected_anchors:
             filtered = filtered[filtered["anchor"].isin(selected_anchors)]
+        
+        # 礼金款式筛选：需要先给 filtered 增加 has_newbie_coupon 列
+        master_df = load_product_master()
+        coupon_map = {}
+        if not master_df.empty and "style_code" in master_df.columns:
+            master_df["style_code"] = master_df["style_code"].astype(str).str.strip().str.upper()
+            coupon_map = master_df.set_index("style_code")["has_newbie_coupon"].to_dict()
+        filtered["has_newbie_coupon"] = filtered["style_code"].map(coupon_map).fillna(False)
+        if selected_coupon_filter == "仅首单礼金":
+            filtered = filtered[filtered["has_newbie_coupon"] == True]
+        elif selected_coupon_filter == "非首单礼金":
+            filtered = filtered[filtered["has_newbie_coupon"] == False]
+        
         if filtered.empty:
             st.warning("所选条件下无销售数据")
         else:
@@ -1106,9 +1123,7 @@ with tabs[tab_index_product]:
                 退货金额=("return_amount", "sum"),
                 净销售金额=("net_amount", "sum")
             ).reset_index().rename(columns={"style_code": "货号"})
-            master_df = load_product_master()
             if not master_df.empty and "style_code" in master_df.columns:
-                master_df["style_code"] = master_df["style_code"].astype(str).str.strip().str.upper()
                 master_df = master_df.drop_duplicates(subset="style_code", keep="first")
                 img_map = master_df.set_index("style_code")["image_url"].to_dict()
                 cat_map = master_df.set_index("style_code")["category"].to_dict()
