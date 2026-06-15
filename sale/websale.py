@@ -931,6 +931,7 @@ with tabs[tab_index_history]:
         st.info("暂无历史数据")
 
 # ========== 商品分析 ==========
+# ========== 商品分析 ==========
 with tabs[tab_index_product]:
     # 弹窗状态管理
     if st.session_state.get("detail_clicked", False):
@@ -1089,7 +1090,7 @@ with tabs[tab_index_product]:
                 img_map = master_df.set_index("style_code")["image_url"].to_dict()
                 cat_map = master_df.set_index("style_code")["category"].to_dict()
                 grouped["image_url"] = grouped["货号"].map(img_map).fillna(None)
-                # 【性能优化】向量化分类匹配
+                # 向量化分类匹配
                 if "master_category" not in filtered.columns:
                     filtered["master_category"] = None
                 cat_series = filtered.groupby("style_code")["master_category"].first()
@@ -1098,7 +1099,7 @@ with tabs[tab_index_product]:
                 grouped["master_category"] = None
                 grouped["image_url"] = None
             
-            # 【性能优化】向量化退款率计算
+            # 向量化退款率计算
             grouped["退款率"] = np.where(
                 grouped["发货金额"] != 0,
                 ((grouped["退货金额"] / grouped["发货金额"].replace(0, np.nan)) * 100).map("{:.2f}%".format),
@@ -1133,7 +1134,6 @@ with tabs[tab_index_product]:
             elif st.session_state.sort_by == "净销售金额":
                 grouped = grouped.sort_values("净销售金额", ascending=st.session_state.sort_ascending)
             elif st.session_state.sort_by == "退款率":
-                # 退款率字符串排序需要转为数值
                 grouped["退款率_num"] = grouped["退款率"].str.rstrip("%").astype(float)
                 grouped = grouped.sort_values("退款率_num", ascending=st.session_state.sort_ascending)
                 grouped = grouped.drop(columns=["退款率_num"])
@@ -1205,12 +1205,16 @@ with tabs[tab_index_product]:
                             detail_df["anchor"] = detail_df["remark"].apply(extract_anchor_fn)
                             detail_df = detail_df[detail_df["anchor"].notna()]
                             if not detail_df.empty:
+                                # 按主播汇总，并计算退款率
                                 shop_detail = detail_df.groupby("anchor").agg(
                                     发货金额=("ship_amount", "sum"),
                                     退货金额=("return_amount", "sum"),
                                     净销售金额=("net_amount", "sum")
                                 ).reset_index().rename(columns={"anchor": "主播"})
-                                shop_detail = shop_detail.sort_values("净销售金额", ascending=False)
+                                # 添加退款率
+                                shop_detail["退款率"] = shop_detail.apply(
+                                    lambda r: f"{(r['退货金额'] / r['发货金额'] * 100):.2f}%" if r['发货金额'] != 0 else "-", axis=1
+                                )
                                 detail_type = "anchor"
                             else:
                                 shop_detail = pd.DataFrame()
@@ -1221,7 +1225,9 @@ with tabs[tab_index_product]:
                                 退货金额=("return_amount", "sum"),
                                 净销售金额=("net_amount", "sum")
                             ).reset_index()
-                            shop_detail = shop_detail.sort_values("净销售金额", ascending=False)
+                            shop_detail["退款率"] = shop_detail.apply(
+                                lambda r: f"{(r['退货金额'] / r['发货金额'] * 100):.2f}%" if r['发货金额'] != 0 else "-", axis=1
+                            )
                             detail_type = "shop"
                         st.session_state.cached_detail_data = {
                             "style_code": style_code,
@@ -1333,7 +1339,7 @@ with tabs[tab_index_product]:
                 export_df.to_excel(writer, index=False)
             st.download_button("💾 导出分析结果", data=output.getvalue(), file_name="商品分析.xlsx")
 
-    # 弹窗显示明细
+    # 弹窗显示明细（增加退款率列）
     if st.session_state.show_dialog and st.session_state.dialog_style_code:
         style_code = st.session_state.dialog_style_code
         cached = st.session_state.cached_detail_data
@@ -1346,7 +1352,19 @@ with tabs[tab_index_product]:
                 else:
                     st.markdown("#### 店铺销售汇总")
                 if not shop_detail.empty:
-                    st.dataframe(shop_detail, use_container_width=True, hide_index=True)
+                    # 配置列格式
+                    st.dataframe(
+                        shop_detail,
+                        column_config={
+                            "主播" if cached.get("type") == "anchor" else "shop_name": st.column_config.TextColumn("主播" if cached.get("type") == "anchor" else "店铺"),
+                            "发货金额": st.column_config.NumberColumn("发货金额(¥)", format="%.2f"),
+                            "退货金额": st.column_config.NumberColumn("退货金额(¥)", format="%.2f"),
+                            "净销售金额": st.column_config.NumberColumn("净销售金额(¥)", format="%.2f"),
+                            "退款率": st.column_config.TextColumn("退款率")
+                        },
+                        hide_index=True,
+                        use_container_width=True
+                    )
                 else:
                     st.info("无有效数据")
             else:
