@@ -22,7 +22,7 @@ st.set_page_config(page_title="业绩统计工具", layout="wide", page_icon="�
 # ========== 自定义CSS - 调整标题比例和布局 ==========
 st.markdown("""
 <style>
-    /* 自定义主标题样式 - 缩小字号、减少边距 */
+    /* 主标题（原 st.title） */
     .custom-main-title {
         font-size: 28px !important;
         font-weight: 600 !important;
@@ -30,19 +30,48 @@ st.markdown("""
         margin-bottom: 0.25rem !important;
         padding-bottom: 0 !important;
     }
-    /* 调整欢迎信息样式 */
+    /* 欢迎信息 */
     .welcome-text {
         font-size: 14px !important;
         color: #555 !important;
         margin-top: 0 !important;
         margin-bottom: 0.5rem !important;
     }
-    /* 调整分割线间距 */
+    /* 全局标题样式（覆盖 st.header, st.subheader,  markdown 标题） */
+    h1 {
+        font-size: 28px !important;
+        margin-top: -0.5rem !important;
+        margin-bottom: 0.25rem !important;
+    }
+    h2 {
+        font-size: 24px !important;
+        margin-top: 0.5rem !important;
+        margin-bottom: 0.25rem !important;
+        font-weight: 500 !important;
+    }
+    h3 {
+        font-size: 20px !important;
+        margin-top: 0.5rem !important;
+        margin-bottom: 0.25rem !important;
+        font-weight: 500 !important;
+    }
+    h4 {
+        font-size: 18px !important;
+        margin-top: 0.5rem !important;
+        margin-bottom: 0.25rem !important;
+        font-weight: 500 !important;
+    }
+    h5, h6 {
+        font-size: 16px !important;
+        margin-top: 0.25rem !important;
+        margin-bottom: 0.25rem !important;
+    }
+    /* 分割线间距 */
     hr {
         margin-top: 0.5rem !important;
         margin-bottom: 0.5rem !important;
     }
-    /* 可选：调整侧边栏标题大小 */
+    /* 侧边栏标题（可选） */
     .css-1d391kg h1, .css-1d391kg h2, .css-1d391kg h3 {
         font-size: 1.2rem !important;
     }
