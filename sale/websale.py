@@ -625,6 +625,7 @@ elif st.session_state.role == "admin":
     tab_index_export = 7
 
 # ========== 最新日明细 ==========
+# ========== 最新日明细 ==========
 with tabs[tab_index_latest]:
     source_names = {"": "非直播数据", "_live": "直播数据", "_all": "全部数据"}
     current_source = source_names.get(st.session_state.table_suffix, "未知")
@@ -656,25 +657,44 @@ with tabs[tab_index_latest]:
     else:
         latest_date_global = None
     
-    # 构建最新日明细数据框
+    # 获取当月第一天
+    if latest_date_global is not None:
+        month_start = latest_date_global.replace(day=1)
+    else:
+        month_start = None
+    
+    # 构建最新日明细数据框（当日金额 + 月累计）
     if latest_date_global is not None and all_entities:
+        # 提取最新日期当天的记录（用于当日金额）
         df_latest_existing = st.session_state.df_all_daily[st.session_state.df_all_daily["日期"] == latest_date_global].copy()
+        # 获取当月所有数据（用于动态计算月累计）
+        df_month = st.session_state.df_all_daily[
+            (st.session_state.df_all_daily["日期"] >= month_start) & 
+            (st.session_state.df_all_daily["日期"] <= latest_date_global)
+        ].copy()
+        
         result_rows = []
         for entity in all_entities:
+            # 当日金额
             if st.session_state.table_suffix == "_all":
-                existing = df_latest_existing[df_latest_existing["店铺名称"] == entity]
+                existing_today = df_latest_existing[df_latest_existing["店铺名称"] == entity]
             else:
-                existing = df_latest_existing[df_latest_existing["店铺名称"] == entity]
-            if not existing.empty:
-                row = existing.iloc[0].to_dict()
+                existing_today = df_latest_existing[df_latest_existing["店铺名称"] == entity]
+            today_amount = existing_today.iloc[0]["当日金额"] if not existing_today.empty else 0.0
+            
+            # 月累计金额（动态计算：当月所有日期的当日金额之和）
+            if st.session_state.table_suffix == "_all":
+                entity_month_data = df_month[df_month["店铺名称"] == entity]
             else:
-                row = {
-                    "日期": latest_date_global,
-                    "店铺名称": entity,
-                    "当日金额": 0.0,
-                    "月累计金额": 0.0,
-                }
-            result_rows.append(row)
+                entity_month_data = df_month[df_month["店铺名称"] == entity]
+            monthly_cum = entity_month_data["当日金额"].sum() if not entity_month_data.empty else 0.0
+            
+            result_rows.append({
+                "日期": latest_date_global,
+                "店铺名称": entity,
+                "当日金额": today_amount,
+                "月累计金额": monthly_cum
+            })
         df = pd.DataFrame(result_rows)
         df = df.sort_values("店铺名称")
         if st.session_state.table_suffix == "_all":
@@ -698,24 +718,9 @@ with tabs[tab_index_latest]:
         cols = ["日期", col_name, "当日金额", "月累计金额", "目标金额", "达成率"]
         st.dataframe(df[cols], use_container_width=True, hide_index=True)
         
-        # ========== 合计指标（基于所有实体的当月累计，而不仅仅是当天有记录的） ==========
-        # 获取所有实体在最新日期的累计金额
-        if st.session_state.get("df_all_daily") is not None and not st.session_state.df_all_daily.empty:
-            latest_cum_by_entity = {}
-            for entity in all_entities:
-                entity_records = st.session_state.df_all_daily[
-                    (st.session_state.df_all_daily["店铺名称"] == entity) & 
-                    (st.session_state.df_all_daily["日期"] == latest_date_global)
-                ]
-                if not entity_records.empty:
-                    latest_cum_by_entity[entity] = entity_records.iloc[0]["月累计金额"]
-                else:
-                    latest_cum_by_entity[entity] = 0.0
-        else:
-            latest_cum_by_entity = {entity: 0.0 for entity in all_entities}
-        
+        # 合计指标（基于动态月累计）
         if st.session_state.table_suffix == "_all":
-            total_cum = sum(latest_cum_by_entity.values())
+            total_cum = df["月累计金额"].sum()
             total_target = sum(st.session_state.target_dict.values())
             total_rate = f"{(total_cum / total_target * 100):.2f}%" if total_target > 0 else "未设目标"
             st.metric("📊 总业绩合计", f"当日: {df['当日金额'].sum():,.2f}", delta=f"月累: {total_cum:,.2f}")
@@ -723,16 +728,15 @@ with tabs[tab_index_latest]:
         else:
             douyin_entities = [e for e in all_entities if "抖音" in e]
             video_entities = [e for e in all_entities if "视频号" in e]
-            douyin_cum = sum(latest_cum_by_entity.get(e, 0) for e in douyin_entities)
-            video_cum = sum(latest_cum_by_entity.get(e, 0) for e in video_entities)
-            total_cum = sum(latest_cum_by_entity.values())
+            douyin_cum = df[df[col_name].isin(douyin_entities)]["月累计金额"].sum()
+            video_cum = df[df[col_name].isin(video_entities)]["月累计金额"].sum()
+            total_cum = df["月累计金额"].sum()
             douyin_target = sum(st.session_state.target_dict.get(shop, 0) for shop in douyin_entities)
             video_target = sum(st.session_state.target_dict.get(shop, 0) for shop in video_entities)
             total_target = sum(st.session_state.target_dict.values())
             douyin_rate = f"{(douyin_cum / douyin_target * 100):.2f}%" if douyin_target > 0 else "未设目标"
             video_rate = f"{(video_cum / video_target * 100):.2f}%" if video_target > 0 else "未设目标"
             total_rate = f"{(total_cum / total_target * 100):.2f}%" if total_target > 0 else "未设目标"
-            # 当日合计（当天有销售的金额）
             col1, col2, col3 = st.columns(3)
             with col1:
                 st.metric(label="📱 抖音合计", value=f"当日: {df[df[col_name].isin(douyin_entities)]['当日金额'].sum():,.2f}", delta=f"月累: {douyin_cum:,.2f}")
