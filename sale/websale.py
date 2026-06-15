@@ -1565,6 +1565,7 @@ with tabs[tab_index_distribution]:
             else:
                 st.info("无品牌数据")
 # ========== 销售分布与品牌 ==========
+# ========== 销售分布与品牌 ==========
 with tabs[tab_index_distribution]:
     st.subheader("📈 销售分布与品牌分析")
     
@@ -1587,14 +1588,14 @@ with tabs[tab_index_distribution]:
         min_date = prod_df["sale_date"].min().date()
         max_date = prod_df["sale_date"].max().date()
         with col_date1:
-            start_date = st.date_input("开始日期", value=min_date, key="dist2_start", min_value=min_date, max_value=max_date)
+            start_date = st.date_input("开始日期", value=min_date, key="dist_start_date", min_value=min_date, max_value=max_date)
         with col_date2:
-            end_date = st.date_input("结束日期", value=max_date, key="dist2_end", min_value=min_date, max_value=max_date)
+            end_date = st.date_input("结束日期", value=max_date, key="dist_end_date", min_value=min_date, max_value=max_date)
         
         col_platform, col_shop = st.columns(2)
         with col_platform:
             platform_options = ["全部", "抖音", "视频号"]
-            selected_platform = st.selectbox("平台", platform_options, key="dist2_platform")
+            selected_platform = st.selectbox("平台", platform_options, key="dist_platform_select")
         with col_shop:
             all_shops_all = prod_df["shop_name"].unique()
             if selected_platform == "抖音":
@@ -1603,12 +1604,12 @@ with tabs[tab_index_distribution]:
                 shop_options = [shop for shop in all_shops_all if "视频号" in shop]
             else:
                 shop_options = list(all_shops_all)
-            selected_shops = st.multiselect("店铺（可多选）", options=sorted(shop_options), default=[], key="dist2_shop")
+            selected_shops = st.multiselect("店铺（可多选）", options=sorted(shop_options), default=[], key="dist_shop_select")
         
         col_brand, col_anchor = st.columns(2)
         with col_brand:
             brands_all = ["全部"] + sorted(prod_df["brand"].dropna().unique())
-            selected_brand = st.selectbox("品牌", brands_all, key="dist2_brand")
+            selected_brand = st.selectbox("品牌", brands_all, key="dist_brand_select")
         with col_anchor:
             selected_anchors = []
             if st.session_state.table_suffix in ["_live", "_all"] and "anchor" in prod_df.columns:
@@ -1618,7 +1619,7 @@ with tabs[tab_index_distribution]:
                         "主播（可多选）",
                         options=sorted(all_anchors),
                         default=[],
-                        key="dist2_anchor"
+                        key="dist_anchor_select"
                     )
         
         mask_date = (prod_df["sale_date"] >= pd.to_datetime(start_date)) & (prod_df["sale_date"] <= pd.to_datetime(end_date))
@@ -1638,7 +1639,7 @@ with tabs[tab_index_distribution]:
             st.warning("所选条件下无销售数据")
         else:
             metric_options = ["净销售金额", "发货金额", "退货金额"]
-            selected_metric = st.radio("金额指标", metric_options, horizontal=True, key="dist2_metric")
+            selected_metric = st.radio("金额指标", metric_options, horizontal=True, key="dist_metric_radio")
             if selected_metric == "净销售金额":
                 metric_col = "net_amount"
                 metric_name = "净销售金额"
@@ -1667,7 +1668,7 @@ with tabs[tab_index_distribution]:
             if not cat_data.empty:
                 fig_pie = px.pie(cat_data, names="master_category", values=metric_col, title=f"各分类{metric_name}占比", hole=0.3)
                 fig_pie.update_traces(textposition='inside', textinfo='percent+label')
-                st.plotly_chart(fig_pie, use_container_width=True)
+                st.plotly_chart(fig_pie, use_container_width=True, key="dist_pie_chart")
             else:
                 st.info("无有效分类数据")
             
@@ -1678,7 +1679,7 @@ with tabs[tab_index_distribution]:
             brand_data = brand_data[brand_data[metric_col] != 0]
             if not brand_data.empty:
                 fig_bar = px.bar(brand_data, x="brand", y=metric_col, title=f"各品牌{metric_name}", color="brand")
-                st.plotly_chart(fig_bar, use_container_width=True)
+                st.plotly_chart(fig_bar, use_container_width=True, key="dist_bar_chart")
             else:
                 st.info("无品牌数据")
 # ========== 管理员专属：调试选项卡 ==========
