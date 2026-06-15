@@ -1523,7 +1523,7 @@ with tabs[tab_index_distribution]:
                 else:
                     st.info("无礼金商品数据")
             
-            # 礼金商品销售明细（按货号汇总）
+            # 礼金商品销售明细（按货号汇总，增加图片列）
             if not coupon_filtered.empty:
                 st.markdown(f"#### 首单礼金商品销售明细（按货号汇总）")
                 coupon_detail = coupon_filtered.groupby("style_code").agg(
@@ -1532,13 +1532,25 @@ with tabs[tab_index_distribution]:
                     净销售金额=("net_amount", "sum")
                 ).reset_index()
                 coupon_detail.rename(columns={"style_code": "货号"}, inplace=True)
+                # 添加图片列
+                master_df = load_product_master()
+                if not master_df.empty and "style_code" in master_df.columns:
+                    master_df["style_code"] = master_df["style_code"].astype(str).str.strip().str.upper()
+                    img_map = master_df.set_index("style_code")["image_url"].to_dict()
+                    coupon_detail["图片"] = coupon_detail["货号"].map(img_map).fillna(None)
+                else:
+                    coupon_detail["图片"] = None
                 coupon_detail["退款率"] = coupon_detail.apply(
                     lambda r: f"{(r['退货金额']/r['发货金额']*100):.2f}%" if r['发货金额'] != 0 else "-", axis=1
                 )
+                # 调整列顺序
+                col_order = ["货号", "图片", "发货金额", "退货金额", "净销售金额", "退款率"]
+                coupon_detail = coupon_detail[col_order]
                 st.dataframe(
                     coupon_detail,
                     column_config={
                         "货号": st.column_config.TextColumn("货号"),
+                        "图片": st.column_config.ImageColumn("商品图片", help="点击放大"),
                         "发货金额": st.column_config.NumberColumn("发货金额(¥)", format="%.2f"),
                         "退货金额": st.column_config.NumberColumn("退货金额(¥)", format="%.2f"),
                         "净销售金额": st.column_config.NumberColumn("净销售金额(¥)", format="%.2f"),
@@ -1549,7 +1561,8 @@ with tabs[tab_index_distribution]:
                 )
                 output = io.BytesIO()
                 with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                    coupon_detail.to_excel(writer, index=False)
+                    export_df = coupon_detail.drop(columns=["图片"], errors='ignore')
+                    export_df.to_excel(writer, index=False)
                 st.download_button(
                     "💾 导出首单礼金商品明细",
                     data=output.getvalue(),
