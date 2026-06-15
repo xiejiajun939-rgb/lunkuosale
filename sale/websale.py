@@ -1518,24 +1518,67 @@ with tabs[tab_index_anchor_compare]:
                                         hovermode="x unified"
                                     )
                                 st.plotly_chart(fig, use_container_width=True, key=f"compare_{metric}_{chart_type}")
+
+                            # ========== 新增：主播Top5品类销售对比图 ==========
+                            st.markdown("#### 主播Top5品类销售对比（净销售金额）")
                             
-                            # 展示数据表格
-                            st.markdown("#### 明细数据表")
-                            display_df = daily_agg.copy()
-                            display_df["sale_date"] = display_df["sale_date"].dt.strftime("%Y-%m-%d")
-                            display_df = display_df.sort_values(["sale_date", "anchor"])
-                            st.dataframe(display_df, use_container_width=True, hide_index=True)
+                            # 确保 filtered 中包含 master_category（商品品类）
+                            if "master_category" not in filtered.columns:
+                                master_df = load_product_master()
+                                if not master_df.empty and "style_code" in master_df.columns:
+                                    master_df["style_code"] = master_df["style_code"].astype(str).str.strip().str.upper()
+                                    cat_map = master_df.set_index("style_code")["category"].to_dict()
+                                    filtered["master_category"] = filtered["style_code"].map(cat_map).fillna("未分类")
+                                else:
+                                    filtered["master_category"] = "未分类"
+                            else:
+                                filtered["master_category"] = filtered["master_category"].fillna("未分类")
                             
-                            # 导出功能
-                            output = io.BytesIO()
-                            with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                                display_df.to_excel(writer, index=False, sheet_name="主播对比明细")
-                            st.download_button(
-                                "💾 导出明细数据",
-                                data=output.getvalue(),
-                                file_name=f"主播对比_{start_date}_{end_date}.xlsx",
-                                key="export_compare"
-                            )
+                            # 按主播和品类聚合净销售金额
+                            cat_agg = filtered.groupby(["anchor", "master_category"])["net_amount"].sum().reset_index()
+                            cat_agg.rename(columns={"net_amount": "净销售金额"}, inplace=True)
+                            
+                            # 为每个选中的主播获取其销售额最高的前5个品类
+                            top_categories_per_anchor = {}
+                            for anchor in selected_anchors:
+                                anchor_data = cat_agg[cat_agg["anchor"] == anchor].copy()
+                                if not anchor_data.empty:
+                                    anchor_data = anchor_data.sort_values("净销售金额", ascending=False)
+                                    top5 = anchor_data.head(5)
+                                    top_categories_per_anchor[anchor] = top5
+                            
+                            # 构建对比数据：并集品类作为 x 轴，每个主播在各品类下的销售额（缺失补0）
+                            all_top_cats = set()
+                            for anchor, df_top in top_categories_per_anchor.items():
+                                all_top_cats.update(df_top["master_category"].tolist())
+                            all_top_cats = sorted(list(all_top_cats))
+                            
+                            if all_top_cats:
+                                compare_df = pd.DataFrame(index=all_top_cats)
+                                for anchor in selected_anchors:
+                                    anchor_sales = {}
+                                    if anchor in top_categories_per_anchor:
+                                        for _, row in top_categories_per_anchor[anchor].iterrows():
+                                            anchor_sales[row["master_category"]] = row["净销售金额"]
+                                    compare_df[anchor] = [anchor_sales.get(cat, 0) for cat in all_top_cats]
+                                
+                                fig_cat = px.bar(
+                                    compare_df,
+                                    x=compare_df.index,
+                                    y=selected_anchors,
+                                    barmode='group',
+                                    title="主播Top5品类净销售金额对比",
+                                    labels={"value": "净销售金额(¥)", "index": "商品品类"},
+                                    color_discrete_sequence=px.colors.qualitative.Set2
+                                )
+                                fig_cat.update_layout(
+                                    xaxis_title="商品品类",
+                                    yaxis_title="净销售金额(¥)",
+                                    legend_title="主播"
+                                )
+                                st.plotly_chart(fig_cat, use_container_width=True)
+                            else:
+                                st.info("无法获取品类数据，无法生成对比图。")
 
 # ========== 销售分布与品牌 ==========
 with tabs[tab_index_distribution]:
