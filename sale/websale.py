@@ -1439,7 +1439,7 @@ with tabs[tab_index_product]:
         show_style_detail()
 
 # ========== 主播业绩（仅全部数据且管理员或 viewer） ==========
-if st.session_state.role in ["admin", "viewer"] and st.session_state.table_suffix == "_all" and tab_index_anchor is not None:
+"""if st.session_state.role in ["admin", "viewer"] and st.session_state.table_suffix == "_all" and tab_index_anchor is not None:
     with tabs[tab_index_anchor]:
         st.subheader("🎤 主播最新日明细（按主播汇总）")
         with st.spinner("正在加载主播业绩数据，请稍候..."):
@@ -1485,7 +1485,7 @@ if st.session_state.role in ["admin", "viewer"] and st.session_state.table_suffi
                 output = io.BytesIO()
                 with pd.ExcelWriter(output, engine='openpyxl') as writer:
                     anchor_summary.to_excel(writer, index=False)
-                st.download_button("💾 导出主播业绩", data=output.getvalue(), file_name=f"主播业绩_{latest_date}.xlsx")
+                st.download_button("💾 导出主播业绩", data=output.getvalue(), file_name=f"主播业绩_{latest_date}.xlsx")"""
 
 # ========== 管理员专属：调试选项卡 ==========
 if st.session_state.role == "admin" and tab_index_debug is not None:
