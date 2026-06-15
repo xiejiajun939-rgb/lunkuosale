@@ -375,7 +375,8 @@ def load_product_sales(suffix=None):
             for col in ["ship_amount", "return_amount", "net_amount"]:
                 if col in df.columns:
                     df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
-            if suffix == "_all":
+            # 补充主播列（用于直播/全部数据）
+            if suffix in ["_live", "_all"] and "anchor" not in df.columns:
                 df["anchor"] = df["remark"].apply(extract_anchor)
             return df
         else:
@@ -1036,8 +1037,10 @@ with tabs[tab_index_product]:
             prod_df["style_code"] = prod_df["style_code"].astype(str).str.strip().str.upper()
         else:
             prod_df["style_code"] = prod_df["product_code"].str[:8].str.strip().str.upper()
+        # 确保主播列存在（直播/全部数据）
         if st.session_state.table_suffix in ["_live", "_all"]:
-            prod_df["anchor"] = prod_df["remark"].astype(str).str.extract(r'主播[：:]([^_]+)')[0].str.strip()
+            if "anchor" not in prod_df.columns:
+                prod_df["anchor"] = prod_df["remark"].astype(str).apply(extract_anchor)
         min_date = prod_df["sale_date"].min().date()
         max_date = prod_df["sale_date"].max().date()
         col_date1, col_date2 = st.columns(2)
@@ -1066,11 +1069,19 @@ with tabs[tab_index_product]:
         with col_brand:
             brands_all = ["全部"] + sorted(prod_df["brand"].dropna().unique())
             selected_brand = st.selectbox("品牌", brands_all, key="brand_filter_final")
+        
+        # 主播筛选（始终显示，若数据无主播则提示）
         selected_anchors = []
-        if st.session_state.table_suffix in ["_live", "_all"] and "anchor" in prod_df.columns:
-            all_anchors = prod_df["anchor"].dropna().unique()
-            if len(all_anchors) > 0:
+        if st.session_state.table_suffix in ["_live", "_all"]:
+            # 确保 anchor 列已存在
+            if "anchor" not in prod_df.columns:
+                prod_df["anchor"] = prod_df["remark"].astype(str).apply(extract_anchor)
+            all_anchors = prod_df["anchor"].dropna().unique().tolist()
+            if all_anchors:
                 selected_anchors = st.multiselect("主播（可多选）", options=sorted(all_anchors), default=[], key="anchor_filter_final")
+            else:
+                st.info("当前数据中未识别到任何主播信息，请检查备注字段是否包含“主播：xxx”格式。")
+        
         mask_date = (prod_df["sale_date"] >= pd.to_datetime(start_date)) & (prod_df["sale_date"] <= pd.to_datetime(end_date))
         filtered = prod_df[mask_date].copy()
         if selected_platform == "抖音":
@@ -1347,8 +1358,10 @@ with tabs[tab_index_distribution]:
             prod_df["style_code"] = prod_df["style_code"].astype(str).str.strip().str.upper()
         else:
             prod_df["style_code"] = prod_df["product_code"].str[:8].str.strip().str.upper()
+        # 确保主播列存在（直播/全部数据）
         if st.session_state.table_suffix in ["_live", "_all"]:
-            prod_df["anchor"] = prod_df["remark"].astype(str).str.extract(r'主播[：:]([^_]+)')[0].str.strip()
+            if "anchor" not in prod_df.columns:
+                prod_df["anchor"] = prod_df["remark"].astype(str).apply(extract_anchor)
         
         st.markdown("#### 筛选条件")
         col_date1, col_date2 = st.columns(2)
@@ -1379,10 +1392,15 @@ with tabs[tab_index_distribution]:
             selected_brand = st.selectbox("品牌", brands_all, key="dist_brand_v2")
         with col_anchor:
             selected_anchors = []
-            if st.session_state.table_suffix in ["_live", "_all"] and "anchor" in prod_df.columns:
-                all_anchors = prod_df["anchor"].dropna().unique()
-                if len(all_anchors) > 0:
+            if st.session_state.table_suffix in ["_live", "_all"]:
+                # 确保 anchor 列存在
+                if "anchor" not in prod_df.columns:
+                    prod_df["anchor"] = prod_df["remark"].astype(str).apply(extract_anchor)
+                all_anchors = prod_df["anchor"].dropna().unique().tolist()
+                if all_anchors:
                     selected_anchors = st.multiselect("主播（可多选）", options=sorted(all_anchors), default=[], key="dist_anchor_v2")
+                else:
+                    st.info("当前数据中未识别到任何主播信息，请检查备注字段是否包含“主播：xxx”格式。")
         
         mask_date = (prod_df["sale_date"] >= pd.to_datetime(start_date)) & (prod_df["sale_date"] <= pd.to_datetime(end_date))
         filtered = prod_df[mask_date].copy()
@@ -1571,6 +1589,18 @@ with tabs[tab_index_distribution]:
                 )
             else:
                 st.info("当前筛选条件下无首单礼金商品")
+
+# ========== 管理员专属：调试选项卡 ==========
+if st.session_state.role == "admin":
+    with tabs[tab_index_debug]:
+        st.subheader("🔧 调试信息")
+        st.json({
+            "当前数据源后缀": st.session_state.table_suffix,
+            "每日业绩数据行数": len(st.session_state.df_all_daily) if st.session_state.df_all_daily is not None else 0,
+            "目标字典": st.session_state.target_dict,
+            "子账号数": len(st.session_state.sub_users)
+        })
+
 # ========== 管理员专属：商品库导出选项卡 ==========
 if st.session_state.role == "admin":
     with tabs[tab_index_export]:
