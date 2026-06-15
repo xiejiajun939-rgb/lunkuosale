@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-订单业绩统计工具 - 最终完整版
+订单业绩统计工具 - 现代 SaaS 风格（绿色系）
 管理员账号：admin / 1234567890
 子账号示例：NC01 / 123456
 """
@@ -19,198 +19,317 @@ import plotly.graph_objects as go
 
 st.set_page_config(page_title="业绩统计工具", layout="wide", page_icon="📊")
 
-# ========== 全局 UI 样式（参考图片设计语言） ==========
+# ========== 全局 UI 样式（现代极简、绿色调） ==========
 st.markdown("""
 <style>
-    /* 全局背景与字体 */
+    /* ---------- 全局基础 ---------- */
     .stApp {
-        background-color: #f8fafc;
+        background-color: #F4F7F4;
         font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
     }
     
-    /* 主容器内边距与最大宽度 */
+    /* 主内容区域 */
     .main .block-container {
-        padding-top: 2rem;
-        padding-bottom: 2rem;
+        padding: 1.5rem 2rem 3rem 2rem;
         max-width: 1400px;
     }
     
-    /* 标题样式 */
-    h1, h2, h3, .stMarkdown h1, .stMarkdown h2 {
-        color: #0f172a;
-        font-weight: 600;
-        letter-spacing: -0.01em;
-        margin-bottom: 0.5rem;
-    }
-    h1 {
-        font-size: 2rem;
-    }
-    h2 {
-        font-size: 1.5rem;
-        border-left: 4px solid #3b82f6;
-        padding-left: 1rem;
-    }
-    
-    /* 侧边栏卡片效果 */
+    /* ---------- 侧边栏（浅色，分组菜单） ---------- */
     [data-testid="stSidebar"] {
         background-color: #ffffff;
-        border-right: 1px solid #e2e8f0;
-        padding-top: 2rem;
-        box-shadow: 0 0 10px rgba(0,0,0,0.02);
+        border-right: 1px solid #e8ede8;
+        width: 260px;
+        padding: 1.5rem 1rem;
     }
     [data-testid="stSidebar"] .stMarkdown, 
     [data-testid="stSidebar"] .stSelectbox, 
     [data-testid="stSidebar"] .stButton {
-        margin-bottom: 0.8rem;
+        margin-bottom: 0.5rem;
+    }
+    [data-testid="stSidebar"] h1, [data-testid="stSidebar"] h2, [data-testid="stSidebar"] h3 {
+        color: #2c3e2f;
+        font-weight: 600;
+        font-size: 0.85rem;
+        letter-spacing: 0.5px;
+        margin-top: 1rem;
+        margin-bottom: 0.5rem;
+        text-transform: uppercase;
+    }
+    [data-testid="stSidebar"] .stMarkdown {
+        color: #4a5b4e;
+    }
+    [data-testid="stSidebar"] hr {
+        margin: 1rem 0;
+        border-color: #e2e8e2;
+    }
+    /* 侧边栏按钮 */
+    [data-testid="stSidebar"] .stButton > button {
+        background-color: transparent;
+        border: none;
+        color: #4a5b4e;
+        text-align: left;
+        padding: 0.3rem 0;
+        border-radius: 8px;
+    }
+    [data-testid="stSidebar"] .stButton > button:hover {
+        background-color: #f0f5f0;
+        color: #87B443;
     }
     
-    /* 选项卡样式 */
-    .stTabs [data-baseweb="tab-list"] {
-        gap: 8px;
-        background-color: transparent;
-        padding: 0;
+    /* 用户信息卡片（模拟） */
+    .sidebar-user {
+        background-color: #F4F7F4;
+        border-radius: 16px;
+        padding: 0.8rem;
+        margin-top: 2rem;
+        display: flex;
+        align-items: center;
+        gap: 12px;
     }
-    .stTabs [data-baseweb="tab"] {
+    .sidebar-user-avatar {
+        width: 40px;
+        height: 40px;
+        background-color: #87B443;
+        border-radius: 50%;
+        display: inline-block;
+    }
+    .sidebar-user-info {
+        flex: 1;
+    }
+    .sidebar-user-name {
+        font-weight: 600;
+        color: #1e2a1f;
+        margin-bottom: 0;
+    }
+    .sidebar-user-email {
+        font-size: 0.7rem;
+        color: #7a8e7e;
+    }
+    
+    /* ---------- 顶部工具栏 ---------- */
+    .top-bar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 1.5rem;
+        background-color: transparent;
+    }
+    .search-area {
         background-color: #ffffff;
         border-radius: 40px;
-        padding: 0.5rem 1.2rem;
-        font-weight: 500;
-        color: #334155;
-        border: 1px solid #e2e8f0;
-        transition: all 0.2s ease;
-        margin-right: 6px;
+        padding: 0.3rem 0.8rem;
+        border: 1px solid #e2e8e2;
+        width: 260px;
+        display: flex;
+        align-items: center;
+        gap: 6px;
     }
-    .stTabs [aria-selected="true"] {
-        background-color: #3b82f6;
-        color: white;
-        border-color: #3b82f6;
-        box-shadow: 0 2px 6px rgba(59,130,246,0.2);
+    .search-area span {
+        color: #8ba38d;
     }
-    .stTabs [data-baseweb="tab"]:hover {
-        background-color: #f1f5f9;
-        border-color: #cbd5e1;
+    .action-icons {
+        display: flex;
+        gap: 1rem;
+    }
+    .action-icons div {
+        background-color: #ffffff;
+        border-radius: 40px;
+        padding: 0.3rem 1rem;
+        border: 1px solid #e2e8e2;
+        font-size: 0.8rem;
+        color: #4a5b4e;
+        cursor: default;
     }
     
-    /* 表格样式（干净、圆角、悬停效果） */
-    .stDataFrame, div[data-testid="stDataFrame"] {
-        border-radius: 16px;
-        overflow: hidden;
-        border: 1px solid #eef2f6;
-        background-color: #ffffff;
+    /* ---------- 标题 ---------- */
+    h1 {
+        font-size: 1.6rem;
+        font-weight: 700;
+        color: #1e2a1f;
+        margin-bottom: 0.2rem;
     }
+    h2 {
+        font-size: 1.2rem;
+        font-weight: 600;
+        color: #2c3e2f;
+        margin: 1.2rem 0 1rem 0;
+        border-left: 4px solid #87B443;
+        padding-left: 0.8rem;
+    }
+    
+    /* ---------- 卡片容器（所有卡片） ---------- */
+    .stDataFrame, .stTabs [data-baseweb="tab-list"], 
+    [data-testid="stMetric"], .stAlert, .element-container, 
+    .stSelectbox > div, .stDateInput > div {
+        background-color: #ffffff;
+        border-radius: 20px;
+        padding: 0.8rem;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.03), 0 1px 3px rgba(0,0,0,0.02);
+        border: 1px solid #edf2ed;
+    }
+    
+    /* 指标卡片专用 */
+    [data-testid="stMetric"] {
+        border-radius: 24px;
+        padding: 1rem 1.2rem;
+        transition: all 0.2s;
+    }
+    [data-testid="stMetric"] label {
+        font-weight: 500;
+        color: #7a8e7e;
+        font-size: 0.75rem;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+    [data-testid="stMetric"] .stMetricValue {
+        font-size: 1.8rem;
+        font-weight: 700;
+        color: #1e2a1f;
+    }
+    [data-testid="stMetric"] .stMetricDelta {
+        font-size: 0.75rem;
+    }
+    
+    /* ---------- 表格样式（干净无边框） ---------- */
     .stDataFrame table, .dataframe {
         font-size: 0.85rem;
         border-collapse: collapse;
         width: 100%;
+        background-color: white;
+        border-radius: 16px;
+        overflow: hidden;
     }
     .stDataFrame th, .dataframe th {
-        background-color: #f9fafb;
-        color: #1e293b;
+        background-color: #F9FBF9;
+        color: #2c3e2f;
         font-weight: 600;
         padding: 0.75rem 1rem;
-        border-bottom: 1px solid #e2e8f0;
-        font-size: 0.85rem;
+        border-bottom: 1px solid #edf2ed;
+        font-size: 0.8rem;
     }
     .stDataFrame td, .dataframe td {
         padding: 0.6rem 1rem;
-        border-bottom: 1px solid #f1f5f9;
+        border-bottom: 1px solid #f1f6f1;
+        color: #4a5b4e;
     }
     .stDataFrame tr:hover, .dataframe tr:hover {
-        background-color: #fefce8;
+        background-color: #F9FFF5;
         transition: 0.1s;
     }
     
-    /* 按钮样式 */
+    /* ---------- 选项卡（胶囊风格） ---------- */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 8px;
+        background-color: transparent;
+        padding: 0;
+        margin-bottom: 1rem;
+    }
+    .stTabs [data-baseweb="tab"] {
+        background-color: #ffffff;
+        border-radius: 40px;
+        padding: 0.4rem 1.2rem;
+        font-weight: 500;
+        color: #7a8e7e;
+        border: 1px solid #e2e8e2;
+        transition: all 0.2s;
+    }
+    .stTabs [aria-selected="true"] {
+        background-color: #87B443;
+        color: white;
+        border-color: #87B443;
+        box-shadow: 0 2px 6px rgba(135,180,67,0.2);
+    }
+    .stTabs [data-baseweb="tab"]:hover {
+        background-color: #f0f5f0;
+        border-color: #cde0cd;
+    }
+    
+    /* ---------- 按钮 ---------- */
     .stButton > button {
         border-radius: 40px;
         background-color: #ffffff;
-        border: 1px solid #cbd5e1;
-        color: #1f2937;
+        border: 1px solid #d4e0d4;
+        color: #4a5b4e;
         font-weight: 500;
-        padding: 0.4rem 1.2rem;
-        transition: all 0.2s;
-        box-shadow: 0 1px 1px rgba(0,0,0,0.02);
+        padding: 0.3rem 1rem;
     }
     .stButton > button:hover {
-        background-color: #f8fafc;
-        border-color: #94a3b8;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        background-color: #f0f5f0;
+        border-color: #87B443;
+        color: #87B443;
     }
-    .stButton > button:active {
-        transform: scale(0.98);
-    }
-    
-    /* 主要操作按钮（如确认上传） */
     .stButton > button[kind="primary"] {
-        background-color: #3b82f6;
-        border-color: #3b82f6;
+        background-color: #87B443;
+        border-color: #87B443;
         color: white;
     }
     .stButton > button[kind="primary"]:hover {
-        background-color: #2563eb;
+        background-color: #6f9a38;
     }
     
-    /* 输入框、选择框样式 */
+    /* 输入框 */
     .stTextInput > div > div > input, 
     .stSelectbox > div > div, 
-    .stDateInput > div > div > input {
-        border-radius: 12px;
-        border: 1px solid #e2e8f0;
+    .stDateInput > div > div > input,
+    .stTextArea > div > div > textarea {
+        border-radius: 16px;
+        border: 1px solid #e2e8e2;
         background-color: #ffffff;
-        padding: 0.5rem 0.8rem;
+        padding: 0.4rem 0.8rem;
     }
     .stTextInput > div > div > input:focus, 
     .stSelectbox > div > div:focus, 
     .stDateInput > div > div > input:focus {
-        border-color: #3b82f6;
-        box-shadow: 0 0 0 2px rgba(59,130,246,0.2);
+        border-color: #87B443;
+        box-shadow: 0 0 0 2px rgba(135,180,67,0.2);
         outline: none;
     }
     
-    /* metric 卡片样式 */
-    [data-testid="stMetric"] {
-        background-color: #ffffff;
-        border-radius: 20px;
-        padding: 1rem;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
-        border: 1px solid #eef2f6;
-    }
-    [data-testid="stMetric"] label {
-        font-weight: 500;
-        color: #475569;
-    }
-    [data-testid="stMetric"] .stMetricValue {
-        font-size: 1.6rem;
-        font-weight: 700;
-        color: #0f172a;
+    /* 多选框 */
+    .stMultiSelect [data-baseweb="select"] > div {
+        border-radius: 16px;
+        border-color: #e2e8e2;
     }
     
-    /* 侧边栏内部标题 */
-    [data-testid="stSidebar"] h1, 
-    [data-testid="stSidebar"] h2, 
-    [data-testid="stSidebar"] h3 {
-        color: #0f172a;
-        margin-top: 0.5rem;
-        margin-bottom: 0.75rem;
-    }
-    
-    /* 消息提示框美化 */
+    /* 信息提示 */
     .stAlert {
-        border-radius: 12px;
+        border-radius: 16px;
         border-left-width: 4px;
-    }
-    
-    /* 进度条 */
-    .stProgress > div > div {
-        background-color: #3b82f6;
+        border-left-color: #87B443;
     }
     
     /* 分隔线 */
     hr {
         margin: 1rem 0;
-        border-color: #e2e8f0;
+        border-color: #e2e8e2;
+    }
+    
+    /* 侧边栏滚动条 */
+    ::-webkit-scrollbar {
+        width: 5px;
+    }
+    ::-webkit-scrollbar-track {
+        background: #e8ede8;
+    }
+    ::-webkit-scrollbar-thumb {
+        background: #bdd4bd;
+        border-radius: 4px;
     }
 </style>
+""", unsafe_allow_html=True)
+
+# ========== 模拟顶部工具栏（仅装饰，不影响功能） ==========
+st.markdown("""
+<div class="top-bar">
+    <div class="search-area">
+        <span>🔍</span> <span style="color:#aaa;">搜索...</span>
+    </div>
+    <div class="action-icons">
+        <div>📅 本月</div>
+        <div>📤 导出</div>
+        <div>➕ 组件</div>
+    </div>
+</div>
 """, unsafe_allow_html=True)
 
 # ========== 子账号存储 ==========
@@ -251,6 +370,7 @@ if not st.session_state.authenticated:
     login()
     st.stop()
 
+# ========== 标题区域 ==========
 st.title("📊 店铺业绩汇总分析")
 st.markdown(f"欢迎，**{st.session_state.username}** ({'管理员' if st.session_state.role == 'admin' else ('子账号' if st.session_state.role == 'viewer' else '成员')})")
 st.markdown("---")
@@ -808,8 +928,36 @@ rebuild_daily_data(st.session_state.table_suffix)
 if st.session_state.target_dict == {}:
     st.session_state.target_dict = load_targets(st.session_state.table_suffix)
 
-# ========== 侧边栏 ==========
+# ========== 侧边栏（装饰性分组菜单 + 用户卡片） ==========
 with st.sidebar:
+    # 模拟品牌 Logo
+    st.markdown("### SplitEdge")
+    st.markdown("---")
+    
+    # MAIN MENU
+    st.markdown("#### MAIN MENU")
+    st.button("📊 Dashboard", key="menu_dash", disabled=True, help="功能保留原有")
+    st.button("📦 Products", key="menu_prod", disabled=True)
+    st.button("🛒 Order", key="menu_order", disabled=True)
+    st.button("👥 Customers", key="menu_cust", disabled=True)
+    st.button("💬 Chat", key="menu_chat", disabled=True)
+    st.markdown("---")
+    
+    # OTHER
+    st.markdown("#### OTHER")
+    st.button("✉️ Email", key="menu_email", disabled=True)
+    st.button("📈 Analysis", key="menu_analysis", disabled=True)
+    st.button("🔌 Integration", key="menu_integ", disabled=True)
+    st.button("⚡ Performance", key="menu_perf", disabled=True)
+    st.markdown("---")
+    
+    # ACCOUNT
+    st.markdown("#### ACCOUNT")
+    st.button("👤 Account", key="menu_acc", disabled=True)
+    st.button("👥 Members", key="menu_members", disabled=True)
+    st.markdown("---")
+    
+    # 原有功能区域（实际控制）
     st.header("📂 数据加载")
     if st.session_state.role == "admin":
         st.subheader("🔄 数据源切换")
@@ -915,7 +1063,19 @@ with st.sidebar:
             batch_manage_newbie_coupon()
     else:
         st.info("您只有查看权限，无法上传文件。如需上传，请联系管理员。")
+    
+    # 用户卡片（装饰）
     st.markdown("---")
+    st.markdown("""
+    <div class="sidebar-user">
+        <div class="sidebar-user-avatar"></div>
+        <div class="sidebar-user-info">
+            <div class="sidebar-user-name">Jevline kief</div>
+            <div class="sidebar-user-email">jevlinekief@gmail.com</div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+    
     if st.button("🚪 退出登录", key="logout_final"):
         st.session_state.authenticated = False
         for key in ["username", "role", "table_suffix"]:
