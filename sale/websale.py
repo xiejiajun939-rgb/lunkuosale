@@ -987,6 +987,12 @@ with tabs[tab_index_product]:
         st.session_state.dialog_style_code = None
         st.session_state.cached_detail_data = None
 
+    # 新增：趋势图弹窗状态
+    if "trend_style_code" not in st.session_state:
+        st.session_state.trend_style_code = None
+    if "show_trend_dialog" not in st.session_state:
+        st.session_state.show_trend_dialog = False
+
     st.subheader("📊 商品销售分析（按货号汇总）")
     col_btn, _ = st.columns([1, 5])
     with col_btn:
@@ -995,6 +1001,8 @@ with tabs[tab_index_product]:
             st.session_state.dialog_style_code = None
             st.session_state.cached_detail_data = None
             st.session_state.detail_clicked = False
+            st.session_state.show_trend_dialog = False
+            st.session_state.trend_style_code = None
             st.cache_data.clear()
             st.rerun()
     
@@ -1088,6 +1096,7 @@ with tabs[tab_index_product]:
         if filtered.empty:
             st.warning("所选条件下无销售数据")
         else:
+            # 原有的多货号趋势图（保留）
             st.subheader("📈 每日净销售走势（按货号）")
             all_style_codes = sorted(filtered["style_code"].unique())
             if all_style_codes:
@@ -1119,6 +1128,7 @@ with tabs[tab_index_product]:
             else:
                 st.info("当前筛选条件下无货号数据")
             st.markdown("---")
+            # 汇总表
             grouped = filtered.groupby("style_code").agg(
                 发货金额=("ship_amount", "sum"),
                 退货金额=("return_amount", "sum"),
@@ -1146,6 +1156,7 @@ with tabs[tab_index_product]:
                 "-"
             )
             
+            # 排序控件
             st.markdown("#### 货号汇总表")
             col_sort1, col_sort2, _ = st.columns([1, 1, 2])
             with col_sort1:
@@ -1158,6 +1169,8 @@ with tabs[tab_index_product]:
                 st.session_state.dialog_style_code = None
                 st.session_state.cached_detail_data = None
                 st.session_state.detail_clicked = False
+                st.session_state.show_trend_dialog = False
+                st.session_state.trend_style_code = None
                 st.session_state.sort_by = selected_sort
                 st.session_state.sort_ascending = (sort_order == "升序")
                 st.session_state.product_page_num = 1
@@ -1189,6 +1202,8 @@ with tabs[tab_index_product]:
                     st.session_state.dialog_style_code = None
                     st.session_state.cached_detail_data = None
                     st.session_state.detail_clicked = False
+                    st.session_state.show_trend_dialog = False
+                    st.session_state.trend_style_code = None
                     if st.session_state.product_page_num > 1:
                         st.session_state.product_page_num -= 1
                         st.rerun()
@@ -1200,6 +1215,8 @@ with tabs[tab_index_product]:
                     st.session_state.dialog_style_code = None
                     st.session_state.cached_detail_data = None
                     st.session_state.detail_clicked = False
+                    st.session_state.show_trend_dialog = False
+                    st.session_state.trend_style_code = None
                     if st.session_state.product_page_num < total_pages:
                         st.session_state.product_page_num += 1
                         st.rerun()
@@ -1208,13 +1225,14 @@ with tabs[tab_index_product]:
             end_idx = min(start_idx + page_size, total_rows)
             page_df = grouped.iloc[start_idx:end_idx]
             
-            cols = st.columns([2, 0.5, 1.5, 1.2, 1.2, 1.2, 1, 1.2])
+            # 渲染表格（增加“趋势”按钮）
+            cols = st.columns([2, 0.5, 1.5, 1.2, 1.2, 1.2, 1, 1.5])
             headers = ["货号", "图片", "商品分类", "发货金额(¥)", "退货金额(¥)", "净销售金额(¥)", "退款率", "操作"]
             for col, header in zip(cols, headers):
                 col.markdown(f"**{header}**")
             
             for idx, row in page_df.iterrows():
-                col1, col2, col3, col4, col5, col6, col7, col8 = st.columns([2, 0.5, 1.5, 1.2, 1.2, 1.2, 1, 1.2])
+                col1, col2, col3, col4, col5, col6, col7, col8 = st.columns([2, 0.5, 1.5, 1.2, 1.2, 1.2, 1, 1.5])
                 col1.write(row["货号"])
                 if row.get("image_url") and pd.notna(row["image_url"]):
                     col2.image(row["image_url"], width=50)
@@ -1225,7 +1243,8 @@ with tabs[tab_index_product]:
                 col5.write(f"{row['退货金额']:,.2f}")
                 col6.write(f"{row['净销售金额']:,.2f}")
                 col7.write(row["退款率"])
-                if col8.button("📊 查看详情", key=f"detail_btn_{row['货号']}_{idx}"):
+                # 查看详情按钮
+                if col8.button("📊 详情", key=f"detail_btn_{row['货号']}_{idx}"):
                     style_code = row["货号"]
                     detail_df = filtered[filtered["style_code"] == style_code].copy()
                     if not detail_df.empty:
@@ -1274,7 +1293,13 @@ with tabs[tab_index_product]:
                     st.session_state.show_dialog = True
                     st.session_state.detail_clicked = True
                     st.rerun()
+                # 新增：趋势按钮
+                if col8.button("📈 趋势", key=f"trend_btn_{row['货号']}_{idx}"):
+                    st.session_state.trend_style_code = row["货号"]
+                    st.session_state.show_trend_dialog = True
+                    st.rerun()
             
+            # 饼图和柱状图（保持不变）
             pie_metric = st.radio("饼图指标", ["净销售金额", "发货金额", "退货金额"], horizontal=True, key="pie_metric_final")
             if pie_metric == "净销售金额":
                 metric_col = "net_amount"
@@ -1372,7 +1397,7 @@ with tabs[tab_index_product]:
                 export_df.to_excel(writer, index=False)
             st.download_button("💾 导出分析结果", data=output.getvalue(), file_name="商品分析.xlsx")
 
-    # 弹窗显示明细
+    # 弹窗显示明细（原有）
     if st.session_state.show_dialog and st.session_state.dialog_style_code:
         style_code = st.session_state.dialog_style_code
         cached = st.session_state.cached_detail_data
@@ -1408,6 +1433,34 @@ with tabs[tab_index_product]:
                 st.session_state.detail_clicked = False
                 st.rerun()
         show_style_detail()
+
+    # 新增：趋势图弹窗
+    if st.session_state.show_trend_dialog and st.session_state.trend_style_code:
+        style_code = st.session_state.trend_style_code
+        @st.dialog(f"📈 货号 {style_code} 每日净销售走势", width="large")
+        def show_trend():
+            st.subheader(f"货号：{style_code}")
+            # 从原始数据中提取该货号在选定日期范围内的数据（注意：使用全局筛选后的 filtered 即可）
+            # 但为了确保趋势图不受页面其他筛选影响？实际上 filtered 已经应用了所有筛选条件（日期、平台、店铺等），用户希望趋势图基于当前筛选结果。
+            trend_data = filtered[filtered["style_code"] == style_code].copy()
+            if trend_data.empty:
+                st.info("当前筛选条件下该货号无销售数据")
+            else:
+                daily = trend_data.groupby("sale_date")["net_amount"].sum().reset_index()
+                daily = daily.sort_values("sale_date")
+                fig = px.line(
+                    daily, x="sale_date", y="net_amount",
+                    title=f"每日净销售走势",
+                    labels={"sale_date": "日期", "net_amount": "净销售金额(¥)"},
+                    markers=True
+                )
+                fig.update_layout(xaxis_title="日期", yaxis_title="净销售金额(¥)")
+                st.plotly_chart(fig, use_container_width=True)
+            if st.button("关闭", key="close_trend"):
+                st.session_state.show_trend_dialog = False
+                st.session_state.trend_style_code = None
+                st.rerun()
+        show_trend()
 
 # ========== 管理员专属：调试选项卡 ==========
 if st.session_state.role == "admin" and tab_index_debug is not None:
