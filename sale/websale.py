@@ -1365,7 +1365,7 @@ with tabs[tab_index_product]:
 
 # ========== 主播销售对比 ==========
 with tabs[tab_index_anchor_compare]:
-    st.subheader("🎤 主播销售对比（趋势图）")
+    st.subheader("🎤 主播销售对比")
     # 仅当数据源为直播或全部数据时可用
     if st.session_state.table_suffix not in ["_live", "_all"]:
         st.warning("主播销售对比功能仅支持“直播数据”或“全部数据”模式。请通过侧边栏切换数据源。")
@@ -1385,12 +1385,14 @@ with tabs[tab_index_anchor_compare]:
             else:
                 # 获取所有主播列表
                 all_anchors = sorted(prod_df["anchor"].unique())
-                col_select1, col_select2 = st.columns(2)
+                col_select1, col_select2, col_select3 = st.columns(3)
                 with col_select1:
                     selected_anchors = st.multiselect("选择对比的主播（可多选）", options=all_anchors, default=all_anchors[:min(3, len(all_anchors))])
                 with col_select2:
                     metric_options = ["净销售金额", "发货金额", "退货金额"]
                     selected_metrics = st.multiselect("选择要对比的指标", options=metric_options, default=["净销售金额"])
+                with col_select3:
+                    chart_type = st.radio("图表类型", ["折线图", "柱状图"], horizontal=True, key="compare_chart_type")
                 
                 # 日期范围
                 min_date = prod_df["sale_date"].min().date()
@@ -1421,32 +1423,49 @@ with tabs[tab_index_anchor_compare]:
                         if daily_agg.empty:
                             st.warning("所选主播在日期范围内无销售数据")
                         else:
-                            # 为每个选中的指标生成折线图
+                            # 为每个选中的指标生成图表
                             for metric in selected_metrics:
                                 st.markdown(f"#### {metric} 趋势对比")
                                 # 宽格式数据：宽表为日期 x 主播
                                 pivot_df = daily_agg.pivot(index="sale_date", columns="anchor", values=metric)
-                                fig = go.Figure()
-                                for anchor in pivot_df.columns:
-                                    fig.add_trace(go.Scatter(
-                                        x=pivot_df.index,
-                                        y=pivot_df[anchor],
-                                        mode="lines+markers",
-                                        name=anchor,
-                                        hovertemplate=f"{anchor}<br>日期: %{{x|%Y-%m-%d}}<br>{metric}: %{{y:,.2f}}<extra></extra>"
-                                    ))
-                                fig.update_layout(
-                                    title=f"{metric} 按日对比",
-                                    xaxis_title="日期",
-                                    yaxis_title=f"{metric} (¥)",
-                                    legend_title="主播",
-                                    hovermode="x unified"
-                                )
-                                st.plotly_chart(fig, use_container_width=True, key=f"compare_{metric}")
+                                if chart_type == "折线图":
+                                    fig = go.Figure()
+                                    for anchor in pivot_df.columns:
+                                        fig.add_trace(go.Scatter(
+                                            x=pivot_df.index,
+                                            y=pivot_df[anchor],
+                                            mode="lines+markers",
+                                            name=anchor,
+                                            hovertemplate=f"{anchor}<br>日期: %{{x|%Y-%m-%d}}<br>{metric}: %{{y:,.2f}}<extra></extra>"
+                                        ))
+                                    fig.update_layout(
+                                        title=f"{metric} 按日对比（折线图）",
+                                        xaxis_title="日期",
+                                        yaxis_title=f"{metric} (¥)",
+                                        legend_title="主播",
+                                        hovermode="x unified"
+                                    )
+                                else:  # 柱状图
+                                    fig = go.Figure()
+                                    for anchor in pivot_df.columns:
+                                        fig.add_trace(go.Bar(
+                                            x=pivot_df.index,
+                                            y=pivot_df[anchor],
+                                            name=anchor,
+                                            hovertemplate=f"{anchor}<br>日期: %{{x|%Y-%m-%d}}<br>{metric}: %{{y:,.2f}}<extra></extra>"
+                                        ))
+                                    fig.update_layout(
+                                        title=f"{metric} 按日对比（柱状图）",
+                                        xaxis_title="日期",
+                                        yaxis_title=f"{metric} (¥)",
+                                        legend_title="主播",
+                                        barmode='group',
+                                        hovermode="x unified"
+                                    )
+                                st.plotly_chart(fig, use_container_width=True, key=f"compare_{metric}_{chart_type}")
                             
                             # 展示数据表格（按日期、主播展示各指标）
                             st.markdown("#### 明细数据表")
-                            # 重命名列名更友好
                             display_df = daily_agg.copy()
                             display_df["sale_date"] = display_df["sale_date"].dt.strftime("%Y-%m-%d")
                             display_df = display_df.sort_values(["sale_date", "anchor"])
