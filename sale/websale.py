@@ -931,7 +931,6 @@ with tabs[tab_index_history]:
         st.info("暂无历史数据")
 
 # ========== 商品分析 ==========
-# ========== 商品分析 ==========
 with tabs[tab_index_product]:
     # 弹窗状态管理
     if st.session_state.get("detail_clicked", False):
@@ -1044,14 +1043,14 @@ with tabs[tab_index_product]:
         if filtered.empty:
             st.warning("所选条件下无销售数据")
         else:
-            # 折线图
+            # ========== 每日净销售走势（按货号） ==========
             st.subheader("📈 每日净销售走势（按货号）")
             all_style_codes = sorted(filtered["style_code"].unique())
             if all_style_codes:
                 selected_styles = st.multiselect(
                     "选择要查看的货号（可多选）",
                     options=all_style_codes,
-                    default=all_style_codes[:3] if len(all_style_codes) > 3 else all_style_codes,
+                    default=[],  # 修改为空列表，取消默认选中
                     key="trend_styles"
                 )
                 if selected_styles:
@@ -1090,7 +1089,7 @@ with tabs[tab_index_product]:
                 img_map = master_df.set_index("style_code")["image_url"].to_dict()
                 cat_map = master_df.set_index("style_code")["category"].to_dict()
                 grouped["image_url"] = grouped["货号"].map(img_map).fillna(None)
-                # 向量化分类匹配
+                # 【性能优化】向量化分类匹配
                 if "master_category" not in filtered.columns:
                     filtered["master_category"] = None
                 cat_series = filtered.groupby("style_code")["master_category"].first()
@@ -1099,7 +1098,7 @@ with tabs[tab_index_product]:
                 grouped["master_category"] = None
                 grouped["image_url"] = None
             
-            # 向量化退款率计算
+            # 【性能优化】向量化退款率计算
             grouped["退款率"] = np.where(
                 grouped["发货金额"] != 0,
                 ((grouped["退货金额"] / grouped["发货金额"].replace(0, np.nan)) * 100).map("{:.2f}%".format),
@@ -1134,6 +1133,7 @@ with tabs[tab_index_product]:
             elif st.session_state.sort_by == "净销售金额":
                 grouped = grouped.sort_values("净销售金额", ascending=st.session_state.sort_ascending)
             elif st.session_state.sort_by == "退款率":
+                # 退款率字符串排序需要转为数值
                 grouped["退款率_num"] = grouped["退款率"].str.rstrip("%").astype(float)
                 grouped = grouped.sort_values("退款率_num", ascending=st.session_state.sort_ascending)
                 grouped = grouped.drop(columns=["退款率_num"])
@@ -1205,13 +1205,11 @@ with tabs[tab_index_product]:
                             detail_df["anchor"] = detail_df["remark"].apply(extract_anchor_fn)
                             detail_df = detail_df[detail_df["anchor"].notna()]
                             if not detail_df.empty:
-                                # 按主播汇总，并计算退款率
                                 shop_detail = detail_df.groupby("anchor").agg(
                                     发货金额=("ship_amount", "sum"),
                                     退货金额=("return_amount", "sum"),
                                     净销售金额=("net_amount", "sum")
                                 ).reset_index().rename(columns={"anchor": "主播"})
-                                # 添加退款率
                                 shop_detail["退款率"] = shop_detail.apply(
                                     lambda r: f"{(r['退货金额'] / r['发货金额'] * 100):.2f}%" if r['发货金额'] != 0 else "-", axis=1
                                 )
@@ -1339,7 +1337,7 @@ with tabs[tab_index_product]:
                 export_df.to_excel(writer, index=False)
             st.download_button("💾 导出分析结果", data=output.getvalue(), file_name="商品分析.xlsx")
 
-    # 弹窗显示明细（增加退款率列）
+    # 弹窗显示明细
     if st.session_state.show_dialog and st.session_state.dialog_style_code:
         style_code = st.session_state.dialog_style_code
         cached = st.session_state.cached_detail_data
@@ -1352,7 +1350,6 @@ with tabs[tab_index_product]:
                 else:
                     st.markdown("#### 店铺销售汇总")
                 if not shop_detail.empty:
-                    # 配置列格式
                     st.dataframe(
                         shop_detail,
                         column_config={
