@@ -4,7 +4,7 @@
 修复重复上传、key冲突、同日期累加等问题
 全部数据下所有维度按主播汇总
 性能优化：向量化计算、去除循环、添加加载提示
-最新日明细：确保所有主体在最新日期都有数据（无订单则填0），月累计仅显示实际累计值（无订单时为0）
+最新日明细：合计指标统计所有实体的月累计（不仅限当天有记录的）
 管理员账号：admin / 1234567890
 非直播账号：XDZ01 / 94949468
 直播账号：ZBZ01 / 123456
@@ -624,7 +624,7 @@ elif st.session_state.role == "admin":
     tab_index_debug = 6
     tab_index_export = 7
 
-# ========== 最新日明细（修改：确保所有主体在最新日期都有数据，无订单时月累计也显示0） ==========
+# ========== 最新日明细 ==========
 with tabs[tab_index_latest]:
     source_names = {"": "非直播数据", "_live": "直播数据", "_all": "全部数据"}
     current_source = source_names.get(st.session_state.table_suffix, "未知")
@@ -632,7 +632,6 @@ with tabs[tab_index_latest]:
     
     # 获取当前数据源下的所有主体（店铺或主播）
     if st.session_state.table_suffix == "_all":
-        # 全部数据：主播维度
         df_daily_all = st.session_state.df_all_daily
         if df_daily_all is not None and not df_daily_all.empty:
             all_entities = df_daily_all["店铺名称"].unique().tolist()
@@ -642,7 +641,6 @@ with tabs[tab_index_latest]:
         all_entities = list(set(all_entities + target_entities))
         col_name = "主播名称"
     else:
-        # 非直播/直播：店铺维度
         df_daily_all = st.session_state.df_all_daily
         if df_daily_all is not None and not df_daily_all.empty:
             all_entities = df_daily_all["店铺名称"].unique().tolist()
@@ -660,9 +658,7 @@ with tabs[tab_index_latest]:
     
     # 构建最新日明细数据框
     if latest_date_global is not None and all_entities:
-        # 提取最新日期当天的记录
         df_latest_existing = st.session_state.df_all_daily[st.session_state.df_all_daily["日期"] == latest_date_global].copy()
-        # 为每个实体创建一条记录
         result_rows = []
         for entity in all_entities:
             if st.session_state.table_suffix == "_all":
@@ -676,13 +672,11 @@ with tabs[tab_index_latest]:
                     "日期": latest_date_global,
                     "店铺名称": entity,
                     "当日金额": 0.0,
-                    "月累计金额": 0.0,  # 无订单的实体，月累计为0
+                    "月累计金额": 0.0,
                 }
             result_rows.append(row)
         df = pd.DataFrame(result_rows)
-        # 排序
         df = df.sort_values("店铺名称")
-        # 重命名列（全部数据时显示为“主播名称”）
         if st.session_state.table_suffix == "_all":
             df = df.rename(columns={"店铺名称": "主播名称"})
             col_name = "主播名称"
@@ -704,32 +698,47 @@ with tabs[tab_index_latest]:
         cols = ["日期", col_name, "当日金额", "月累计金额", "目标金额", "达成率"]
         st.dataframe(df[cols], use_container_width=True, hide_index=True)
         
-        # 合计指标
+        # ========== 合计指标（基于所有实体的当月累计，而不仅仅是当天有记录的） ==========
+        # 获取所有实体在最新日期的累计金额
+        if st.session_state.get("df_all_daily") is not None and not st.session_state.df_all_daily.empty:
+            latest_cum_by_entity = {}
+            for entity in all_entities:
+                entity_records = st.session_state.df_all_daily[
+                    (st.session_state.df_all_daily["店铺名称"] == entity) & 
+                    (st.session_state.df_all_daily["日期"] == latest_date_global)
+                ]
+                if not entity_records.empty:
+                    latest_cum_by_entity[entity] = entity_records.iloc[0]["月累计金额"]
+                else:
+                    latest_cum_by_entity[entity] = 0.0
+        else:
+            latest_cum_by_entity = {entity: 0.0 for entity in all_entities}
+        
         if st.session_state.table_suffix == "_all":
-            total_cum = df["月累计金额"].sum()
+            total_cum = sum(latest_cum_by_entity.values())
             total_target = sum(st.session_state.target_dict.values())
             total_rate = f"{(total_cum / total_target * 100):.2f}%" if total_target > 0 else "未设目标"
             st.metric("📊 总业绩合计", f"当日: {df['当日金额'].sum():,.2f}", delta=f"月累: {total_cum:,.2f}")
             st.caption(f"📈 月完成率: {total_rate}")
         else:
-            # 非直播/直播：按平台分组
-            douyin_df = df[df[col_name].str.contains("抖音", case=False, na=False)]
-            video_df = df[df[col_name].str.contains("视频号", case=False, na=False)]
-            douyin_cum = douyin_df["月累计金额"].sum()
-            video_cum = video_df["月累计金额"].sum()
-            total_cum = df["月累计金额"].sum()
-            douyin_target = sum(st.session_state.target_dict.get(shop, 0) for shop in douyin_df[col_name])
-            video_target = sum(st.session_state.target_dict.get(shop, 0) for shop in video_df[col_name])
+            douyin_entities = [e for e in all_entities if "抖音" in e]
+            video_entities = [e for e in all_entities if "视频号" in e]
+            douyin_cum = sum(latest_cum_by_entity.get(e, 0) for e in douyin_entities)
+            video_cum = sum(latest_cum_by_entity.get(e, 0) for e in video_entities)
+            total_cum = sum(latest_cum_by_entity.values())
+            douyin_target = sum(st.session_state.target_dict.get(shop, 0) for shop in douyin_entities)
+            video_target = sum(st.session_state.target_dict.get(shop, 0) for shop in video_entities)
             total_target = sum(st.session_state.target_dict.values())
             douyin_rate = f"{(douyin_cum / douyin_target * 100):.2f}%" if douyin_target > 0 else "未设目标"
             video_rate = f"{(video_cum / video_target * 100):.2f}%" if video_target > 0 else "未设目标"
             total_rate = f"{(total_cum / total_target * 100):.2f}%" if total_target > 0 else "未设目标"
+            # 当日合计（当天有销售的金额）
             col1, col2, col3 = st.columns(3)
             with col1:
-                st.metric(label="📱 抖音合计", value=f"当日: {douyin_df['当日金额'].sum():,.2f}", delta=f"月累: {douyin_cum:,.2f}")
+                st.metric(label="📱 抖音合计", value=f"当日: {df[df[col_name].isin(douyin_entities)]['当日金额'].sum():,.2f}", delta=f"月累: {douyin_cum:,.2f}")
                 st.caption(f"📈 月完成率: {douyin_rate}")
             with col2:
-                st.metric(label="📺 视频号合计", value=f"当日: {video_df['当日金额'].sum():,.2f}", delta=f"月累: {video_cum:,.2f}")
+                st.metric(label="📺 视频号合计", value=f"当日: {df[df[col_name].isin(video_entities)]['当日金额'].sum():,.2f}", delta=f"月累: {video_cum:,.2f}")
                 st.caption(f"📈 月完成率: {video_rate}")
             with col3:
                 st.metric(label="📊 总业绩合计", value=f"当日: {df['当日金额'].sum():,.2f}", delta=f"月累: {total_cum:,.2f}")
