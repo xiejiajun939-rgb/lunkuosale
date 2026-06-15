@@ -3,8 +3,7 @@
 订单业绩统计工具 - 最终完整版（管理员可切换数据源：非直播/直播/全部，独立数据库表）
 全部数据下所有维度按主播汇总
 最新日明细：动态月累计，无订单主体显示0
-子账号管理：管理员可增删改查子账号，子账号仅查看权限
-商品分析趋势图：可显示发货/退货/净销售三条曲线，并可勾选显示
+子账号管理：管理员可增删改查子账号，子账号仅查看权限且不能切换数据源
 管理员账号：admin / 1234567890
 子账号示例：NC01 / 123456
 """
@@ -528,7 +527,8 @@ if st.session_state.target_dict == {}:
 # ========== 侧边栏 ==========
 with st.sidebar:
     st.header("📂 数据加载")
-    if st.session_state.role != "user":
+    # 只有管理员可以切换数据源，子账号/viewer 只能使用默认数据源
+    if st.session_state.role == "admin":
         st.subheader("🔄 数据源切换")
         suffix_names = {"": "非直播数据", "_live": "直播数据", "_all": "全部数据"}
         current_source_name = suffix_names.get(st.session_state.table_suffix, "未知")
@@ -1236,7 +1236,6 @@ with tabs[tab_index_product]:
                         }
                     else:
                         st.session_state.cached_detail_data = None
-                    # 关闭可能打开的趋势弹窗
                     st.session_state.show_trend_dialog = False
                     st.session_state.trend_style_code = None
                     st.session_state.trend_data = None
@@ -1250,7 +1249,6 @@ with tabs[tab_index_product]:
                     style_code = row["货号"]
                     trend_data = filtered[filtered["style_code"] == style_code].copy()
                     if not trend_data.empty:
-                        # 汇总每日的发货、退货、净销售
                         daily = trend_data.groupby("sale_date").agg(
                             ship_amount=("ship_amount", "sum"),
                             return_amount=("return_amount", "sum"),
@@ -1260,7 +1258,6 @@ with tabs[tab_index_product]:
                         st.session_state.trend_data = daily
                     else:
                         st.session_state.trend_data = None
-                    # 关闭详情弹窗
                     st.session_state.show_dialog = False
                     st.session_state.dialog_style_code = None
                     st.session_state.cached_detail_data = None
@@ -1270,7 +1267,7 @@ with tabs[tab_index_product]:
                     st.session_state.trend_clicked = True
                     st.rerun()
             
-            # 饼图和柱状图（保持不变）
+            # 饼图和柱状图
             pie_metric = st.radio("饼图指标", ["净销售金额", "发货金额", "退货金额"], horizontal=True, key="pie_metric_final")
             if pie_metric == "净销售金额":
                 metric_col = "net_amount"
@@ -1405,7 +1402,7 @@ with tabs[tab_index_product]:
                 st.rerun()
         show_style_detail()
 
-    # 趋势弹窗（支持三条曲线可选择）
+    # 趋势弹窗
     if st.session_state.show_trend_dialog and st.session_state.trend_style_code:
         style_code = st.session_state.trend_style_code
         @st.dialog(f"📈 货号 {style_code} 销售趋势", width="large")
