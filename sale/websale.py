@@ -1349,6 +1349,7 @@ with tabs[tab_index_distribution]:
             prod_df["style_code"] = prod_df["product_code"].str[:8].str.strip().str.upper()
         if st.session_state.table_suffix in ["_live", "_all"]:
             prod_df["anchor"] = prod_df["remark"].astype(str).str.extract(r'主播[：:]([^_]+)')[0].str.strip()
+        
         st.markdown("#### 筛选条件")
         col_date1, col_date2 = st.columns(2)
         min_date = prod_df["sale_date"].min().date()
@@ -1357,6 +1358,7 @@ with tabs[tab_index_distribution]:
             start_date = st.date_input("开始日期", value=min_date, key="dist_start", min_value=min_date, max_value=max_date)
         with col_date2:
             end_date = st.date_input("结束日期", value=max_date, key="dist_end", min_value=min_date, max_value=max_date)
+        
         col_platform, col_shop = st.columns(2)
         with col_platform:
             platform_options = ["全部", "抖音", "视频号"]
@@ -1370,6 +1372,7 @@ with tabs[tab_index_distribution]:
             else:
                 shop_options = list(all_shops_all)
             selected_shops = st.multiselect("店铺（可多选）", options=sorted(shop_options), default=[], key="dist_shop")
+        
         col_brand, col_anchor = st.columns(2)
         with col_brand:
             brands_all = ["全部"] + sorted(prod_df["brand"].dropna().unique())
@@ -1380,6 +1383,7 @@ with tabs[tab_index_distribution]:
                 all_anchors = prod_df["anchor"].dropna().unique()
                 if len(all_anchors) > 0:
                     selected_anchors = st.multiselect("主播（可多选）", options=sorted(all_anchors), default=[], key="dist_anchor")
+        
         mask_date = (prod_df["sale_date"] >= pd.to_datetime(start_date)) & (prod_df["sale_date"] <= pd.to_datetime(end_date))
         filtered = prod_df[mask_date].copy()
         if selected_platform == "抖音":
@@ -1392,6 +1396,7 @@ with tabs[tab_index_distribution]:
             filtered = filtered[filtered["brand"] == selected_brand]
         if selected_anchors:
             filtered = filtered[filtered["anchor"].isin(selected_anchors)]
+        
         if filtered.empty:
             st.warning("所选条件下无销售数据")
         else:
@@ -1399,6 +1404,7 @@ with tabs[tab_index_distribution]:
             selected_metric = st.radio("金额指标", metric_options, horizontal=True, key="dist_metric")
             metric_col = {"净销售金额": "net_amount", "发货金额": "ship_amount", "退货金额": "return_amount"}[selected_metric]
             metric_name = selected_metric
+            
             # 准备分类数据
             if "master_category" not in filtered.columns:
                 master_df = load_product_master()
@@ -1411,6 +1417,7 @@ with tabs[tab_index_distribution]:
             else:
                 filtered["master_category"] = filtered["master_category"].fillna("未分类")
             cat_data = filtered.groupby("master_category")[metric_col].sum().reset_index()
+            
             # 年份数据
             if "year" in filtered.columns and not filtered["year"].isnull().all():
                 year_data = filtered.groupby("year")[metric_col].sum().reset_index()
@@ -1418,6 +1425,7 @@ with tabs[tab_index_distribution]:
             else:
                 total_val = filtered[metric_col].sum()
                 year_data = pd.DataFrame({"year": ["无年份信息"], metric_col: [total_val]}) if total_val > 0 else None
+            
             # 季节数据
             if "season" in filtered.columns and not filtered["season"].isnull().all():
                 season_data = filtered.groupby("season")[metric_col].sum().reset_index()
@@ -1425,6 +1433,7 @@ with tabs[tab_index_distribution]:
             else:
                 total_val = filtered[metric_col].sum()
                 season_data = pd.DataFrame({"season": ["无季节信息"], metric_col: [total_val]}) if total_val > 0 else None
+            
             def create_pie_chart(data, name_col, value_col, title):
                 if data is None:
                     return None
@@ -1437,6 +1446,7 @@ with tabs[tab_index_distribution]:
                 fig = px.pie(chart_data, names=name_col, values=value_col, title=title, hole=0.3, color_discrete_sequence=px.colors.qualitative.Pastel)
                 fig.update_traces(textposition='inside', textinfo='percent+label')
                 return fig
+            
             col1, col2, col3 = st.columns(3)
             with col1:
                 fig_cat = create_pie_chart(cat_data, "master_category", metric_col, f"分类{metric_name}占比")
@@ -1456,6 +1466,8 @@ with tabs[tab_index_distribution]:
                     st.plotly_chart(fig_season, use_container_width=True, key="pie_season")
                 else:
                     st.info("无季节数据")
+            
+            # 品牌占比分析
             st.markdown(f"#### 品牌占比分析")
             brand_data = filtered.groupby("brand")[metric_col].sum().reset_index()
             brand_data = brand_data[brand_data[metric_col] != 0]
@@ -1470,7 +1482,30 @@ with tabs[tab_index_distribution]:
                 st.plotly_chart(fig_brand, use_container_width=True, key="pie_brand")
             else:
                 st.info("无品牌数据")
-
+            
+            # ========== 新增：礼金商品销售占比 ==========
+            st.markdown(f"#### 礼金商品销售占比")
+            # 确保 filtered 中有 has_newbie_coupon 列
+            if "has_newbie_coupon" not in filtered.columns:
+                master_df = load_product_master()
+                if not master_df.empty and "style_code" in master_df.columns:
+                    master_df["style_code"] = master_df["style_code"].astype(str).str.strip().str.upper()
+                    coupon_map = master_df.set_index("style_code")["has_newbie_coupon"].to_dict()
+                    filtered["has_newbie_coupon"] = filtered["style_code"].map(coupon_map).fillna(False)
+                else:
+                    filtered["has_newbie_coupon"] = False
+            else:
+                filtered["has_newbie_coupon"] = filtered["has_newbie_coupon"].fillna(False)
+            
+            coupon_data = filtered.groupby("has_newbie_coupon")[metric_col].sum().reset_index()
+            coupon_data["礼金活动"] = coupon_data["has_newbie_coupon"].map({True: "参与新人礼金", False: "未参与"})
+            coupon_data = coupon_data[coupon_data[metric_col] != 0]
+            if not coupon_data.empty:
+                fig_coupon = px.pie(coupon_data, names="礼金活动", values=metric_col, title=f"礼金商品{metric_name}占比", hole=0.3)
+                fig_coupon.update_traces(textposition='inside', textinfo='percent+label')
+                st.plotly_chart(fig_coupon, use_container_width=True, key="pie_coupon")
+            else:
+                st.info("无礼金相关数据")
 # ========== 管理员专属：调试选项卡 ==========
 if st.session_state.role == "admin":
     with tabs[tab_index_debug]:
