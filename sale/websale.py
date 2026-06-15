@@ -19,6 +19,36 @@ import plotly.graph_objects as go
 
 st.set_page_config(page_title="业绩统计工具", layout="wide", page_icon="📊")
 
+# ========== 自定义CSS - 调整标题比例和布局 ==========
+st.markdown("""
+<style>
+    /* 自定义主标题样式 - 缩小字号、减少边距 */
+    .custom-main-title {
+        font-size: 28px !important;
+        font-weight: 600 !important;
+        margin-top: -0.5rem !important;
+        margin-bottom: 0.25rem !important;
+        padding-bottom: 0 !important;
+    }
+    /* 调整欢迎信息样式 */
+    .welcome-text {
+        font-size: 14px !important;
+        color: #555 !important;
+        margin-top: 0 !important;
+        margin-bottom: 0.5rem !important;
+    }
+    /* 调整分割线间距 */
+    hr {
+        margin-top: 0.5rem !important;
+        margin-bottom: 0.5rem !important;
+    }
+    /* 可选：调整侧边栏标题大小 */
+    .css-1d391kg h1, .css-1d391kg h2, .css-1d391kg h3 {
+        font-size: 1.2rem !important;
+    }
+</style>
+""", unsafe_allow_html=True)
+
 # ========== 子账号存储 ==========
 if "sub_users" not in st.session_state:
     st.session_state.sub_users = {"NC01": {"password": "123456", "role": "viewer", "default_suffix": "_all"}}
@@ -57,8 +87,9 @@ if not st.session_state.authenticated:
     login()
     st.stop()
 
-st.title("📊 抖音&视频号商品销售分析罗盘")
-st.markdown(f"欢迎，**{st.session_state.username}** ({'管理员' if st.session_state.role == 'admin' else ('子账号' if st.session_state.role == 'viewer' else '成员')})")
+# ========== 主页面 - 使用自定义标题替代默认的st.title ==========
+st.markdown('<div class="custom-main-title">📊 抖音&视频号商品销售分析罗盘</div>', unsafe_allow_html=True)
+st.markdown(f'<div class="welcome-text">欢迎，**{st.session_state.username}** ({"管理员" if st.session_state.role == "admin" else ("子账号" if st.session_state.role == "viewer" else "成员")})</div>', unsafe_allow_html=True)
 st.markdown("---")
 
 # ========== Supabase 连接 ==========
