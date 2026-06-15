@@ -945,7 +945,6 @@ with tabs[tab_index_query]:
 
 # ========== 发货退货明细 ==========
 with tabs[tab_index_ship_return]:
-    st.subheader("📦 发货退货明细（按主维）")
     with st.spinner("正在加载商品数据，请稍候..."):
         prod_df = load_product_sales(st.session_state.table_suffix)
     if prod_df.empty:
@@ -982,7 +981,6 @@ with tabs[tab_index_ship_return]:
 
 # ========== 历史业绩 ==========
 with tabs[tab_index_history]:
-    st.subheader("所有已保存的每日业绩")
     with st.spinner("正在加载历史数据，请稍候..."):
         daily_df = load_daily_sales()
     if not daily_df.empty:
@@ -1022,8 +1020,6 @@ with tabs[tab_index_product]:
         st.session_state.show_trend_dialog = False
         st.session_state.trend_style_code = None
         st.session_state.trend_data = None
-
-    st.subheader("📊 商品销售分析（按货号汇总）")
     col_btn, _ = st.columns([1, 5])
     with col_btn:
         if st.button("🔄 刷新数据", key="refresh_analysis_final"):
@@ -1396,7 +1392,6 @@ with tabs[tab_index_product]:
 
 # ========== 主播销售对比 ==========
 with tabs[tab_index_anchor_compare]:
-    st.subheader("🎤 主播销售对比")
     # 仅当数据源为直播或全部数据时可用
     if st.session_state.table_suffix not in ["_live", "_all"]:
         st.warning("主播销售对比功能仅支持“直播数据”或“全部数据”模式。请通过侧边栏切换数据源。")
@@ -1515,7 +1510,6 @@ with tabs[tab_index_anchor_compare]:
 
 # ========== 销售分布与品牌 ==========
 with tabs[tab_index_distribution]:
-    st.subheader("📈 销售分布与品牌分析")
     with st.spinner("正在加载数据，请稍候..."):
         prod_df = load_product_sales(st.session_state.table_suffix)
     if prod_df.empty:
