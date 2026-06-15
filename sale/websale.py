@@ -659,42 +659,22 @@ base_tab_labels = [
 admin_extra_tabs = []
 if st.session_state.role == "admin":
     admin_extra_tabs = ["🔧 调试", "📚 商品库导出"]
-    if st.session_state.table_suffix == "_all":
-        all_tab_labels = base_tab_labels + ["🎤 主播业绩"] + admin_extra_tabs
-    else:
-        all_tab_labels = base_tab_labels + admin_extra_tabs
-elif st.session_state.role == "viewer":
-    # viewer 没有调试和导出，但可以有主播业绩（当全部数据时）
-    if st.session_state.table_suffix == "_all":
-        all_tab_labels = base_tab_labels + ["🎤 主播业绩"]
-    else:
-        all_tab_labels = base_tab_labels
+    all_tab_labels = base_tab_labels + admin_extra_tabs
 else:
     all_tab_labels = base_tab_labels
 
 tabs = st.tabs(all_tab_labels)
 
-# 计算索引
 tab_index_latest = 0
 tab_index_range = 1
 tab_index_query = 2
 tab_index_ship_return = 3
 tab_index_history = 4
 tab_index_product = 5
-
-if st.session_state.role in ["admin", "viewer"] and st.session_state.table_suffix == "_all":
-    tab_index_anchor = 6
-    if st.session_state.role == "admin":
-        tab_index_debug = 7
-        tab_index_export = 8
-    else:
-        tab_index_debug = None
-        tab_index_export = None
-elif st.session_state.role == "admin":
+if st.session_state.role == "admin":
     tab_index_debug = 6
     tab_index_export = 7
 else:
-    tab_index_anchor = None
     tab_index_debug = None
     tab_index_export = None
 
@@ -1044,7 +1024,6 @@ with tabs[tab_index_product]:
         else:
             prod_df["style_code"] = prod_df["product_code"].str[:8].str.strip().str.upper()
         
-        # 【性能优化】向量化提取主播
         if st.session_state.table_suffix in ["_live", "_all"]:
             prod_df["anchor"] = prod_df["remark"].astype(str).str.extract(r'主播[：:]([^_]+)')[0].str.strip()
         
@@ -1090,7 +1069,6 @@ with tabs[tab_index_product]:
                     default=[],
                     key="anchor_filter_final"
                 )
-        # 应用筛选
         mask_date = (prod_df["sale_date"] >= pd.to_datetime(start_date)) & (prod_df["sale_date"] <= pd.to_datetime(end_date))
         filtered = prod_df[mask_date].copy()
         if selected_platform == "抖音":
@@ -1110,7 +1088,6 @@ with tabs[tab_index_product]:
         if filtered.empty:
             st.warning("所选条件下无销售数据")
         else:
-            # 折线图
             st.subheader("📈 每日净销售走势（按货号）")
             all_style_codes = sorted(filtered["style_code"].unique())
             if all_style_codes:
@@ -1142,7 +1119,6 @@ with tabs[tab_index_product]:
             else:
                 st.info("当前筛选条件下无货号数据")
             st.markdown("---")
-            # 汇总表
             grouped = filtered.groupby("style_code").agg(
                 发货金额=("ship_amount", "sum"),
                 退货金额=("return_amount", "sum"),
@@ -1164,14 +1140,12 @@ with tabs[tab_index_product]:
                 grouped["master_category"] = None
                 grouped["image_url"] = None
             
-            # 向量化退款率计算
             grouped["退款率"] = np.where(
                 grouped["发货金额"] != 0,
                 ((grouped["退货金额"] / grouped["发货金额"].replace(0, np.nan)) * 100).map("{:.2f}%".format),
                 "-"
             )
             
-            # 排序控件
             st.markdown("#### 货号汇总表")
             col_sort1, col_sort2, _ = st.columns([1, 1, 2])
             with col_sort1:
@@ -1189,7 +1163,6 @@ with tabs[tab_index_product]:
                 st.session_state.product_page_num = 1
                 st.rerun()
             
-            # 应用排序
             if st.session_state.sort_by == "货号":
                 grouped = grouped.sort_values("货号", ascending=st.session_state.sort_ascending)
             elif st.session_state.sort_by == "发货金额":
@@ -1203,7 +1176,6 @@ with tabs[tab_index_product]:
                 grouped = grouped.sort_values("退款率_num", ascending=st.session_state.sort_ascending)
                 grouped = grouped.drop(columns=["退款率_num"])
             
-            # 分页
             page_size = 20
             total_rows = len(grouped)
             total_pages = (total_rows + page_size - 1) // page_size if total_rows > 0 else 1
@@ -1303,7 +1275,6 @@ with tabs[tab_index_product]:
                     st.session_state.detail_clicked = True
                     st.rerun()
             
-            # 饼图和柱状图
             pie_metric = st.radio("饼图指标", ["净销售金额", "发货金额", "退货金额"], horizontal=True, key="pie_metric_final")
             if pie_metric == "净销售金额":
                 metric_col = "net_amount"
@@ -1437,55 +1408,6 @@ with tabs[tab_index_product]:
                 st.session_state.detail_clicked = False
                 st.rerun()
         show_style_detail()
-
-# ========== 主播业绩（仅全部数据且管理员或 viewer） ==========
-"""if st.session_state.role in ["admin", "viewer"] and st.session_state.table_suffix == "_all" and tab_index_anchor is not None:
-    with tabs[tab_index_anchor]:
-        st.subheader("🎤 主播最新日明细（按主播汇总）")
-        with st.spinner("正在加载主播业绩数据，请稍候..."):
-            prod_df_anchor = load_product_sales("_all")
-        if prod_df_anchor.empty:
-            st.info("暂无商品数据，请先上传全部数据订单文件")
-        else:
-            prod_df_anchor["anchor"] = prod_df_anchor["remark"].apply(extract_anchor)
-            prod_df_anchor = prod_df_anchor[prod_df_anchor["anchor"].notna()]
-            if prod_df_anchor.empty:
-                st.info("暂无包含主播信息的订单数据")
-            else:
-                latest_date = prod_df_anchor["sale_date"].max().date()
-                st.caption(f"📅 最新日期：{latest_date}")
-                latest_data = prod_df_anchor[prod_df_anchor["sale_date"].dt.date == latest_date]
-                anchor_summary = latest_data.groupby("anchor").agg(
-                    发货金额=("ship_amount", "sum"),
-                    退货金额=("return_amount", "sum"),
-                    净销售金额=("net_amount", "sum")
-                ).reset_index()
-                anchor_summary = anchor_summary.sort_values("净销售金额", ascending=False)
-                st.dataframe(
-                    anchor_summary,
-                    column_config={
-                        "anchor": "主播",
-                        "发货金额": st.column_config.NumberColumn("发货金额", format="%.2f"),
-                        "退货金额": st.column_config.NumberColumn("退货金额", format="%.2f"),
-                        "净销售金额": st.column_config.NumberColumn("净销售金额", format="%.2f")
-                    },
-                    hide_index=True,
-                    use_container_width=True
-                )
-                total_ship = anchor_summary["发货金额"].sum()
-                total_return = anchor_summary["退货金额"].sum()
-                total_net = anchor_summary["净销售金额"].sum()
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.metric("📦 总发货", f"{total_ship:,.2f}")
-                with col2:
-                    st.metric("↩️ 总退货", f"{total_return:,.2f}")
-                with col3:
-                    st.metric("💰 总净销售", f"{total_net:,.2f}")
-                output = io.BytesIO()
-                with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                    anchor_summary.to_excel(writer, index=False)
-                st.download_button("💾 导出主播业绩", data=output.getvalue(), file_name=f"主播业绩_{latest_date}.xlsx")"""
 
 # ========== 管理员专属：调试选项卡 ==========
 if st.session_state.role == "admin" and tab_index_debug is not None:
