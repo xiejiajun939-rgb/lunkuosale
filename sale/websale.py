@@ -1483,7 +1483,7 @@ with tabs[tab_index_distribution]:
             else:
                 st.info("无品牌数据")
             
-            # ========== 礼金商品分析 ==========
+            # ========== 首单礼金（新人礼金）分析 ==========
             # 获取礼金标签
             if "has_newbie_coupon" not in filtered.columns:
                 master_df = load_product_master()
@@ -1496,11 +1496,23 @@ with tabs[tab_index_distribution]:
             else:
                 filtered["has_newbie_coupon"] = filtered["has_newbie_coupon"].fillna(False)
             
+            # 1. 总体礼金 vs 非礼金占比
+            st.markdown(f"#### 首单礼金商品销售占比")
+            total_coupon_data = filtered.groupby("has_newbie_coupon")[metric_col].sum().reset_index()
+            total_coupon_data["类别"] = total_coupon_data["has_newbie_coupon"].map({True: "参与首单礼金", False: "未参与"})
+            total_coupon_data = total_coupon_data[total_coupon_data[metric_col] != 0]
+            if not total_coupon_data.empty:
+                fig_total_coupon = px.pie(total_coupon_data, names="类别", values=metric_col, title=f"首单礼金商品{metric_name}占比", hole=0.3)
+                fig_total_coupon.update_traces(textposition='inside', textinfo='percent+label')
+                st.plotly_chart(fig_total_coupon, use_container_width=True, key="pie_total_coupon")
+            else:
+                st.info("无礼金相关数据")
+            
             # 筛选礼金商品
             coupon_filtered = filtered[filtered["has_newbie_coupon"] == True].copy()
             if not coupon_filtered.empty:
-                st.markdown(f"#### 礼金商品品牌占比")
-                # 按品牌汇总礼金商品的销售额
+                # 2. 礼金商品内部品牌占比
+                st.markdown(f"#### 首单礼金商品品牌占比")
                 coupon_brand_data = coupon_filtered.groupby("brand")[metric_col].sum().reset_index()
                 coupon_brand_data = coupon_brand_data[coupon_brand_data[metric_col] != 0]
                 if not coupon_brand_data.empty:
@@ -1509,25 +1521,22 @@ with tabs[tab_index_distribution]:
                         other_sum = coupon_brand_data[~coupon_brand_data["brand"].isin(top10["brand"])][metric_col].sum()
                         other_row = pd.DataFrame({"brand": ["其他"], metric_col: [other_sum]})
                         coupon_brand_data = pd.concat([top10, other_row], ignore_index=True)
-                    fig_coupon_brand = px.pie(coupon_brand_data, names="brand", values=metric_col, title=f"礼金商品{metric_name}占比（按品牌）", hole=0.3)
+                    fig_coupon_brand = px.pie(coupon_brand_data, names="brand", values=metric_col, title=f"首单礼金商品{metric_name}占比（按品牌）", hole=0.3)
                     fig_coupon_brand.update_traces(textposition='inside', textinfo='percent+label')
                     st.plotly_chart(fig_coupon_brand, use_container_width=True, key="pie_coupon_brand")
                 else:
                     st.info("无礼金品牌数据")
                 
-                # 礼金商品销售明细表格
-                st.markdown(f"#### 礼金商品销售明细")
-                # 按品牌汇总礼金商品的关键指标
+                # 3. 礼金商品销售明细表格
+                st.markdown(f"#### 首单礼金商品销售明细（按品牌汇总）")
                 coupon_detail = coupon_filtered.groupby("brand").agg(
                     发货金额=("ship_amount", "sum"),
                     退货金额=("return_amount", "sum"),
                     净销售金额=("net_amount", "sum")
                 ).reset_index()
-                # 添加退款率
                 coupon_detail["退款率"] = coupon_detail.apply(
                     lambda r: f"{(r['退货金额']/r['发货金额']*100):.2f}%" if r['发货金额'] != 0 else "-", axis=1
                 )
-                # 显示表格
                 st.dataframe(
                     coupon_detail,
                     column_config={
@@ -1545,39 +1554,13 @@ with tabs[tab_index_distribution]:
                 with pd.ExcelWriter(output, engine='openpyxl') as writer:
                     coupon_detail.to_excel(writer, index=False)
                 st.download_button(
-                    "💾 导出礼金商品明细",
+                    "💾 导出首单礼金商品明细",
                     data=output.getvalue(),
-                    file_name=f"礼金商品明细_{start_date}_{end_date}.xlsx",
+                    file_name=f"首单礼金明细_{start_date}_{end_date}.xlsx",
                     key="export_coupon_detail"
                 )
             else:
-                st.info("当前筛选条件下无礼金商品数据")
-# ========== 管理员专属：调试选项卡 ==========
-if st.session_state.role == "admin":
-    with tabs[tab_index_debug]:
-        st.subheader("🔧 数据库调试信息")
-        if supabase is None:
-            st.error("Supabase 未连接")
-        else:
-            current_suffix = st.session_state.table_suffix
-            st.write(f"**当前 session_state.table_suffix**: `{current_suffix}`")
-            st.write(f"**当前使用的每日业绩表**: `daily_sales{current_suffix}`")
-            st.write(f"**当前使用的商品销售表**: `product_sales{current_suffix}`")
-            st.write(f"**当前使用的目标表**: `shop_targets{current_suffix}`")
-            try:
-                table_name = get_table_name("product_sales")
-                st.write(f"查询商品销售表 `{table_name}` 前5条数据:")
-                resp = supabase.table(table_name).select("*").limit(5).execute()
-                st.write(resp.data)
-            except Exception as e:
-                st.error(f"查询失败: {e}")
-            try:
-                table_name = get_table_name("daily_sales")
-                st.write(f"查询每日业绩表 `{table_name}` 前5条数据:")
-                resp = supabase.table(table_name).select("*").limit(5).execute()
-                st.write(resp.data)
-            except Exception as e:
-                st.error(f"查询失败: {e}")
+                st.info("当前筛选条件下无首单礼金商品数据")
 
 # ========== 管理员专属：商品库导出选项卡 ==========
 if st.session_state.role == "admin":
