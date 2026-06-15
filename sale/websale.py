@@ -4,10 +4,10 @@
 修复重复上传、key冲突、同日期累加等问题
 全部数据下所有维度按主播汇总
 性能优化：向量化计算、去除循环、添加加载提示
-最新日明细：合计指标统计所有实体的月累计（不仅限当天有记录的）
+最新日明细：合计指标统计所有实体的月累计
+子账号管理：管理员可增删改查子账号，子账号仅查看权限
 管理员账号：admin / 1234567890
-非直播账号：XDZ01 / 94949468
-直播账号：ZBZ01 / 123456
+子账号示例：NC01 / 123456
 """
 
 import streamlit as st
@@ -24,12 +24,24 @@ import plotly.express as px
 # ========== 页面配置 ==========
 st.set_page_config(page_title="业绩统计工具", layout="wide", page_icon="📊")
 
-# ========== 用户认证 ==========
-USERS = {
-    "admin": {"password": "1234567890", "role": "admin", "default_suffix": ""},
-    "XDZ01": {"password": "94949468", "role": "user", "default_suffix": ""},
-    "ZBZ01": {"password": "123456", "role": "user", "default_suffix": "_live"}
-}
+# ========== 初始化子账号存储（实际应存储在数据库，此处用 session_state 模拟） ==========
+if "sub_users" not in st.session_state:
+    # 初始包含内测账号
+    st.session_state.sub_users = {
+        "NC01": {"password": "123456", "role": "viewer", "default_suffix": "_all"}
+    }
+
+# ========== 用户认证（合并内置账号和子账号） ==========
+def get_all_users():
+    users = {
+        "admin": {"password": "1234567890", "role": "admin", "default_suffix": ""},
+        "XDZ01": {"password": "94949468", "role": "user", "default_suffix": ""},
+        "ZBZ01": {"password": "123456", "role": "user", "default_suffix": "_live"}
+    }
+    # 合并子账号
+    for username, info in st.session_state.sub_users.items():
+        users[username] = info
+    return users
 
 def login():
     st.title("🔐 业绩统计工具 - 登录")
@@ -38,11 +50,12 @@ def login():
         password = st.text_input("密码", type="password")
         submitted = st.form_submit_button("登录")
         if submitted:
-            if username in USERS and USERS[username]["password"] == password:
+            users = get_all_users()
+            if username in users and users[username]["password"] == password:
                 st.session_state.authenticated = True
                 st.session_state.username = username
-                st.session_state.role = USERS[username]["role"]
-                st.session_state.table_suffix = USERS[username]["default_suffix"]
+                st.session_state.role = users[username]["role"]
+                st.session_state.table_suffix = users[username]["default_suffix"]
                 st.cache_data.clear()
                 st.rerun()
             else:
@@ -56,7 +69,7 @@ if not st.session_state.authenticated:
     st.stop()
 
 st.title("📊 店铺业绩汇总分析")
-st.markdown(f"欢迎，**{st.session_state.username}** ({'管理员' if st.session_state.role == 'admin' else '成员'})")
+st.markdown(f"欢迎，**{st.session_state.username}** ({'管理员' if st.session_state.role == 'admin' else ('子账号' if st.session_state.role == 'viewer' else '成员')})")
 st.markdown("---")
 
 # ========== Supabase 连接 ==========
@@ -477,6 +490,44 @@ def load_target_file(uploaded_file, suffix):
     except Exception as e:
         return False, str(e)
 
+# ========== 子账号管理函数 ==========
+def manage_sub_accounts():
+    st.subheader("👥 子账号管理")
+    with st.expander("创建新子账号"):
+        new_username = st.text_input("用户名", key="new_username")
+        new_password = st.text_input("密码", type="password", key="new_password")
+        default_suffix = st.selectbox("默认数据源", ["非直播数据", "直播数据", "全部数据"], key="new_default_suffix")
+        suffix_map = {"非直播数据": "", "直播数据": "_live", "全部数据": "_all"}
+        if st.button("创建子账号"):
+            if new_username and new_password:
+                if new_username in st.session_state.sub_users:
+                    st.error("用户名已存在")
+                else:
+                    st.session_state.sub_users[new_username] = {
+                        "password": new_password,
+                        "role": "viewer",
+                        "default_suffix": suffix_map[default_suffix]
+                    }
+                    st.success(f"子账号 {new_username} 创建成功")
+                    st.rerun()
+            else:
+                st.error("请填写用户名和密码")
+    
+    st.markdown("#### 已有子账号")
+    if st.session_state.sub_users:
+        for username, info in list(st.session_state.sub_users.items()):
+            col1, col2, col3, col4 = st.columns([2, 1, 1, 1])
+            col1.write(username)
+            col2.write("●" * len(info["password"]))
+            suffix_display = {"": "非直播", "_live": "直播", "_all": "全部"}.get(info["default_suffix"], "未知")
+            col3.write(suffix_display)
+            with col4:
+                if st.button("删除", key=f"del_{username}"):
+                    del st.session_state.sub_users[username]
+                    st.rerun()
+    else:
+        st.info("暂无子账号")
+
 # ========== 页面初始化加载数据 ==========
 rebuild_daily_data(st.session_state.table_suffix)
 if st.session_state.target_dict == {}:
@@ -485,7 +536,8 @@ if st.session_state.target_dict == {}:
 # ========== 侧边栏 ==========
 with st.sidebar:
     st.header("📂 数据加载")
-    if st.session_state.role == "admin":
+    # 所有用户（admin、user、viewer）都可以切换数据源
+    if st.session_state.role != "user":  # 仅排除普通用户（XDZ01/ZBZ01），但 viewer 和 admin 可见
         st.subheader("🔄 数据源切换")
         suffix_names = {"": "非直播数据", "_live": "直播数据", "_all": "全部数据"}
         current_source_name = suffix_names.get(st.session_state.table_suffix, "未知")
@@ -500,6 +552,9 @@ with st.sidebar:
                 st.cache_data.clear()
                 st.rerun()
         st.markdown("---")
+    
+    # 管理员专属：上传、工具、子账号管理
+    if st.session_state.role == "admin":
         current_display_suffix = st.session_state.table_suffix
 
         # 通用上传处理函数
@@ -583,8 +638,11 @@ with st.sidebar:
                 st.rerun()
             else:
                 st.error(msg)
+        st.markdown("---")
+        # 子账号管理模块
+        manage_sub_accounts()
     else:
-        st.info("普通用户仅可查看数据，无法上传。")
+        st.info("您只有查看权限，无法上传文件。如需上传，请联系管理员。")
     st.markdown("---")
     if st.button("🚪 退出登录", key="logout_final"):
         st.session_state.authenticated = False
@@ -605,26 +663,41 @@ if st.session_state.role == "admin":
         all_tab_labels = base_tab_labels + ["🎤 主播业绩"] + admin_extra_tabs
     else:
         all_tab_labels = base_tab_labels + admin_extra_tabs
+elif st.session_state.role == "viewer":
+    # viewer 没有调试和导出，但可以有主播业绩（当全部数据时）
+    if st.session_state.table_suffix == "_all":
+        all_tab_labels = base_tab_labels + ["🎤 主播业绩"]
+    else:
+        all_tab_labels = base_tab_labels
 else:
     all_tab_labels = base_tab_labels
 
 tabs = st.tabs(all_tab_labels)
 
+# 计算索引
 tab_index_latest = 0
 tab_index_range = 1
 tab_index_query = 2
 tab_index_ship_return = 3
 tab_index_history = 4
 tab_index_product = 5
-if st.session_state.role == "admin" and st.session_state.table_suffix == "_all":
+
+if st.session_state.role in ["admin", "viewer"] and st.session_state.table_suffix == "_all":
     tab_index_anchor = 6
-    tab_index_debug = 7
-    tab_index_export = 8
+    if st.session_state.role == "admin":
+        tab_index_debug = 7
+        tab_index_export = 8
+    else:
+        tab_index_debug = None
+        tab_index_export = None
 elif st.session_state.role == "admin":
     tab_index_debug = 6
     tab_index_export = 7
+else:
+    tab_index_anchor = None
+    tab_index_debug = None
+    tab_index_export = None
 
-# ========== 最新日明细 ==========
 # ========== 最新日明细 ==========
 with tabs[tab_index_latest]:
     source_names = {"": "非直播数据", "_live": "直播数据", "_all": "全部数据"}
@@ -665,9 +738,7 @@ with tabs[tab_index_latest]:
     
     # 构建最新日明细数据框（当日金额 + 月累计）
     if latest_date_global is not None and all_entities:
-        # 提取最新日期当天的记录（用于当日金额）
         df_latest_existing = st.session_state.df_all_daily[st.session_state.df_all_daily["日期"] == latest_date_global].copy()
-        # 获取当月所有数据（用于动态计算月累计）
         df_month = st.session_state.df_all_daily[
             (st.session_state.df_all_daily["日期"] >= month_start) & 
             (st.session_state.df_all_daily["日期"] <= latest_date_global)
@@ -675,14 +746,12 @@ with tabs[tab_index_latest]:
         
         result_rows = []
         for entity in all_entities:
-            # 当日金额
             if st.session_state.table_suffix == "_all":
                 existing_today = df_latest_existing[df_latest_existing["店铺名称"] == entity]
             else:
                 existing_today = df_latest_existing[df_latest_existing["店铺名称"] == entity]
             today_amount = existing_today.iloc[0]["当日金额"] if not existing_today.empty else 0.0
             
-            # 月累计金额（动态计算：当月所有日期的当日金额之和）
             if st.session_state.table_suffix == "_all":
                 entity_month_data = df_month[df_month["店铺名称"] == entity]
             else:
@@ -706,7 +775,6 @@ with tabs[tab_index_latest]:
         df = pd.DataFrame(columns=["日期", col_name, "当日金额", "月累计金额"])
     
     if not df.empty:
-        # 添加目标金额和达成率
         df["目标金额"] = df[col_name].map(st.session_state.target_dict).fillna(0).round(2)
         def calc_rate(row):
             actual = row["月累计金额"]
@@ -718,7 +786,6 @@ with tabs[tab_index_latest]:
         cols = ["日期", col_name, "当日金额", "月累计金额", "目标金额", "达成率"]
         st.dataframe(df[cols], use_container_width=True, hide_index=True)
         
-        # 合计指标（基于动态月累计）
         if st.session_state.table_suffix == "_all":
             total_cum = df["月累计金额"].sum()
             total_target = sum(st.session_state.target_dict.values())
@@ -1043,14 +1110,14 @@ with tabs[tab_index_product]:
         if filtered.empty:
             st.warning("所选条件下无销售数据")
         else:
-            # ========== 每日净销售走势（按货号） ==========
+            # 折线图
             st.subheader("📈 每日净销售走势（按货号）")
             all_style_codes = sorted(filtered["style_code"].unique())
             if all_style_codes:
                 selected_styles = st.multiselect(
                     "选择要查看的货号（可多选）",
                     options=all_style_codes,
-                    default=[],  # 修改为空列表，取消默认选中
+                    default=[],
                     key="trend_styles"
                 )
                 if selected_styles:
@@ -1089,7 +1156,6 @@ with tabs[tab_index_product]:
                 img_map = master_df.set_index("style_code")["image_url"].to_dict()
                 cat_map = master_df.set_index("style_code")["category"].to_dict()
                 grouped["image_url"] = grouped["货号"].map(img_map).fillna(None)
-                # 【性能优化】向量化分类匹配
                 if "master_category" not in filtered.columns:
                     filtered["master_category"] = None
                 cat_series = filtered.groupby("style_code")["master_category"].first()
@@ -1098,7 +1164,7 @@ with tabs[tab_index_product]:
                 grouped["master_category"] = None
                 grouped["image_url"] = None
             
-            # 【性能优化】向量化退款率计算
+            # 向量化退款率计算
             grouped["退款率"] = np.where(
                 grouped["发货金额"] != 0,
                 ((grouped["退货金额"] / grouped["发货金额"].replace(0, np.nan)) * 100).map("{:.2f}%".format),
@@ -1133,7 +1199,6 @@ with tabs[tab_index_product]:
             elif st.session_state.sort_by == "净销售金额":
                 grouped = grouped.sort_values("净销售金额", ascending=st.session_state.sort_ascending)
             elif st.session_state.sort_by == "退款率":
-                # 退款率字符串排序需要转为数值
                 grouped["退款率_num"] = grouped["退款率"].str.rstrip("%").astype(float)
                 grouped = grouped.sort_values("退款率_num", ascending=st.session_state.sort_ascending)
                 grouped = grouped.drop(columns=["退款率_num"])
@@ -1171,7 +1236,6 @@ with tabs[tab_index_product]:
             end_idx = min(start_idx + page_size, total_rows)
             page_df = grouped.iloc[start_idx:end_idx]
             
-            # 渲染表格
             cols = st.columns([2, 0.5, 1.5, 1.2, 1.2, 1.2, 1, 1.2])
             headers = ["货号", "图片", "商品分类", "发货金额(¥)", "退货金额(¥)", "净销售金额(¥)", "退款率", "操作"]
             for col, header in zip(cols, headers):
@@ -1374,8 +1438,8 @@ with tabs[tab_index_product]:
                 st.rerun()
         show_style_detail()
 
-# ========== 主播业绩（仅全部数据且管理员） ==========
-if st.session_state.role == "admin" and st.session_state.table_suffix == "_all":
+# ========== 主播业绩（仅全部数据且管理员或 viewer） ==========
+if st.session_state.role in ["admin", "viewer"] and st.session_state.table_suffix == "_all" and tab_index_anchor is not None:
     with tabs[tab_index_anchor]:
         st.subheader("🎤 主播最新日明细（按主播汇总）")
         with st.spinner("正在加载主播业绩数据，请稍候..."):
@@ -1424,9 +1488,8 @@ if st.session_state.role == "admin" and st.session_state.table_suffix == "_all":
                 st.download_button("💾 导出主播业绩", data=output.getvalue(), file_name=f"主播业绩_{latest_date}.xlsx")
 
 # ========== 管理员专属：调试选项卡 ==========
-if st.session_state.role == "admin":
-    debug_tab_index = tab_index_debug if st.session_state.table_suffix == "_all" else 6
-    with tabs[debug_tab_index]:
+if st.session_state.role == "admin" and tab_index_debug is not None:
+    with tabs[tab_index_debug]:
         st.subheader("🔧 数据库调试信息")
         if supabase is None:
             st.error("Supabase 未连接")
@@ -1452,9 +1515,8 @@ if st.session_state.role == "admin":
                 st.error(f"查询失败: {e}")
 
 # ========== 管理员专属：商品库导出选项卡 ==========
-if st.session_state.role == "admin":
-    export_tab_index = tab_index_export if st.session_state.table_suffix == "_all" else 7
-    with tabs[export_tab_index]:
+if st.session_state.role == "admin" and tab_index_export is not None:
+    with tabs[tab_index_export]:
         st.subheader("📚 导出商品库数据（product_master）")
         master_df = load_product_master()
         if master_df.empty:
