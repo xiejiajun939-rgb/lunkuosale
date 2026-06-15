@@ -1517,11 +1517,11 @@ with tabs[tab_index_anchor_compare]:
                                     )
                                 st.plotly_chart(fig, use_container_width=True, key=f"compare_{metric}_{chart_type}")
                             
-                            # ========== 品类对比 ==========
+                            # ========== 品类分析 ==========
                             st.markdown("#### 主播品类销售分析")
                             col_cat_type, _ = st.columns([1, 3])
                             with col_cat_type:
-                                cat_chart_type = st.radio("品类图表类型", ["柱状图（对比品类）", "饼图（主播占比）"], horizontal=True, key="cat_chart_type")
+                                cat_chart_type = st.radio("品类图表类型", ["柱状图（对比品类）", "饼图（各主播品类分布）"], horizontal=True, key="cat_chart_type")
                             
                             # 获取品类信息
                             if "master_category" not in filtered.columns:
@@ -1535,11 +1535,10 @@ with tabs[tab_index_anchor_compare]:
                             else:
                                 filtered["master_category"] = filtered["master_category"].fillna("未分类")
                             
-                            cat_agg = filtered.groupby(["anchor", "master_category"])["net_amount"].sum().reset_index()
-                            cat_agg.rename(columns={"net_amount": "净销售金额"}, inplace=True)
-                            
                             if cat_chart_type == "柱状图（对比品类）":
                                 # 每个主播取Top5品类
+                                cat_agg = filtered.groupby(["anchor", "master_category"])["net_amount"].sum().reset_index()
+                                cat_agg.rename(columns={"net_amount": "净销售金额"}, inplace=True)
                                 top_categories_per_anchor = {}
                                 for anchor in selected_anchors:
                                     anchor_data = cat_agg[cat_agg["anchor"] == anchor].copy()
@@ -1573,28 +1572,38 @@ with tabs[tab_index_anchor_compare]:
                                     st.plotly_chart(fig_cat, use_container_width=True)
                                 else:
                                     st.info("无法获取品类数据，无法生成对比图。")
-                            else:  # 饼图：展示各主播净销售总额占比
-                                total_by_anchor = filtered.groupby("anchor")["net_amount"].sum().reset_index()
-                                total_by_anchor = total_by_anchor[total_by_anchor["anchor"].isin(selected_anchors)]
-                                if not total_by_anchor.empty:
+                            else:  # 饼图：为每个主播单独展示Top5品类占比饼图
+                                cat_agg = filtered.groupby(["anchor", "master_category"])["net_amount"].sum().reset_index()
+                                cat_agg.rename(columns={"net_amount": "净销售金额"}, inplace=True)
+                                for anchor in selected_anchors:
+                                    anchor_data = cat_agg[cat_agg["anchor"] == anchor].copy()
+                                    if anchor_data.empty:
+                                        continue
+                                    anchor_data = anchor_data.sort_values("净销售金额", ascending=False)
+                                    top5 = anchor_data.head(5)
+                                    # 其他品类合并为“其他”
+                                    other_sum = anchor_data.iloc[5:]["净销售金额"].sum() if len(anchor_data) > 5 else 0
+                                    if other_sum > 0:
+                                        other_row = pd.DataFrame({"master_category": ["其他"], "净销售金额": [other_sum]})
+                                        top5 = pd.concat([top5, other_row], ignore_index=True)
+                                    if top5.empty:
+                                        continue
                                     fig_pie = px.pie(
-                                        total_by_anchor,
-                                        names="anchor",
-                                        values="net_amount",
-                                        title="主播净销售金额占比",
+                                        top5,
+                                        names="master_category",
+                                        values="净销售金额",
+                                        title=f"{anchor} - 品类销售分布（Top5）",
                                         hole=0.3,
-                                        color_discrete_sequence=px.colors.qualitative.Set3
+                                        color_discrete_sequence=px.colors.qualitative.Pastel
                                     )
                                     fig_pie.update_traces(textposition='inside', textinfo='percent+label')
                                     st.plotly_chart(fig_pie, use_container_width=True)
-                                else:
-                                    st.info("无有效数据")
                             
-                            # ========== 季节对比 ==========
+                            # ========== 季节分析 ==========
                             st.markdown("#### 主播季节销售分析")
                             col_season_type, _ = st.columns([1, 3])
                             with col_season_type:
-                                season_chart_type = st.radio("季节图表类型", ["柱状图（对比季节）", "饼图（主播占比）"], horizontal=True, key="season_chart_type")
+                                season_chart_type = st.radio("季节图表类型", ["柱状图（对比季节）", "饼图（各主播季节分布）"], horizontal=True, key="season_chart_type")
                             
                             if "season" not in filtered.columns:
                                 st.info("数据中缺少季节信息，无法生成季节对比图。")
@@ -1627,28 +1636,29 @@ with tabs[tab_index_anchor_compare]:
                                                 st.info("无有效季节数据")
                                         else:
                                             st.info("所选主播无季节数据")
-                                    else:  # 饼图：主播净销售总额占比（同品类饼图一样）
-                                        total_by_anchor = filtered.groupby("anchor")["net_amount"].sum().reset_index()
-                                        total_by_anchor = total_by_anchor[total_by_anchor["anchor"].isin(selected_anchors)]
-                                        if not total_by_anchor.empty:
+                                    else:  # 饼图：为每个主播单独展示季节分布占比
+                                        season_agg = season_data.groupby(["anchor", "season"])["net_amount"].sum().reset_index()
+                                        season_agg.rename(columns={"net_amount": "净销售金额"}, inplace=True)
+                                        for anchor in selected_anchors:
+                                            anchor_season = season_agg[season_agg["anchor"] == anchor].copy()
+                                            if anchor_season.empty:
+                                                continue
                                             fig_pie_season = px.pie(
-                                                total_by_anchor,
-                                                names="anchor",
-                                                values="net_amount",
-                                                title="主播净销售金额占比",
+                                                anchor_season,
+                                                names="season",
+                                                values="净销售金额",
+                                                title=f"{anchor} - 季节销售分布",
                                                 hole=0.3,
-                                                color_discrete_sequence=px.colors.qualitative.Set3
+                                                color_discrete_sequence=px.colors.qualitative.Set2
                                             )
                                             fig_pie_season.update_traces(textposition='inside', textinfo='percent+label')
                                             st.plotly_chart(fig_pie_season, use_container_width=True)
-                                        else:
-                                            st.info("无有效数据")
                             
-                            # ========== 年份对比 ==========
+                            # ========== 年份分析 ==========
                             st.markdown("#### 主播年份销售分析")
                             col_year_type, _ = st.columns([1, 3])
                             with col_year_type:
-                                year_chart_type = st.radio("年份图表类型", ["柱状图（对比年份）", "饼图（主播占比）"], horizontal=True, key="year_chart_type")
+                                year_chart_type = st.radio("年份图表类型", ["柱状图（对比年份）", "饼图（各主播年份分布）"], horizontal=True, key="year_chart_type")
                             
                             if "year" not in filtered.columns:
                                 st.info("数据中缺少年份信息，无法生成年份对比图。")
@@ -1680,22 +1690,24 @@ with tabs[tab_index_anchor_compare]:
                                                 st.info("无有效年份数据")
                                         else:
                                             st.info("所选主播无年份数据")
-                                    else:  # 饼图：主播净销售总额占比
-                                        total_by_anchor = filtered.groupby("anchor")["net_amount"].sum().reset_index()
-                                        total_by_anchor = total_by_anchor[total_by_anchor["anchor"].isin(selected_anchors)]
-                                        if not total_by_anchor.empty:
+                                    else:  # 饼图：为每个主播单独展示年份分布占比
+                                        year_agg = year_data.groupby(["anchor", "year"])["net_amount"].sum().reset_index()
+                                        year_agg.rename(columns={"net_amount": "净销售金额"}, inplace=True)
+                                        for anchor in selected_anchors:
+                                            anchor_year = year_agg[year_agg["anchor"] == anchor].copy()
+                                            if anchor_year.empty:
+                                                continue
+                                            anchor_year = anchor_year.sort_values("year")
                                             fig_pie_year = px.pie(
-                                                total_by_anchor,
-                                                names="anchor",
-                                                values="net_amount",
-                                                title="主播净销售金额占比",
+                                                anchor_year,
+                                                names="year",
+                                                values="净销售金额",
+                                                title=f"{anchor} - 年份销售分布",
                                                 hole=0.3,
                                                 color_discrete_sequence=px.colors.qualitative.Set3
                                             )
                                             fig_pie_year.update_traces(textposition='inside', textinfo='percent+label')
                                             st.plotly_chart(fig_pie_year, use_container_width=True)
-                                        else:
-                                            st.info("无有效数据")
 # ========== 销售分布与品牌 ==========
 with tabs[tab_index_distribution]:
     with st.spinner("正在加载数据，请稍候..."):
