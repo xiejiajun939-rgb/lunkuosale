@@ -1533,26 +1533,7 @@ with tabs[tab_index_distribution]:
                 metric_col = "return_amount"
                 metric_name = "退货金额"
             
-            # 辅助函数：安全绘制饼图
-            def safe_pie_chart(data, name_col, value_col, title, chart_key):
-                total = data[value_col].sum()
-                if total == 0:
-                    st.info(f"{title}：无销售金额")
-                    return
-                if total < 0 and metric_col == "net_amount":
-                    st.warning(f"{title}：净销售总额为负（{total:.2f}），无法绘制饼图。请选择「发货金额」或「退货金额」")
-                    return
-                chart_data = data[data[value_col] != 0].copy()
-                if chart_data.empty:
-                    st.info(f"{title}：无有效数据")
-                    return
-                fig = px.pie(chart_data, names=name_col, values=value_col,
-                             title=title, hole=0.3, color_discrete_sequence=px.colors.qualitative.Pastel)
-                fig.update_traces(textposition='inside', textinfo='percent+label')
-                st.plotly_chart(fig, use_container_width=True, key=chart_key)
-            
-            # 1. 按商品分类饼图
-            st.markdown(f"#### 销售分布（按商品分类）")
+            # 准备分类数据
             if "master_category" not in filtered.columns:
                 master_df = load_product_master()
                 if not master_df.empty and "style_code" in master_df.columns:
@@ -1564,37 +1545,63 @@ with tabs[tab_index_distribution]:
             else:
                 filtered["master_category"] = filtered["master_category"].fillna("未分类")
             cat_data = filtered.groupby("master_category")[metric_col].sum().reset_index()
-            safe_pie_chart(cat_data, "master_category", metric_col, f"各分类{metric_name}占比", "pie_category")
             
-            # 2. 按年份饼图
-            st.markdown(f"#### 销售分布（按年份）")
-            if "year" not in filtered.columns or filtered["year"].isnull().all():
-                total_val = filtered[metric_col].sum()
-                if total_val > 0:
-                    year_data = pd.DataFrame({"year": ["无年份信息"], metric_col: [total_val]})
-                    safe_pie_chart(year_data, "year", metric_col, f"各年份{metric_name}占比", "pie_year")
-                else:
-                    st.info("无年份信息")
-            else:
+            # 准备年份数据
+            if "year" in filtered.columns and not filtered["year"].isnull().all():
                 year_data = filtered.groupby("year")[metric_col].sum().reset_index()
                 year_data = year_data[year_data["year"].notna()]
-                safe_pie_chart(year_data, "year", metric_col, f"各年份{metric_name}占比", "pie_year")
-            
-            # 3. 按季节饼图
-            st.markdown(f"#### 销售分布（按季节）")
-            if "season" not in filtered.columns or filtered["season"].isnull().all():
-                total_val = filtered[metric_col].sum()
-                if total_val > 0:
-                    season_data = pd.DataFrame({"season": ["无季节信息"], metric_col: [total_val]})
-                    safe_pie_chart(season_data, "season", metric_col, f"各季节{metric_name}占比", "pie_season")
-                else:
-                    st.info("无季节信息")
             else:
+                total_val = filtered[metric_col].sum()
+                year_data = pd.DataFrame({"year": ["无年份信息"], metric_col: [total_val]}) if total_val > 0 else None
+            
+            # 准备季节数据
+            if "season" in filtered.columns and not filtered["season"].isnull().all():
                 season_data = filtered.groupby("season")[metric_col].sum().reset_index()
                 season_data = season_data[season_data["season"].notna()]
-                safe_pie_chart(season_data, "season", metric_col, f"各季节{metric_name}占比", "pie_season")
+            else:
+                total_val = filtered[metric_col].sum()
+                season_data = pd.DataFrame({"season": ["无季节信息"], metric_col: [total_val]}) if total_val > 0 else None
             
-            # 4. 品牌占比分析（饼图）
+            # 辅助函数：安全创建饼图并返回 figure 对象
+            def create_pie_chart(data, name_col, value_col, title):
+                if data is None:
+                    return None
+                total = data[value_col].sum()
+                if total == 0:
+                    return None
+                if total < 0 and metric_col == "net_amount":
+                    st.warning(f"{title}：净销售总额为负（{total:.2f}），无法绘制饼图。请选择「发货金额」或「退货金额」")
+                    return None
+                chart_data = data[data[value_col] != 0].copy()
+                if chart_data.empty:
+                    return None
+                fig = px.pie(chart_data, names=name_col, values=value_col,
+                             title=title, hole=0.3, color_discrete_sequence=px.colors.qualitative.Pastel)
+                fig.update_traces(textposition='inside', textinfo='percent+label')
+                return fig
+            
+            # 三个饼图横向排列
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                fig_cat = create_pie_chart(cat_data, "master_category", metric_col, f"分类{metric_name}占比")
+                if fig_cat:
+                    st.plotly_chart(fig_cat, use_container_width=True, key="pie_category")
+                else:
+                    st.info("无分类数据")
+            with col2:
+                fig_year = create_pie_chart(year_data, "year", metric_col, f"年份{metric_name}占比")
+                if fig_year:
+                    st.plotly_chart(fig_year, use_container_width=True, key="pie_year")
+                else:
+                    st.info("无年份数据")
+            with col3:
+                fig_season = create_pie_chart(season_data, "season", metric_col, f"季节{metric_name}占比")
+                if fig_season:
+                    st.plotly_chart(fig_season, use_container_width=True, key="pie_season")
+                else:
+                    st.info("无季节数据")
+            
+            # 品牌占比分析（单独一行）
             st.markdown(f"#### 品牌占比分析")
             brand_data = filtered.groupby("brand")[metric_col].sum().reset_index()
             brand_data = brand_data[brand_data[metric_col] != 0]
