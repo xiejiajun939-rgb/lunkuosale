@@ -19,6 +19,200 @@ import plotly.graph_objects as go
 
 st.set_page_config(page_title="业绩统计工具", layout="wide", page_icon="📊")
 
+# ========== 全局 UI 样式（参考图片设计语言） ==========
+st.markdown("""
+<style>
+    /* 全局背景与字体 */
+    .stApp {
+        background-color: #f8fafc;
+        font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
+    }
+    
+    /* 主容器内边距与最大宽度 */
+    .main .block-container {
+        padding-top: 2rem;
+        padding-bottom: 2rem;
+        max-width: 1400px;
+    }
+    
+    /* 标题样式 */
+    h1, h2, h3, .stMarkdown h1, .stMarkdown h2 {
+        color: #0f172a;
+        font-weight: 600;
+        letter-spacing: -0.01em;
+        margin-bottom: 0.5rem;
+    }
+    h1 {
+        font-size: 2rem;
+    }
+    h2 {
+        font-size: 1.5rem;
+        border-left: 4px solid #3b82f6;
+        padding-left: 1rem;
+    }
+    
+    /* 侧边栏卡片效果 */
+    [data-testid="stSidebar"] {
+        background-color: #ffffff;
+        border-right: 1px solid #e2e8f0;
+        padding-top: 2rem;
+        box-shadow: 0 0 10px rgba(0,0,0,0.02);
+    }
+    [data-testid="stSidebar"] .stMarkdown, 
+    [data-testid="stSidebar"] .stSelectbox, 
+    [data-testid="stSidebar"] .stButton {
+        margin-bottom: 0.8rem;
+    }
+    
+    /* 选项卡样式 */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 8px;
+        background-color: transparent;
+        padding: 0;
+    }
+    .stTabs [data-baseweb="tab"] {
+        background-color: #ffffff;
+        border-radius: 40px;
+        padding: 0.5rem 1.2rem;
+        font-weight: 500;
+        color: #334155;
+        border: 1px solid #e2e8f0;
+        transition: all 0.2s ease;
+        margin-right: 6px;
+    }
+    .stTabs [aria-selected="true"] {
+        background-color: #3b82f6;
+        color: white;
+        border-color: #3b82f6;
+        box-shadow: 0 2px 6px rgba(59,130,246,0.2);
+    }
+    .stTabs [data-baseweb="tab"]:hover {
+        background-color: #f1f5f9;
+        border-color: #cbd5e1;
+    }
+    
+    /* 表格样式（干净、圆角、悬停效果） */
+    .stDataFrame, div[data-testid="stDataFrame"] {
+        border-radius: 16px;
+        overflow: hidden;
+        border: 1px solid #eef2f6;
+        background-color: #ffffff;
+    }
+    .stDataFrame table, .dataframe {
+        font-size: 0.85rem;
+        border-collapse: collapse;
+        width: 100%;
+    }
+    .stDataFrame th, .dataframe th {
+        background-color: #f9fafb;
+        color: #1e293b;
+        font-weight: 600;
+        padding: 0.75rem 1rem;
+        border-bottom: 1px solid #e2e8f0;
+        font-size: 0.85rem;
+    }
+    .stDataFrame td, .dataframe td {
+        padding: 0.6rem 1rem;
+        border-bottom: 1px solid #f1f5f9;
+    }
+    .stDataFrame tr:hover, .dataframe tr:hover {
+        background-color: #fefce8;
+        transition: 0.1s;
+    }
+    
+    /* 按钮样式 */
+    .stButton > button {
+        border-radius: 40px;
+        background-color: #ffffff;
+        border: 1px solid #cbd5e1;
+        color: #1f2937;
+        font-weight: 500;
+        padding: 0.4rem 1.2rem;
+        transition: all 0.2s;
+        box-shadow: 0 1px 1px rgba(0,0,0,0.02);
+    }
+    .stButton > button:hover {
+        background-color: #f8fafc;
+        border-color: #94a3b8;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+    }
+    .stButton > button:active {
+        transform: scale(0.98);
+    }
+    
+    /* 主要操作按钮（如确认上传） */
+    .stButton > button[kind="primary"] {
+        background-color: #3b82f6;
+        border-color: #3b82f6;
+        color: white;
+    }
+    .stButton > button[kind="primary"]:hover {
+        background-color: #2563eb;
+    }
+    
+    /* 输入框、选择框样式 */
+    .stTextInput > div > div > input, 
+    .stSelectbox > div > div, 
+    .stDateInput > div > div > input {
+        border-radius: 12px;
+        border: 1px solid #e2e8f0;
+        background-color: #ffffff;
+        padding: 0.5rem 0.8rem;
+    }
+    .stTextInput > div > div > input:focus, 
+    .stSelectbox > div > div:focus, 
+    .stDateInput > div > div > input:focus {
+        border-color: #3b82f6;
+        box-shadow: 0 0 0 2px rgba(59,130,246,0.2);
+        outline: none;
+    }
+    
+    /* metric 卡片样式 */
+    [data-testid="stMetric"] {
+        background-color: #ffffff;
+        border-radius: 20px;
+        padding: 1rem;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+        border: 1px solid #eef2f6;
+    }
+    [data-testid="stMetric"] label {
+        font-weight: 500;
+        color: #475569;
+    }
+    [data-testid="stMetric"] .stMetricValue {
+        font-size: 1.6rem;
+        font-weight: 700;
+        color: #0f172a;
+    }
+    
+    /* 侧边栏内部标题 */
+    [data-testid="stSidebar"] h1, 
+    [data-testid="stSidebar"] h2, 
+    [data-testid="stSidebar"] h3 {
+        color: #0f172a;
+        margin-top: 0.5rem;
+        margin-bottom: 0.75rem;
+    }
+    
+    /* 消息提示框美化 */
+    .stAlert {
+        border-radius: 12px;
+        border-left-width: 4px;
+    }
+    
+    /* 进度条 */
+    .stProgress > div > div {
+        background-color: #3b82f6;
+    }
+    
+    /* 分隔线 */
+    hr {
+        margin: 1rem 0;
+        border-color: #e2e8f0;
+    }
+</style>
+""", unsafe_allow_html=True)
+
 # ========== 子账号存储 ==========
 if "sub_users" not in st.session_state:
     st.session_state.sub_users = {"NC01": {"password": "123456", "role": "viewer", "default_suffix": "_all"}}
@@ -1464,7 +1658,7 @@ with tabs[tab_index_anchor_compare]:
                                     )
                                 st.plotly_chart(fig, use_container_width=True, key=f"compare_{metric}_{chart_type}")
                             
-                            # 展示数据表格（按日期、主播展示各指标）
+                            # 展示数据表格
                             st.markdown("#### 明细数据表")
                             display_df = daily_agg.copy()
                             display_df["sale_date"] = display_df["sale_date"].dt.strftime("%Y-%m-%d")
