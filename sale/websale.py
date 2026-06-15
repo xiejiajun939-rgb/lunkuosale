@@ -1504,123 +1504,6 @@ with tabs[tab_index_distribution]:
                         key="dist_anchor"
                     )
         
-        mask_date = (prod_df["sale_date"] >= pd.to_datetime(start_date)) & (prod_df["sale_date"] <= pd.to_datetime(end_date))
-        filtered = prod_df[mask_date].copy()
-        if selected_platform == "抖音":
-            filtered = filtered[filtered["shop_name"].str.contains("抖音", case=False, na=False)]
-        elif selected_platform == "视频号":
-            filtered = filtered[filtered["shop_name"].str.contains("视频号", case=False, na=False)]
-        if selected_shops:
-            filtered = filtered[filtered["shop_name"].isin(selected_shops)]
-        if selected_brand != "全部":
-            filtered = filtered[filtered["brand"] == selected_brand]
-        if selected_anchors:
-            filtered = filtered[filtered["anchor"].isin(selected_anchors)]
-        
-        if filtered.empty:
-            st.warning("所选条件下无销售数据")
-        else:
-            metric_options = ["净销售金额", "发货金额", "退货金额"]
-            selected_metric = st.radio("金额指标", metric_options, horizontal=True, key="dist_metric")
-            if selected_metric == "净销售金额":
-                metric_col = "net_amount"
-                metric_name = "净销售金额"
-            elif selected_metric == "发货金额":
-                metric_col = "ship_amount"
-                metric_name = "发货金额"
-            else:
-                metric_col = "return_amount"
-                metric_name = "退货金额"
-            
-            # 销售分布（按商品分类）
-            st.markdown(f"#### 销售分布（按商品分类）")
-            if "master_category" not in filtered.columns:
-                master_df = load_product_master()
-                if not master_df.empty and "style_code" in master_df.columns:
-                    master_df["style_code"] = master_df["style_code"].astype(str).str.strip().str.upper()
-                    cat_map = master_df.set_index("style_code")["category"].to_dict()
-                    filtered["master_category"] = filtered["style_code"].map(cat_map).fillna("未分类")
-                else:
-                    filtered["master_category"] = "未分类"
-            else:
-                filtered["master_category"] = filtered["master_category"].fillna("未分类")
-            
-            cat_data = filtered.groupby("master_category")[metric_col].sum().reset_index()
-            cat_data = cat_data[cat_data[metric_col] != 0]
-            if not cat_data.empty:
-                fig_pie = px.pie(cat_data, names="master_category", values=metric_col, title=f"各分类{metric_name}占比", hole=0.3)
-                fig_pie.update_traces(textposition='inside', textinfo='percent+label')
-                st.plotly_chart(fig_pie, use_container_width=True)
-            else:
-                st.info("无有效分类数据")
-            
-            # 品牌销售分析
-            st.markdown(f"#### 品牌销售分析")
-            brand_data = filtered.groupby("brand")[metric_col].sum().reset_index()
-            brand_data = brand_data.sort_values(metric_col, ascending=False)
-            brand_data = brand_data[brand_data[metric_col] != 0]
-            if not brand_data.empty:
-                fig_bar = px.bar(brand_data, x="brand", y=metric_col, title=f"各品牌{metric_name}", color="brand")
-                st.plotly_chart(fig_bar, use_container_width=True)
-            else:
-                st.info("无品牌数据")
-# ========== 销售分布与品牌 ==========
-with tabs[tab_index_distribution]:
-    st.subheader("📈 销售分布与品牌分析")
-    
-    with st.spinner("正在加载数据，请稍候..."):
-        prod_df = load_product_sales(st.session_state.table_suffix)
-    
-    if prod_df.empty:
-        st.warning("暂无商品销售数据，请先上传订单文件。")
-    else:
-        if "style_code" in prod_df.columns:
-            prod_df["style_code"] = prod_df["style_code"].astype(str).str.strip().str.upper()
-        else:
-            prod_df["style_code"] = prod_df["product_code"].str[:8].str.strip().str.upper()
-        
-        if st.session_state.table_suffix in ["_live", "_all"]:
-            prod_df["anchor"] = prod_df["remark"].astype(str).str.extract(r'主播[：:]([^_]+)')[0].str.strip()
-        
-        st.markdown("#### 筛选条件")
-        col_date1, col_date2 = st.columns(2)
-        min_date = prod_df["sale_date"].min().date()
-        max_date = prod_df["sale_date"].max().date()
-        with col_date1:
-            start_date = st.date_input("开始日期", value=min_date, key="dist_start", min_value=min_date, max_value=max_date)
-        with col_date2:
-            end_date = st.date_input("结束日期", value=max_date, key="dist_end", min_value=min_date, max_value=max_date)
-        
-        col_platform, col_shop = st.columns(2)
-        with col_platform:
-            platform_options = ["全部", "抖音", "视频号"]
-            selected_platform = st.selectbox("平台", platform_options, key="dist_platform")
-        with col_shop:
-            all_shops_all = prod_df["shop_name"].unique()
-            if selected_platform == "抖音":
-                shop_options = [shop for shop in all_shops_all if "抖音" in shop]
-            elif selected_platform == "视频号":
-                shop_options = [shop for shop in all_shops_all if "视频号" in shop]
-            else:
-                shop_options = list(all_shops_all)
-            selected_shops = st.multiselect("店铺（可多选）", options=sorted(shop_options), default=[], key="dist_shop")
-        
-        col_brand, col_anchor = st.columns(2)
-        with col_brand:
-            brands_all = ["全部"] + sorted(prod_df["brand"].dropna().unique())
-            selected_brand = st.selectbox("品牌", brands_all, key="dist_brand")
-        with col_anchor:
-            selected_anchors = []
-            if st.session_state.table_suffix in ["_live", "_all"] and "anchor" in prod_df.columns:
-                all_anchors = prod_df["anchor"].dropna().unique()
-                if len(all_anchors) > 0:
-                    selected_anchors = st.multiselect(
-                        "主播（可多选）",
-                        options=sorted(all_anchors),
-                        default=[],
-                        key="dist_anchor"
-                    )
-        
         # 应用筛选
         mask_date = (prod_df["sale_date"] >= pd.to_datetime(start_date)) & (prod_df["sale_date"] <= pd.to_datetime(end_date))
         filtered = prod_df[mask_date].copy()
@@ -1651,7 +1534,7 @@ with tabs[tab_index_distribution]:
                 metric_name = "退货金额"
             
             # 辅助函数：安全绘制饼图
-            def safe_pie_chart(data, name_col, value_col, title, key):
+            def safe_pie_chart(data, name_col, value_col, title, chart_key):
                 total = data[value_col].sum()
                 if total == 0:
                     st.info(f"{title}：无销售金额")
@@ -1666,11 +1549,10 @@ with tabs[tab_index_distribution]:
                 fig = px.pie(chart_data, names=name_col, values=value_col,
                              title=title, hole=0.3, color_discrete_sequence=px.colors.qualitative.Pastel)
                 fig.update_traces(textposition='inside', textinfo='percent+label')
-                st.plotly_chart(fig, use_container_width=True, key=key)
+                st.plotly_chart(fig, use_container_width=True, key=chart_key)
             
             # 1. 按商品分类饼图
             st.markdown(f"#### 销售分布（按商品分类）")
-            # 获取商品分类
             if "master_category" not in filtered.columns:
                 master_df = load_product_master()
                 if not master_df.empty and "style_code" in master_df.columns:
@@ -1717,7 +1599,6 @@ with tabs[tab_index_distribution]:
             brand_data = filtered.groupby("brand")[metric_col].sum().reset_index()
             brand_data = brand_data[brand_data[metric_col] != 0]
             if not brand_data.empty:
-                # 如果品牌过多，只显示前10个，其余归为“其他”
                 if len(brand_data) > 10:
                     top10 = brand_data.nlargest(10, metric_col)
                     other_sum = brand_data[~brand_data["brand"].isin(top10["brand"])][metric_col].sum()
