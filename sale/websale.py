@@ -1467,8 +1467,8 @@ with tabs[tab_index_distribution]:
                 else:
                     st.info("无季节数据")
             
-            # 品牌占比分析
-            st.markdown(f"#### 品牌占比分析")
+            # 品牌占比分析（全量商品）
+            st.markdown(f"#### 品牌占比分析（全商品）")
             brand_data = filtered.groupby("brand")[metric_col].sum().reset_index()
             brand_data = brand_data[brand_data[metric_col] != 0]
             if not brand_data.empty:
@@ -1477,15 +1477,14 @@ with tabs[tab_index_distribution]:
                     other_sum = brand_data[~brand_data["brand"].isin(top10["brand"])][metric_col].sum()
                     other_row = pd.DataFrame({"brand": ["其他"], metric_col: [other_sum]})
                     brand_data = pd.concat([top10, other_row], ignore_index=True)
-                fig_brand = px.pie(brand_data, names="brand", values=metric_col, title=f"各品牌{metric_name}占比", hole=0.3)
+                fig_brand = px.pie(brand_data, names="brand", values=metric_col, title=f"各品牌{metric_name}占比（全商品）", hole=0.3)
                 fig_brand.update_traces(textposition='inside', textinfo='percent+label')
                 st.plotly_chart(fig_brand, use_container_width=True, key="pie_brand")
             else:
                 st.info("无品牌数据")
             
-            # ========== 新增：礼金商品销售占比 ==========
-            st.markdown(f"#### 礼金商品销售占比")
-            # 确保 filtered 中有 has_newbie_coupon 列
+            # ========== 礼金商品分析 ==========
+            # 获取礼金标签
             if "has_newbie_coupon" not in filtered.columns:
                 master_df = load_product_master()
                 if not master_df.empty and "style_code" in master_df.columns:
@@ -1497,15 +1496,62 @@ with tabs[tab_index_distribution]:
             else:
                 filtered["has_newbie_coupon"] = filtered["has_newbie_coupon"].fillna(False)
             
-            coupon_data = filtered.groupby("has_newbie_coupon")[metric_col].sum().reset_index()
-            coupon_data["礼金活动"] = coupon_data["has_newbie_coupon"].map({True: "参与新人礼金", False: "未参与"})
-            coupon_data = coupon_data[coupon_data[metric_col] != 0]
-            if not coupon_data.empty:
-                fig_coupon = px.pie(coupon_data, names="礼金活动", values=metric_col, title=f"礼金商品{metric_name}占比", hole=0.3)
-                fig_coupon.update_traces(textposition='inside', textinfo='percent+label')
-                st.plotly_chart(fig_coupon, use_container_width=True, key="pie_coupon")
+            # 筛选礼金商品
+            coupon_filtered = filtered[filtered["has_newbie_coupon"] == True].copy()
+            if not coupon_filtered.empty:
+                st.markdown(f"#### 礼金商品品牌占比")
+                # 按品牌汇总礼金商品的销售额
+                coupon_brand_data = coupon_filtered.groupby("brand")[metric_col].sum().reset_index()
+                coupon_brand_data = coupon_brand_data[coupon_brand_data[metric_col] != 0]
+                if not coupon_brand_data.empty:
+                    if len(coupon_brand_data) > 10:
+                        top10 = coupon_brand_data.nlargest(10, metric_col)
+                        other_sum = coupon_brand_data[~coupon_brand_data["brand"].isin(top10["brand"])][metric_col].sum()
+                        other_row = pd.DataFrame({"brand": ["其他"], metric_col: [other_sum]})
+                        coupon_brand_data = pd.concat([top10, other_row], ignore_index=True)
+                    fig_coupon_brand = px.pie(coupon_brand_data, names="brand", values=metric_col, title=f"礼金商品{metric_name}占比（按品牌）", hole=0.3)
+                    fig_coupon_brand.update_traces(textposition='inside', textinfo='percent+label')
+                    st.plotly_chart(fig_coupon_brand, use_container_width=True, key="pie_coupon_brand")
+                else:
+                    st.info("无礼金品牌数据")
+                
+                # 礼金商品销售明细表格
+                st.markdown(f"#### 礼金商品销售明细")
+                # 按品牌汇总礼金商品的关键指标
+                coupon_detail = coupon_filtered.groupby("brand").agg(
+                    发货金额=("ship_amount", "sum"),
+                    退货金额=("return_amount", "sum"),
+                    净销售金额=("net_amount", "sum")
+                ).reset_index()
+                # 添加退款率
+                coupon_detail["退款率"] = coupon_detail.apply(
+                    lambda r: f"{(r['退货金额']/r['发货金额']*100):.2f}%" if r['发货金额'] != 0 else "-", axis=1
+                )
+                # 显示表格
+                st.dataframe(
+                    coupon_detail,
+                    column_config={
+                        "brand": "品牌",
+                        "发货金额": st.column_config.NumberColumn("发货金额(¥)", format="%.2f"),
+                        "退货金额": st.column_config.NumberColumn("退货金额(¥)", format="%.2f"),
+                        "净销售金额": st.column_config.NumberColumn("净销售金额(¥)", format="%.2f"),
+                        "退款率": st.column_config.TextColumn("退款率")
+                    },
+                    hide_index=True,
+                    use_container_width=True
+                )
+                # 导出按钮
+                output = io.BytesIO()
+                with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                    coupon_detail.to_excel(writer, index=False)
+                st.download_button(
+                    "💾 导出礼金商品明细",
+                    data=output.getvalue(),
+                    file_name=f"礼金商品明细_{start_date}_{end_date}.xlsx",
+                    key="export_coupon_detail"
+                )
             else:
-                st.info("无礼金相关数据")
+                st.info("当前筛选条件下无礼金商品数据")
 # ========== 管理员专属：调试选项卡 ==========
 if st.session_state.role == "admin":
     with tabs[tab_index_debug]:
