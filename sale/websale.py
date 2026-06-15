@@ -34,7 +34,7 @@ def get_all_users():
     return users
 
 def login():
-    st.title("🔐 业绩统计工具 - 登录")
+    st.title("🔐 数据罗盘 - 登录")
     with st.form("login_form"):
         username = st.text_input("用户名")
         password = st.text_input("密码", type="password")
@@ -57,7 +57,7 @@ if not st.session_state.authenticated:
     login()
     st.stop()
 
-st.title("📊 店铺业绩汇总分析")
+st.title("📊 抖音&视频号商品销售分析罗盘")
 st.markdown(f"欢迎，**{st.session_state.username}** ({'管理员' if st.session_state.role == 'admin' else ('子账号' if st.session_state.role == 'viewer' else '成员')})")
 st.markdown("---")
 
