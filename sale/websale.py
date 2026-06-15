@@ -1523,21 +1523,22 @@ with tabs[tab_index_distribution]:
                 else:
                     st.info("无礼金商品数据")
             
-            # 礼金商品销售明细（所有金额指标）
+            # 礼金商品销售明细（按货号汇总）
             if not coupon_filtered.empty:
-                st.markdown(f"#### 首单礼金商品销售明细（按品牌汇总）")
-                coupon_detail = coupon_filtered.groupby("brand").agg(
+                st.markdown(f"#### 首单礼金商品销售明细（按货号汇总）")
+                coupon_detail = coupon_filtered.groupby("style_code").agg(
                     发货金额=("ship_amount", "sum"),
                     退货金额=("return_amount", "sum"),
                     净销售金额=("net_amount", "sum")
                 ).reset_index()
+                coupon_detail.rename(columns={"style_code": "货号"}, inplace=True)
                 coupon_detail["退款率"] = coupon_detail.apply(
                     lambda r: f"{(r['退货金额']/r['发货金额']*100):.2f}%" if r['发货金额'] != 0 else "-", axis=1
                 )
                 st.dataframe(
                     coupon_detail,
                     column_config={
-                        "brand": "品牌",
+                        "货号": st.column_config.TextColumn("货号"),
                         "发货金额": st.column_config.NumberColumn("发货金额(¥)", format="%.2f"),
                         "退货金额": st.column_config.NumberColumn("退货金额(¥)", format="%.2f"),
                         "净销售金额": st.column_config.NumberColumn("净销售金额(¥)", format="%.2f"),
