@@ -17,7 +17,7 @@ from supabase import create_client
 import plotly.express as px
 import plotly.graph_objects as go
 
-st.set_page_config(page_title="代码测试页", layout="wide", page_icon="📊")
+st.set_page_config(page_title="测试", layout="wide", page_icon="📊")
 
 # ========== 自定义CSS - 调整标题比例和布局 ==========
 st.markdown("""
@@ -86,8 +86,7 @@ def get_all_users():
     users = {
         "admin": {"password": "1234567890", "role": "admin", "default_suffix": ""},
         "XDZ01": {"password": "94949468", "role": "user", "default_suffix": ""},
-        # ZBZ01 原为直播数据，改为非直播数据
-        "ZBZ01": {"password": "123456", "role": "user", "default_suffix": ""}
+        "ZBZ01": {"password": "123456", "role": "user", "default_suffix": "_live"}
     }
     for username, info in st.session_state.sub_users.items():
         users[username] = info
@@ -118,7 +117,7 @@ if not st.session_state.authenticated:
     st.stop()
 
 # ========== 主页面 - 使用自定义标题替代默认的st.title ==========
-st.markdown('<div class="custom-main-title">📊 商品销售分析罗盘测试页</div>', unsafe_allow_html=True)
+st.markdown('<div class="custom-main-title">📊 测试页商品销售分析罗盘</div>', unsafe_allow_html=True)
 st.markdown(f'<div class="welcome-text">欢迎，**{st.session_state.username}** ({"管理员" if st.session_state.role == "admin" else ("子账号" if st.session_state.role == "viewer" else "成员")})</div>', unsafe_allow_html=True)
 st.markdown("---")
 
@@ -436,8 +435,8 @@ def load_product_sales(suffix=None):
             for col in ["ship_amount", "return_amount", "net_amount"]:
                 if col in df.columns:
                     df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
-            # 补充主播列（用于全部数据模式）
-            if suffix == "_all" and "anchor" not in df.columns:
+            # 补充主播列（用于直播/全部数据）
+            if suffix in ["_live", "_all"] and "anchor" not in df.columns:
                 df["anchor"] = df["remark"].apply(extract_anchor)
             return df
         else:
@@ -550,9 +549,8 @@ def manage_sub_accounts():
     with st.expander("创建新子账号"):
         new_username = st.text_input("用户名", key="new_username")
         new_password = st.text_input("密码", type="password", key="new_password")
-        # 只保留非直播和全部两种数据源
-        default_suffix = st.selectbox("默认数据源", ["非直播数据", "全部数据"], key="new_default_suffix")
-        suffix_map = {"非直播数据": "", "全部数据": "_all"}
+        default_suffix = st.selectbox("默认数据源", ["非直播数据", "直播数据", "全部数据"], key="new_default_suffix")
+        suffix_map = {"非直播数据": "", "直播数据": "_live", "全部数据": "_all"}
         if st.button("创建子账号"):
             if new_username and new_password:
                 if new_username in st.session_state.sub_users:
@@ -573,7 +571,7 @@ def manage_sub_accounts():
             col1, col2, col3, col4 = st.columns([2, 1, 1, 1])
             col1.write(username)
             col2.write("●" * len(info["password"]))
-            suffix_display = {"": "非直播", "_all": "全部"}.get(info["default_suffix"], "未知")
+            suffix_display = {"": "非直播", "_live": "直播", "_all": "全部"}.get(info["default_suffix"], "未知")
             col3.write(suffix_display)
             with col4:
                 if st.button("删除", key=f"del_{username}"):
@@ -681,10 +679,10 @@ with st.sidebar:
     st.header("📂 数据加载")
     if st.session_state.role == "admin":
         st.subheader("🔄 数据源切换")
-        suffix_names = {"": "非直播数据", "_all": "全部数据"}
+        suffix_names = {"": "非直播数据", "_live": "直播数据", "_all": "全部数据"}
         current_source_name = suffix_names.get(st.session_state.table_suffix, "未知")
         st.info(f"📌 当前正在查看：**{current_source_name}**")
-        source_options = {"非直播数据": "", "全部数据": "_all"}
+        source_options = {"非直播数据": "", "直播数据": "_live", "全部数据": "_all"}
         default_index = list(source_options.keys()).index(current_source_name) if current_source_name in source_options else 0
         selected_source = st.selectbox("选择要切换到的数据源", options=list(source_options.keys()), index=default_index, key="source_selectbox_final")
         if st.button("✅ 确认切换", key="confirm_switch_final"):
@@ -733,7 +731,15 @@ with st.sidebar:
             target_file = st.file_uploader("选择目标文件 (Excel)", type=["xlsx", "xls"], key="target_upload_normal_final")
             if st.button("📤 确认上传目标", key="confirm_target_normal_final"):
                 handle_upload(target_file, "", "target")
-        else:  # _all
+        elif current_display_suffix == "_live":
+            st.subheader("🎥 直播数据上传")
+            uploaded_order = st.file_uploader("选择订单文件 (Excel)", type=["xlsx", "xls"], key="order_uploader_live_final")
+            if st.button("📤 确认上传", key="confirm_upload_live_final"):
+                handle_upload(uploaded_order, "_live", "order")
+            target_file = st.file_uploader("选择目标文件 (Excel)", type=["xlsx", "xls"], key="target_upload_live_final")
+            if st.button("📤 确认上传目标", key="confirm_target_live_final"):
+                handle_upload(target_file, "_live", "target")
+        else:
             st.subheader("📊 全部数据上传")
             uploaded_order = st.file_uploader("选择订单文件 (Excel)", type=["xlsx", "xls"], key="order_uploader_all_final")
             if st.button("📤 确认上传", key="confirm_upload_all_final"):
@@ -812,7 +818,7 @@ if st.session_state.role == "admin":
 
 # ========== 最新日明细 ==========
 with tabs[tab_index_latest]:
-    source_names = {"": "非直播数据", "_all": "全部数据"}
+    source_names = {"": "非直播数据", "_live": "直播数据", "_all": "全部数据"}
     current_source = source_names.get(st.session_state.table_suffix, "未知")
     st.info(f"📌 当前查看的数据源：**{current_source}**")
     if st.session_state.table_suffix == "_all":
@@ -1094,8 +1100,7 @@ with tabs[tab_index_product]:
         else:
             prod_df["style_code"] = prod_df["product_code"].str[:8].str.strip().str.upper()
         
-        # 仅当数据源为全部数据时才提取主播
-        if st.session_state.table_suffix == "_all":
+        if st.session_state.table_suffix in ["_live", "_all"]:
             if "anchor" not in prod_df.columns:
                 prod_df["anchor"] = prod_df["remark"].astype(str).apply(extract_anchor)
         
@@ -1134,7 +1139,7 @@ with tabs[tab_index_product]:
         selected_coupon_filter = st.selectbox("是否首单礼金款式", coupon_filter_options, key="coupon_filter_final")
         
         selected_anchors = []
-        if st.session_state.table_suffix == "_all":
+        if st.session_state.table_suffix in ["_live", "_all"]:
             if "anchor" not in prod_df.columns:
                 prod_df["anchor"] = prod_df["remark"].astype(str).apply(extract_anchor)
             all_anchors = prod_df["anchor"].dropna().unique().tolist()
@@ -1287,7 +1292,7 @@ with tabs[tab_index_product]:
                         st.session_state.product_page_num += 1
                         st.rerun()
             with col_export:
-                is_live_or_all = st.session_state.table_suffix in ["_all"]
+                is_live_or_all = st.session_state.table_suffix in ["_live", "_all"]
                 if is_live_or_all:
                     detail_type_name = "明细（货号+主播）"
                 else:
@@ -1405,7 +1410,7 @@ with tabs[tab_index_product]:
                         def extract_anchor_fn(remark):
                             match = re.search(r'主播[：:]([^_]+)', remark)
                             return match.group(1).strip() if match else None
-                        if suffix == "_all":
+                        if suffix in ["_live", "_all"]:
                             detail_df["anchor"] = detail_df["remark"].apply(extract_anchor_fn)
                             detail_df = detail_df[detail_df["anchor"].notna()]
                             if not detail_df.empty:
@@ -1529,7 +1534,7 @@ with tabs[tab_index_product]:
 
 # ========== 销售对比（主播/店铺维度） ==========
 with tabs[tab_index_anchor_compare]:
-    use_anchor = st.session_state.table_suffix == "_all"
+    use_anchor = st.session_state.table_suffix in ["_live", "_all"]
     dimension_name = "主播" if use_anchor else "店铺"
     dimension_col = "anchor" if use_anchor else "shop_name"
     
@@ -1858,7 +1863,7 @@ with tabs[tab_index_distribution]:
             prod_df["style_code"] = prod_df["style_code"].astype(str).str.strip().str.upper()
         else:
             prod_df["style_code"] = prod_df["product_code"].str[:8].str.strip().str.upper()
-        if st.session_state.table_suffix == "_all":
+        if st.session_state.table_suffix in ["_live", "_all"]:
             if "anchor" not in prod_df.columns:
                 prod_df["anchor"] = prod_df["remark"].astype(str).apply(extract_anchor)
         
@@ -1891,7 +1896,7 @@ with tabs[tab_index_distribution]:
             selected_brand = st.selectbox("品牌", brands_all, key="dist_brand_v2")
         with col_anchor:
             selected_anchors = []
-            if st.session_state.table_suffix == "_all":
+            if st.session_state.table_suffix in ["_live", "_all"]:
                 if "anchor" not in prod_df.columns:
                     prod_df["anchor"] = prod_df["remark"].astype(str).apply(extract_anchor)
                 all_anchors = prod_df["anchor"].dropna().unique().tolist()
