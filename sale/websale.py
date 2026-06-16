@@ -17,7 +17,7 @@ from supabase import create_client
 import plotly.express as px
 import plotly.graph_objects as go
 
-st.set_page_config(page_title="业绩统计工具", layout="wide", page_icon="📊")
+st.set_page_config(page_title="代码测试页", layout="wide", page_icon="📊")
 
 # ========== 自定义CSS - 调整标题比例和布局 ==========
 st.markdown("""
