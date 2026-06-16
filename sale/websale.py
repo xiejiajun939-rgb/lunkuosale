@@ -1309,98 +1309,99 @@ with tabs[tab_index_product]:
                     if st.session_state.product_page_num < total_pages:
                         st.session_state.product_page_num += 1
                         st.rerun()
-            with col_export:
-    # 根据数据源决定明细类型名称
-    is_live_or_all = st.session_state.table_suffix in ["_live", "_all"]
-    if is_live_or_all:
-        detail_type_name = "明细（货号+主播）"
-    else:
-        detail_type_name = "明细（货号+店铺）"
-    
-    export_type = st.radio(
-        "导出类型",
-        ["汇总（货号级别）", detail_type_name],
-        horizontal=True,
-        key="export_type_radio"
-    )
-    
-    if st.button("📥 下载数据", key="export_filtered_data"):
-        if export_type == "汇总（货号级别）":
-            # 汇总导出（货号级别）
-            export_df = grouped.copy()
-            if "image_url" in export_df.columns:
-                export_df = export_df.drop(columns=["image_url"])
-            cols_order = ["货号", "master_category", "发货金额", "退货金额", "净销售金额", "退款率", "has_newbie_coupon"]
-            export_cols = [c for c in cols_order if c in export_df.columns]
-            export_df = export_df[export_cols]
-            export_df.rename(columns={
-                "master_category": "商品分类",
-                "has_newbie_coupon": "是否新人礼金"
-            }, inplace=True)
-            export_df["是否新人礼金"] = export_df["是否新人礼金"].map({True: "是", False: "否"})
-            sheet_name = "货号汇总"
-            file_suffix = "货号汇总"
-        else:
-            # 明细导出：根据数据源决定按主播还是店铺
-            if is_live_or_all:
-                group_col = "anchor"
-                group_name = "主播"
-            else:
-                group_col = "shop_name"
-                group_name = "店铺"
-            
-            # 确保分组列存在
-            if group_col not in filtered.columns:
-                st.error(f"数据中缺少 {group_name} 信息，无法导出明细。")
-                st.stop()
-            
-            detail_agg = filtered.groupby(["style_code", group_col]).agg(
-                明细发货金额=("ship_amount", "sum"),
-                明细退货金额=("return_amount", "sum"),
-                明细净销售金额=("net_amount", "sum")
-            ).reset_index()
-            
-            detail_agg["明细退款率"] = np.where(
-                detail_agg["明细发货金额"] != 0,
-                (detail_agg["明细退货金额"] / detail_agg["明细发货金额"] * 100).map("{:.2f}%".format),
-                "-"
-            )
-            
-            master_cols = grouped[["货号", "master_category", "发货金额", "退货金额", "净销售金额", "退款率", "has_newbie_coupon"]].copy()
-            export_df = pd.merge(
-                detail_agg,
-                master_cols,
-                left_on="style_code",
-                right_on="货号",
-                how="left"
-            )
-            export_df.drop(columns=["style_code"], inplace=True)
-            export_df.rename(columns={
-                group_col: group_name,
-                "master_category": "商品分类",
-                "has_newbie_coupon": "是否新人礼金"
-            }, inplace=True)
-            export_df["是否新人礼金"] = export_df["是否新人礼金"].map({True: "是", False: "否"})
-            
-            final_cols = [
-                "货号", "商品分类", "发货金额", "退货金额", "净销售金额", "退款率", "是否新人礼金",
-                group_name, "明细发货金额", "明细退货金额", "明细净销售金额", "明细退款率"
-            ]
-            export_df = export_df[final_cols]
-            sheet_name = f"货号{group_name}明细"
-            file_suffix = f"货号{group_name}明细"
-        
-        output = io.BytesIO()
-        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            export_df.to_excel(writer, index=False, sheet_name=sheet_name)
-        st.success("导出成功！点击下方按钮下载")
-        st.download_button(
-            label="💾 点击下载 Excel",
-            data=output.getvalue(),
-            file_name=f"{file_suffix}_{start_date.strftime('%Y%m%d')}_{end_date.strftime('%Y%m%d')}.xlsx",
-            key="download_export",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
+                        with col_export:
+                # 根据数据源决定明细类型名称
+                is_live_or_all = st.session_state.table_suffix in ["_live", "_all"]
+                if is_live_or_all:
+                    detail_type_name = "明细（货号+主播）"
+                else:
+                    detail_type_name = "明细（货号+店铺）"
+                
+                export_type = st.radio(
+                    "导出类型",
+                    ["汇总（货号级别）", detail_type_name],
+                    horizontal=True,
+                    key="export_type_radio"
+                )
+                
+                if st.button("📥 下载数据", key="export_filtered_data"):
+                    if export_type == "汇总（货号级别）":
+                        # 汇总导出（货号级别）
+                        export_df = grouped.copy()
+                        if "image_url" in export_df.columns:
+                            export_df = export_df.drop(columns=["image_url"])
+                        cols_order = ["货号", "master_category", "发货金额", "退货金额", "净销售金额", "退款率", "has_newbie_coupon"]
+                        export_cols = [c for c in cols_order if c in export_df.columns]
+                        export_df = export_df[export_cols]
+                        export_df.rename(columns={
+                            "master_category": "商品分类",
+                            "has_newbie_coupon": "是否新人礼金"
+                        }, inplace=True)
+                        export_df["是否新人礼金"] = export_df["是否新人礼金"].map({True: "是", False: "否"})
+                        sheet_name = "货号汇总"
+                        file_suffix = "货号汇总"
+                    else:
+                        # 明细导出：根据数据源决定按主播还是店铺
+                        if is_live_or_all:
+                            group_col = "anchor"
+                            group_name = "主播"
+                        else:
+                            group_col = "shop_name"
+                            group_name = "店铺"
+                        
+                        # 确保分组列存在
+                        if group_col not in filtered.columns:
+                            st.error(f"数据中缺少 {group_name} 信息，无法导出明细。")
+                            st.stop()
+                        
+                        detail_agg = filtered.groupby(["style_code", group_col]).agg(
+                            明细发货金额=("ship_amount", "sum"),
+                            明细退货金额=("return_amount", "sum"),
+                            明细净销售金额=("net_amount", "sum")
+                        ).reset_index()
+                        
+                        detail_agg["明细退款率"] = np.where(
+                            detail_agg["明细发货金额"] != 0,
+                            (detail_agg["明细退货金额"] / detail_agg["明细发货金额"] * 100).map("{:.2f}%".format),
+                            "-"
+                        )
+                        
+                        master_cols = grouped[["货号", "master_category", "发货金额", "退货金额", "净销售金额", "退款率", "has_newbie_coupon"]].copy()
+                        export_df = pd.merge(
+                            detail_agg,
+                            master_cols,
+                            left_on="style_code",
+                            right_on="货号",
+                            how="left"
+                        )
+                        export_df.drop(columns=["style_code"], inplace=True)
+                        export_df.rename(columns={
+                            group_col: group_name,
+                            "master_category": "商品分类",
+                            "has_newbie_coupon": "是否新人礼金"
+                        }, inplace=True)
+                        export_df["是否新人礼金"] = export_df["是否新人礼金"].map({True: "是", False: "否"})
+                        
+                        final_cols = [
+                            "货号", "商品分类", "发货金额", "退货金额", "净销售金额", "退款率", "是否新人礼金",
+                            group_name, "明细发货金额", "明细退货金额", "明细净销售金额", "明细退款率"
+                        ]
+                        export_df = export_df[final_cols]
+                        sheet_name = f"货号{group_name}明细"
+                        file_suffix = f"货号{group_name}明细"
+                    
+                    # 导出 Excel
+                    output = io.BytesIO()
+                    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                        export_df.to_excel(writer, index=False, sheet_name=sheet_name)
+                    st.success("导出成功！点击下方按钮下载")
+                    st.download_button(
+                        label="💾 点击下载 Excel",
+                        data=output.getvalue(),
+                        file_name=f"{file_suffix}_{start_date.strftime('%Y%m%d')}_{end_date.strftime('%Y%m%d')}.xlsx",
+                        key="download_export",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
             
             # 分页显示表格（与之前相同，省略以节省篇幅，实际保留原表格显示代码）
             start_idx = (st.session_state.product_page_num - 1) * page_size
