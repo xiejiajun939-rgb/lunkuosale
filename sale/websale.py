@@ -1310,31 +1310,67 @@ with tabs[tab_index_product]:
                         st.session_state.product_page_num += 1
                         st.rerun()
             with col_export:
-                # 导出当前筛选条件下所有货号汇总数据（未分页的完整 grouped）
-                if st.button("📥 下载当前筛选明细", key="export_filtered_data"):
-                    export_df = grouped.copy()
-                    # 移除图片列（Excel中无法显示图片）
-                    if "image_url" in export_df.columns:
-                        export_df = export_df.drop(columns=["image_url"])
-                    # 调整列顺序和名称
-                    cols_order = ["货号", "master_category", "发货金额", "退货金额", "净销售金额", "退款率", "has_newbie_coupon"]
-                    export_cols = [c for c in cols_order if c in export_df.columns]
-                    export_df = export_df[export_cols]
-                    export_df.rename(columns={
-                        "master_category": "商品分类",
-                        "has_newbie_coupon": "是否新人礼金"
-                    }, inplace=True)
-                    # 布尔值转中文
-                    export_df["是否新人礼金"] = export_df["是否新人礼金"].map({True: "是", False: "否"})
+                # 导出类型选择
+                export_type = st.radio(
+                    "导出类型",
+                    ["汇总（货号级别）", "明细（订单级别）"],
+                    horizontal=True,
+                    key="export_type_radio"
+                )
+                if st.button("📥 下载数据", key="export_filtered_data"):
+                    if export_type == "汇总（货号级别）":
+                        export_df = grouped.copy()
+                        # 移除图片列
+                        if "image_url" in export_df.columns:
+                            export_df = export_df.drop(columns=["image_url"])
+                        cols_order = ["货号", "master_category", "发货金额", "退货金额", "净销售金额", "退款率", "has_newbie_coupon"]
+                        export_cols = [c for c in cols_order if c in export_df.columns]
+                        export_df = export_df[export_cols]
+                        export_df.rename(columns={
+                            "master_category": "商品分类",
+                            "has_newbie_coupon": "是否新人礼金"
+                        }, inplace=True)
+                        export_df["是否新人礼金"] = export_df["是否新人礼金"].map({True: "是", False: "否"})
+                        sheet_name = "货号汇总"
+                        file_suffix = "货号汇总"
+                    else:  # 明细（订单级别）
+                        detail_df = filtered.copy()
+                        # 添加主播列（如果尚不存在）
+                        if st.session_state.table_suffix in ["_live", "_all"]:
+                            if "anchor" not in detail_df.columns:
+                                detail_df["anchor"] = detail_df["remark"].astype(str).apply(extract_anchor)
+                        # 选择导出列
+                        export_columns = [
+                            "sale_date", "shop_name", "anchor" if "anchor" in detail_df.columns else None,
+                            "style_code", "product_code", "remark", "ship_amount", "return_amount", "net_amount",
+                            "brand", "year", "season", "master_category"
+                        ]
+                        export_columns = [col for col in export_columns if col is not None and col in detail_df.columns]
+                        export_df = detail_df[export_columns].copy()
+                        # 重命名列名为中文
+                        rename_map = {
+                            "sale_date": "日期", "shop_name": "店铺", "anchor": "主播",
+                            "style_code": "货号", "product_code": "商品编码", "remark": "备注",
+                            "ship_amount": "发货金额", "return_amount": "退货金额", "net_amount": "净销售金额",
+                            "brand": "品牌", "year": "年份", "season": "季节", "master_category": "商品分类"
+                        }
+                        export_df.rename(columns=rename_map, inplace=True)
+                        # 调整列顺序
+                        col_order = ["日期", "店铺", "主播", "货号", "商品编码", "商品分类", "品牌", "年份", "季节",
+                                     "发货金额", "退货金额", "净销售金额", "备注"]
+                        export_df = export_df[[c for c in col_order if c in export_df.columns]]
+                        sheet_name = "订单明细"
+                        file_suffix = "订单明细"
+                    
                     # 导出 Excel
                     output = io.BytesIO()
                     with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                        export_df.to_excel(writer, index=False, sheet_name="货号汇总")
+                        export_df.to_excel(writer, index=False, sheet_name=sheet_name)
                     st.success("导出成功！点击下方按钮下载")
                     st.download_button(
                         label="💾 点击下载 Excel",
                         data=output.getvalue(),
-                        file_name=f"货号汇总_{start_date.strftime('%Y%m%d')}_{end_date.strftime('%Y%m%d')}.xlsx",
+                        file_name=f"{file_suffix}_{start_date.strftime('%Y%m%d')}_{end_date.strftime('%Y%m%d')}.xlsx",
                         key="download_export",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     )
