@@ -1310,84 +1310,97 @@ with tabs[tab_index_product]:
                         st.session_state.product_page_num += 1
                         st.rerun()
             with col_export:
-                # 导出类型选择
-                export_type = st.radio(
-                    "导出类型",
-                    ["汇总（货号级别）", "明细（货号+主播）"],
-                    horizontal=True,
-                    key="export_type_radio"
-                )
-                # 对于非直播/全部数据源，禁用主播明细选项
-                if export_type == "明细（货号+主播）" and st.session_state.table_suffix not in ["_live", "_all"]:
-                    st.warning("当前数据源无主播信息，无法导出主播明细，请切换至直播数据或全部数据。")
-                    export_type = "汇总（货号级别）"
-                
-                if st.button("📥 下载数据", key="export_filtered_data"):
-                    if export_type == "汇总（货号级别）":
-                        export_df = grouped.copy()
-                        if "image_url" in export_df.columns:
-                            export_df = export_df.drop(columns=["image_url"])
-                        cols_order = ["货号", "master_category", "发货金额", "退货金额", "净销售金额", "退款率", "has_newbie_coupon"]
-                        export_cols = [c for c in cols_order if c in export_df.columns]
-                        export_df = export_df[export_cols]
-                        export_df.rename(columns={
-                            "master_category": "商品分类",
-                            "has_newbie_coupon": "是否新人礼金"
-                        }, inplace=True)
-                        export_df["是否新人礼金"] = export_df["是否新人礼金"].map({True: "是", False: "否"})
-                        sheet_name = "货号汇总"
-                        file_suffix = "货号汇总"
-                    else:  # 明细（货号+主播）
-                        # 按货号+主播聚合
-                        anchor_detail = filtered.groupby(["style_code", "anchor"]).agg(
-                            主播发货金额=("ship_amount", "sum"),
-                            主播退货金额=("return_amount", "sum"),
-                            主播净销售金额=("net_amount", "sum")
-                        ).reset_index()
-                        # 计算主播在该货号下的退款率
-                        anchor_detail["主播退款率"] = np.where(
-                            anchor_detail["主播发货金额"] != 0,
-                            (anchor_detail["主播退货金额"] / anchor_detail["主播发货金额"] * 100).map("{:.2f}%".format),
-                            "-"
-                        )
-                        # 关联货号级别的公共信息
-                        master_cols = grouped[["货号", "master_category", "发货金额", "退货金额", "净销售金额", "退款率", "has_newbie_coupon"]].copy()
-                        export_df = pd.merge(
-                            anchor_detail,
-                            master_cols,
-                            left_on="style_code",
-                            right_on="货号",
-                            how="left"
-                        )
-                        export_df.drop(columns=["style_code"], inplace=True)
-                        # 重命名和排序
-                        export_df.rename(columns={
-                            "anchor": "主播",
-                            "master_category": "商品分类",
-                            "has_newbie_coupon": "是否新人礼金"
-                        }, inplace=True)
-                        export_df["是否新人礼金"] = export_df["是否新人礼金"].map({True: "是", False: "否"})
-                        # 选择最终列
-                        final_cols = [
-                            "货号", "商品分类", "发货金额", "退货金额", "净销售金额", "退款率", "是否新人礼金",
-                            "主播", "主播发货金额", "主播退货金额", "主播净销售金额", "主播退款率"
-                        ]
-                        export_df = export_df[final_cols]
-                        sheet_name = "货号主播明细"
-                        file_suffix = "货号主播明细"
-                    
-                    # 导出 Excel
-                    output = io.BytesIO()
-                    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                        export_df.to_excel(writer, index=False, sheet_name=sheet_name)
-                    st.success("导出成功！点击下方按钮下载")
-                    st.download_button(
-                        label="💾 点击下载 Excel",
-                        data=output.getvalue(),
-                        file_name=f"{file_suffix}_{start_date.strftime('%Y%m%d')}_{end_date.strftime('%Y%m%d')}.xlsx",
-                        key="download_export",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                    )
+    # 根据数据源决定明细类型名称
+    is_live_or_all = st.session_state.table_suffix in ["_live", "_all"]
+    if is_live_or_all:
+        detail_type_name = "明细（货号+主播）"
+    else:
+        detail_type_name = "明细（货号+店铺）"
+    
+    export_type = st.radio(
+        "导出类型",
+        ["汇总（货号级别）", detail_type_name],
+        horizontal=True,
+        key="export_type_radio"
+    )
+    
+    if st.button("📥 下载数据", key="export_filtered_data"):
+        if export_type == "汇总（货号级别）":
+            # 汇总导出（货号级别）
+            export_df = grouped.copy()
+            if "image_url" in export_df.columns:
+                export_df = export_df.drop(columns=["image_url"])
+            cols_order = ["货号", "master_category", "发货金额", "退货金额", "净销售金额", "退款率", "has_newbie_coupon"]
+            export_cols = [c for c in cols_order if c in export_df.columns]
+            export_df = export_df[export_cols]
+            export_df.rename(columns={
+                "master_category": "商品分类",
+                "has_newbie_coupon": "是否新人礼金"
+            }, inplace=True)
+            export_df["是否新人礼金"] = export_df["是否新人礼金"].map({True: "是", False: "否"})
+            sheet_name = "货号汇总"
+            file_suffix = "货号汇总"
+        else:
+            # 明细导出：根据数据源决定按主播还是店铺
+            if is_live_or_all:
+                group_col = "anchor"
+                group_name = "主播"
+            else:
+                group_col = "shop_name"
+                group_name = "店铺"
+            
+            # 确保分组列存在
+            if group_col not in filtered.columns:
+                st.error(f"数据中缺少 {group_name} 信息，无法导出明细。")
+                st.stop()
+            
+            detail_agg = filtered.groupby(["style_code", group_col]).agg(
+                明细发货金额=("ship_amount", "sum"),
+                明细退货金额=("return_amount", "sum"),
+                明细净销售金额=("net_amount", "sum")
+            ).reset_index()
+            
+            detail_agg["明细退款率"] = np.where(
+                detail_agg["明细发货金额"] != 0,
+                (detail_agg["明细退货金额"] / detail_agg["明细发货金额"] * 100).map("{:.2f}%".format),
+                "-"
+            )
+            
+            master_cols = grouped[["货号", "master_category", "发货金额", "退货金额", "净销售金额", "退款率", "has_newbie_coupon"]].copy()
+            export_df = pd.merge(
+                detail_agg,
+                master_cols,
+                left_on="style_code",
+                right_on="货号",
+                how="left"
+            )
+            export_df.drop(columns=["style_code"], inplace=True)
+            export_df.rename(columns={
+                group_col: group_name,
+                "master_category": "商品分类",
+                "has_newbie_coupon": "是否新人礼金"
+            }, inplace=True)
+            export_df["是否新人礼金"] = export_df["是否新人礼金"].map({True: "是", False: "否"})
+            
+            final_cols = [
+                "货号", "商品分类", "发货金额", "退货金额", "净销售金额", "退款率", "是否新人礼金",
+                group_name, "明细发货金额", "明细退货金额", "明细净销售金额", "明细退款率"
+            ]
+            export_df = export_df[final_cols]
+            sheet_name = f"货号{group_name}明细"
+            file_suffix = f"货号{group_name}明细"
+        
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            export_df.to_excel(writer, index=False, sheet_name=sheet_name)
+        st.success("导出成功！点击下方按钮下载")
+        st.download_button(
+            label="💾 点击下载 Excel",
+            data=output.getvalue(),
+            file_name=f"{file_suffix}_{start_date.strftime('%Y%m%d')}_{end_date.strftime('%Y%m%d')}.xlsx",
+            key="download_export",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
             
             # 分页显示表格（与之前相同，省略以节省篇幅，实际保留原表格显示代码）
             start_idx = (st.session_state.product_page_num - 1) * page_size
@@ -1545,200 +1558,331 @@ with tabs[tab_index_product]:
                 st.rerun()
         show_trend()
 
-# ========== 主播销售对比 ==========
+# ========== 销售对比（根据数据源自动切换：主播或店铺） ==========
 with tabs[tab_index_anchor_compare]:
-    # 仅当数据源为直播或全部数据时可用
-    if st.session_state.table_suffix not in ["_live", "_all"]:
-        st.warning("主播销售对比功能仅支持“直播数据”或“全部数据”模式。请通过侧边栏切换数据源。")
+    # 判断当前维度
+    use_anchor = st.session_state.table_suffix in ["_live", "_all"]
+    dimension_name = "主播" if use_anchor else "店铺"
+    dimension_col = "anchor" if use_anchor else "shop_name"
+    
+    with st.spinner("正在加载数据..."):
+        prod_df = load_product_sales(st.session_state.table_suffix)
+    if prod_df.empty:
+        st.info("暂无商品销售数据，请先上传订单文件。")
     else:
-        with st.spinner("正在加载商品数据..."):
-            prod_df = load_product_sales(st.session_state.table_suffix)
-        if prod_df.empty:
-            st.info("暂无商品销售数据，请先上传订单文件。")
-        else:
-            # 确保主播列存在
-            if "anchor" not in prod_df.columns:
+        # 确保维度列存在
+        if dimension_col not in prod_df.columns:
+            if use_anchor:
                 prod_df["anchor"] = prod_df["remark"].astype(str).apply(extract_anchor)
-            # 过滤掉无主播的行
-            prod_df = prod_df[prod_df["anchor"].notna()].copy()
-            if prod_df.empty:
-                st.info("当前数据中未识别到任何主播信息，请检查备注字段是否包含“主播：xxx”格式。")
             else:
-                # 获取所有主播列表
-                all_anchors = sorted(prod_df["anchor"].unique())
-                col_select1, col_select2, col_select3 = st.columns(3)
-                with col_select1:
-                    selected_anchors = st.multiselect("选择对比的主播（最多3个）", options=all_anchors, default=all_anchors[:min(3, len(all_anchors))])
-                    # 限制最多3个主播
-                    if len(selected_anchors) > 3:
-                        st.warning("最多只能选择3个主播，已自动截取前3个。")
-                        selected_anchors = selected_anchors[:3]
-                        st.rerun()
-                with col_select2:
-                    metric_options = ["净销售金额", "发货金额", "退货金额"]
-                    selected_metrics = st.multiselect("选择要对比的指标", options=metric_options, default=["净销售金额"])
-                with col_select3:
-                    chart_type = st.radio("图表类型", ["折线图", "柱状图"], horizontal=True, key="compare_chart_type")
-                
-                # 日期范围
-                min_date = prod_df["sale_date"].min().date()
-                max_date = prod_df["sale_date"].max().date()
-                col_date1, col_date2 = st.columns(2)
-                with col_date1:
-                    start_date = st.date_input("开始日期", value=min_date, key="compare_start", min_value=min_date, max_value=max_date)
-                with col_date2:
-                    end_date = st.date_input("结束日期", value=max_date, key="compare_end", min_value=min_date, max_value=max_date)
-                
-                if not selected_anchors:
-                    st.info("请至少选择一个主播")
+                if "shop_name" not in prod_df.columns:
+                    st.error("数据中缺少店铺名称信息，无法进行店铺对比。")
+                    st.stop()
+        # 过滤空值
+        prod_df = prod_df[prod_df[dimension_col].notna()].copy()
+        if prod_df.empty:
+            st.info(f"当前数据中未识别到任何{dimension_name}信息，请检查数据。")
+        else:
+            all_dimensions = sorted(prod_df[dimension_col].unique())
+            col_select1, col_select2, col_select3 = st.columns(3)
+            with col_select1:
+                selected_dimensions = st.multiselect(f"选择对比的{dimension_name}（最多3个）", options=all_dimensions, default=all_dimensions[:min(3, len(all_dimensions))])
+                if len(selected_dimensions) > 3:
+                    st.warning("最多只能选择3个，已自动截取前3个。")
+                    selected_dimensions = selected_dimensions[:3]
+                    st.rerun()
+            with col_select2:
+                metric_options = ["净销售金额", "发货金额", "退货金额"]
+                selected_metrics = st.multiselect("选择要对比的指标", options=metric_options, default=["净销售金额"])
+            with col_select3:
+                chart_type = st.radio("图表类型", ["折线图", "柱状图"], horizontal=True, key="compare_chart_type")
+            
+            min_date = prod_df["sale_date"].min().date()
+            max_date = prod_df["sale_date"].max().date()
+            col_date1, col_date2 = st.columns(2)
+            with col_date1:
+                start_date = st.date_input("开始日期", value=min_date, key="compare_start", min_value=min_date, max_value=max_date)
+            with col_date2:
+                end_date = st.date_input("结束日期", value=max_date, key="compare_end", min_value=min_date, max_value=max_date)
+            
+            if not selected_dimensions:
+                st.info(f"请至少选择一个{dimension_name}")
+            else:
+                mask_date = (prod_df["sale_date"] >= pd.to_datetime(start_date)) & (prod_df["sale_date"] <= pd.to_datetime(end_date))
+                filtered = prod_df[mask_date].copy()
+                if filtered.empty:
+                    st.warning("所选日期范围内无销售数据")
                 else:
-                    # 按日期和主播聚合
-                    mask_date = (prod_df["sale_date"] >= pd.to_datetime(start_date)) & (prod_df["sale_date"] <= pd.to_datetime(end_date))
-                    filtered = prod_df[mask_date]
-                    if filtered.empty:
-                        st.warning("所选日期范围内无销售数据")
+                    # 按日期和维度聚合
+                    daily_agg = filtered.groupby(["sale_date", dimension_col]).agg(
+                        净销售金额=("net_amount", "sum"),
+                        发货金额=("ship_amount", "sum"),
+                        退货金额=("return_amount", "sum")
+                    ).reset_index()
+                    daily_agg = daily_agg[daily_agg[dimension_col].isin(selected_dimensions)]
+                    if daily_agg.empty:
+                        st.warning(f"所选{dimension_name}在日期范围内无销售数据")
                     else:
-                        # 趋势图数据准备
-                        daily_agg = filtered.groupby(["sale_date", "anchor"]).agg(
-                            净销售金额=("net_amount", "sum"),
-                            发货金额=("ship_amount", "sum"),
-                            退货金额=("return_amount", "sum")
-                        ).reset_index()
-                        daily_agg = daily_agg[daily_agg["anchor"].isin(selected_anchors)]
-                        if daily_agg.empty:
-                            st.warning("所选主播在日期范围内无销售数据")
-                        else:
-                            # 为每个选中的指标生成趋势图
-                            for metric in selected_metrics:
-                                st.markdown(f"#### {metric} 趋势对比")
-                                pivot_df = daily_agg.pivot(index="sale_date", columns="anchor", values=metric)
-                                if chart_type == "折线图":
-                                    fig = go.Figure()
-                                    for anchor in pivot_df.columns:
-                                        fig.add_trace(go.Scatter(
-                                            x=pivot_df.index,
-                                            y=pivot_df[anchor],
-                                            mode="lines+markers",
-                                            name=anchor,
-                                            hovertemplate=f"{anchor}<br>日期: %{{x|%Y-%m-%d}}<br>{metric}: %{{y:,.2f}}<extra></extra>"
-                                        ))
-                                    fig.update_layout(
-                                        title=f"{metric} 按日对比（折线图）",
-                                        xaxis_title="日期",
-                                        yaxis_title=f"{metric} (¥)",
-                                        legend_title="主播",
-                                        hovermode="x unified"
-                                    )
-                                else:
-                                    fig = go.Figure()
-                                    for anchor in pivot_df.columns:
-                                        fig.add_trace(go.Bar(
-                                            x=pivot_df.index,
-                                            y=pivot_df[anchor],
-                                            name=anchor,
-                                            hovertemplate=f"{anchor}<br>日期: %{{x|%Y-%m-%d}}<br>{metric}: %{{y:,.2f}}<extra></extra>"
-                                        ))
-                                    fig.update_layout(
-                                        title=f"{metric} 按日对比（柱状图）",
-                                        xaxis_title="日期",
-                                        yaxis_title=f"{metric} (¥)",
-                                        legend_title="主播",
-                                        barmode='group',
-                                        hovermode="x unified"
-                                    )
-                                st.plotly_chart(fig, use_container_width=True, key=f"compare_{metric}_{chart_type}")
-                            
-                            # ========== 品类分析 ==========
-                            st.markdown("#### 主播品类销售分析")
-                            col_cat1, col_cat2 = st.columns([1, 2])
-                            with col_cat1:
-                                cat_chart_type = st.radio("品类图表类型", ["柱状图（对比品类）", "饼图（各主播品类分布）"], horizontal=False, key="cat_chart_type")
-                            with col_cat2:
-                                cat_metric = st.selectbox("品类金额指标", ["净销售金额", "发货金额", "退货金额"], key="cat_metric")
-                            # 映射金额列
-                            cat_metric_col = {"净销售金额": "net_amount", "发货金额": "ship_amount", "退货金额": "return_amount"}[cat_metric]
-                            cat_metric_name = cat_metric
-                            
-                            # 获取品类信息
-                            if "master_category" not in filtered.columns:
-                                master_df = load_product_master()
-                                if not master_df.empty and "style_code" in master_df.columns:
-                                    master_df["style_code"] = master_df["style_code"].astype(str).str.strip().str.upper()
-                                    cat_map = master_df.set_index("style_code")["category"].to_dict()
-                                    filtered["master_category"] = filtered["style_code"].map(cat_map).fillna("未分类")
-                                else:
-                                    filtered["master_category"] = "未分类"
+                        # 趋势图
+                        for metric in selected_metrics:
+                            st.markdown(f"#### {metric} 趋势对比")
+                            pivot_df = daily_agg.pivot(index="sale_date", columns=dimension_col, values=metric)
+                            if chart_type == "折线图":
+                                fig = go.Figure()
+                                for dim in pivot_df.columns:
+                                    fig.add_trace(go.Scatter(
+                                        x=pivot_df.index,
+                                        y=pivot_df[dim],
+                                        mode="lines+markers",
+                                        name=dim,
+                                        hovertemplate=f"{dim}<br>日期: %{{x|%Y-%m-%d}}<br>{metric}: %{{y:,.2f}}<extra></extra>"
+                                    ))
+                                fig.update_layout(
+                                    title=f"{metric} 按日对比（折线图）",
+                                    xaxis_title="日期",
+                                    yaxis_title=f"{metric} (¥)",
+                                    legend_title=dimension_name,
+                                    hovermode="x unified"
+                                )
                             else:
-                                filtered["master_category"] = filtered["master_category"].fillna("未分类")
-                            
-                            if cat_chart_type == "柱状图（对比品类）":
-                                # 每个主播取Top5品类
-                                cat_agg = filtered.groupby(["anchor", "master_category"])[cat_metric_col].sum().reset_index()
-                                cat_agg.rename(columns={cat_metric_col: "金额"}, inplace=True)
-                                top_categories_per_anchor = {}
-                                for anchor in selected_anchors:
-                                    anchor_data = cat_agg[cat_agg["anchor"] == anchor].copy()
-                                    if not anchor_data.empty:
-                                        anchor_data = anchor_data.sort_values("金额", ascending=False)
-                                        top5 = anchor_data.head(5)
-                                        top_categories_per_anchor[anchor] = top5
-                                all_top_cats = set()
-                                for anchor, df_top in top_categories_per_anchor.items():
-                                    all_top_cats.update(df_top["master_category"].tolist())
-                                all_top_cats = sorted(list(all_top_cats))
-                                
-                                if all_top_cats:
-                                    compare_df = pd.DataFrame(index=all_top_cats)
-                                    for anchor in selected_anchors:
-                                        anchor_sales = {}
-                                        if anchor in top_categories_per_anchor:
-                                            for _, row in top_categories_per_anchor[anchor].iterrows():
-                                                anchor_sales[row["master_category"]] = row["金额"]
-                                        compare_df[anchor] = [anchor_sales.get(cat, 0) for cat in all_top_cats]
-                                    fig_cat = px.bar(
-                                        compare_df,
-                                        x=compare_df.index,
-                                        y=selected_anchors,
-                                        barmode='group',
-                                        title=f"主播Top5品类{cat_metric_name}对比",
-                                        labels={"value": f"{cat_metric_name}(¥)", "index": "商品品类"},
-                                        color_discrete_sequence=px.colors.qualitative.Set2
-                                    )
-                                    fig_cat.update_layout(xaxis_title="商品品类", yaxis_title=f"{cat_metric_name}(¥)", legend_title="主播")
-                                    st.plotly_chart(fig_cat, use_container_width=True)
-                                else:
-                                    st.info("无法获取品类数据，无法生成对比图。")
-                            else:  # 饼图：每个主播单独展示Top5品类占比，水平排布
-                                cat_agg = filtered.groupby(["anchor", "master_category"])[cat_metric_col].sum().reset_index()
-                                cat_agg.rename(columns={cat_metric_col: "金额"}, inplace=True)
-                                anchor_pie_data = {}
-                                for anchor in selected_anchors:
-                                    anchor_data = cat_agg[cat_agg["anchor"] == anchor].copy()
-                                    if anchor_data.empty:
-                                        continue
-                                    anchor_data = anchor_data.sort_values("金额", ascending=False)
-                                    top5 = anchor_data.head(5)
-                                    other_sum = anchor_data.iloc[5:]["金额"].sum() if len(anchor_data) > 5 else 0
-                                    if other_sum > 0:
-                                        other_row = pd.DataFrame({"master_category": ["其他"], "金额": [other_sum]})
-                                        top5 = pd.concat([top5, other_row], ignore_index=True)
-                                    anchor_pie_data[anchor] = top5
-                                if anchor_pie_data:
-                                    cols = st.columns(len(anchor_pie_data))
-                                    for idx, (anchor, data) in enumerate(anchor_pie_data.items()):
-                                        with cols[idx]:
-                                            fig_pie = px.pie(
-                                                data,
-                                                names="master_category",
-                                                values="金额",
-                                                title=f"{anchor} - 品类分布 ({cat_metric_name})",
-                                                hole=0.3,
+                                fig = go.Figure()
+                                for dim in pivot_df.columns:
+                                    fig.add_trace(go.Bar(
+                                        x=pivot_df.index,
+                                        y=pivot_df[dim],
+                                        name=dim,
+                                        hovertemplate=f"{dim}<br>日期: %{{x|%Y-%m-%d}}<br>{metric}: %{{y:,.2f}}<extra></extra>"
+                                    ))
+                                fig.update_layout(
+                                    title=f"{metric} 按日对比（柱状图）",
+                                    xaxis_title="日期",
+                                    yaxis_title=f"{metric} (¥)",
+                                    legend_title=dimension_name,
+                                    barmode='group',
+                                    hovermode="x unified"
+                                )
+                            st.plotly_chart(fig, use_container_width=True, key=f"compare_{metric}_{chart_type}")
+                        
+                        # 品类分析（柱状图/饼图）
+                        st.markdown(f"#### {dimension_name}品类销售分析")
+                        col_cat1, col_cat2 = st.columns([1, 2])
+                        with col_cat1:
+                            cat_chart_type = st.radio("品类图表类型", ["柱状图（对比品类）", "饼图（各维度品类分布）"], horizontal=False, key="cat_chart_type")
+                        with col_cat2:
+                            cat_metric = st.selectbox("品类金额指标", ["净销售金额", "发货金额", "退货金额"], key="cat_metric")
+                        cat_metric_col = {"净销售金额": "net_amount", "发货金额": "ship_amount", "退货金额": "return_amount"}[cat_metric]
+                        cat_metric_name = cat_metric
+                        
+                        # 获取品类信息
+                        if "master_category" not in filtered.columns:
+                            master_df = load_product_master()
+                            if not master_df.empty and "style_code" in master_df.columns:
+                                master_df["style_code"] = master_df["style_code"].astype(str).str.strip().str.upper()
+                                cat_map = master_df.set_index("style_code")["category"].to_dict()
+                                filtered["master_category"] = filtered["style_code"].map(cat_map).fillna("未分类")
+                            else:
+                                filtered["master_category"] = "未分类"
+                        else:
+                            filtered["master_category"] = filtered["master_category"].fillna("未分类")
+                        
+                        if cat_chart_type == "柱状图（对比品类）":
+                            cat_agg = filtered.groupby([dimension_col, "master_category"])[cat_metric_col].sum().reset_index()
+                            cat_agg.rename(columns={cat_metric_col: "金额"}, inplace=True)
+                            top_cats_per_dim = {}
+                            for dim in selected_dimensions:
+                                dim_data = cat_agg[cat_agg[dimension_col] == dim].copy()
+                                if not dim_data.empty:
+                                    dim_data = dim_data.sort_values("金额", ascending=False)
+                                    top5 = dim_data.head(5)
+                                    top_cats_per_dim[dim] = top5
+                            all_top_cats = set()
+                            for dim, df_top in top_cats_per_dim.items():
+                                all_top_cats.update(df_top["master_category"].tolist())
+                            all_top_cats = sorted(list(all_top_cats))
+                            if all_top_cats:
+                                compare_df = pd.DataFrame(index=all_top_cats)
+                                for dim in selected_dimensions:
+                                    dim_sales = {}
+                                    if dim in top_cats_per_dim:
+                                        for _, row in top_cats_per_dim[dim].iterrows():
+                                            dim_sales[row["master_category"]] = row["金额"]
+                                    compare_df[dim] = [dim_sales.get(cat, 0) for cat in all_top_cats]
+                                fig_cat = px.bar(
+                                    compare_df,
+                                    x=compare_df.index,
+                                    y=selected_dimensions,
+                                    barmode='group',
+                                    title=f"{dimension_name}Top5品类{cat_metric_name}对比",
+                                    labels={"value": f"{cat_metric_name}(¥)", "index": "商品品类"},
+                                    color_discrete_sequence=px.colors.qualitative.Set2
+                                )
+                                fig_cat.update_layout(xaxis_title="商品品类", yaxis_title=f"{cat_metric_name}(¥)", legend_title=dimension_name)
+                                st.plotly_chart(fig_cat, use_container_width=True)
+                            else:
+                                st.info("无法获取品类数据，无法生成对比图。")
+                        else:  # 饼图
+                            cat_agg = filtered.groupby([dimension_col, "master_category"])[cat_metric_col].sum().reset_index()
+                            cat_agg.rename(columns={cat_metric_col: "金额"}, inplace=True)
+                            dim_pie_data = {}
+                            for dim in selected_dimensions:
+                                dim_data = cat_agg[cat_agg[dimension_col] == dim].copy()
+                                if dim_data.empty:
+                                    continue
+                                dim_data = dim_data.sort_values("金额", ascending=False)
+                                top5 = dim_data.head(5)
+                                other_sum = dim_data.iloc[5:]["金额"].sum() if len(dim_data) > 5 else 0
+                                if other_sum > 0:
+                                    other_row = pd.DataFrame({"master_category": ["其他"], "金额": [other_sum]})
+                                    top5 = pd.concat([top5, other_row], ignore_index=True)
+                                dim_pie_data[dim] = top5
+                            if dim_pie_data:
+                                cols = st.columns(len(dim_pie_data))
+                                for idx, (dim, data) in enumerate(dim_pie_data.items()):
+                                    with cols[idx]:
+                                        fig_pie = px.pie(
+                                            data,
+                                            names="master_category",
+                                            values="金额",
+                                            title=f"{dim} - 品类分布 ({cat_metric_name})",
+                                            hole=0.3,
+                                            color_discrete_sequence=px.colors.qualitative.Pastel
+                                        )
+                                        fig_pie.update_traces(textposition='inside', textinfo='percent+label')
+                                        st.plotly_chart(fig_pie, use_container_width=True)
+                            else:
+                                st.info("无有效数据")
+                        
+                        # 季节分析
+                        st.markdown(f"#### {dimension_name}季节销售分析")
+                        col_season1, col_season2 = st.columns([1, 2])
+                        with col_season1:
+                            season_chart_type = st.radio("季节图表类型", ["柱状图（对比季节）", "饼图（各维度季节分布）"], horizontal=False, key="season_chart_type")
+                        with col_season2:
+                            season_metric = st.selectbox("季节金额指标", ["净销售金额", "发货金额", "退货金额"], key="season_metric")
+                        season_metric_col = {"净销售金额": "net_amount", "发货金额": "ship_amount", "退货金额": "return_amount"}[season_metric]
+                        season_metric_name = season_metric
+                        
+                        if "season" not in filtered.columns:
+                            st.info("数据中缺少季节信息，无法生成季节对比图。")
+                        else:
+                            season_data = filtered[filtered["season"].notna()].copy()
+                            if season_data.empty:
+                                st.info("所选范围内无季节数据")
+                            else:
+                                if season_chart_type == "柱状图（对比季节）":
+                                    season_agg = season_data.groupby([dimension_col, "season"])[season_metric_col].sum().reset_index()
+                                    season_agg.rename(columns={season_metric_col: "金额"}, inplace=True)
+                                    season_agg = season_agg[season_agg[dimension_col].isin(selected_dimensions)]
+                                    if not season_agg.empty:
+                                        pivot_season = season_agg.pivot(index="season", columns=dimension_col, values="金额").fillna(0)
+                                        season_order = ["春", "夏", "秋", "冬"]
+                                        pivot_season = pivot_season.reindex([s for s in season_order if s in pivot_season.index])
+                                        if not pivot_season.empty:
+                                            fig_season = px.bar(
+                                                pivot_season,
+                                                x=pivot_season.index,
+                                                y=selected_dimensions,
+                                                barmode='group',
+                                                title=f"{dimension_name}季节{season_metric_name}对比",
+                                                labels={"value": f"{season_metric_name}(¥)", "index": "季节"},
+                                                color_discrete_sequence=px.colors.qualitative.Set1
+                                            )
+                                            fig_season.update_layout(xaxis_title="季节", yaxis_title=f"{season_metric_name}(¥)", legend_title=dimension_name)
+                                            st.plotly_chart(fig_season, use_container_width=True)
+                                        else:
+                                            st.info("无有效季节数据")
+                                    else:
+                                        st.info(f"所选{dimension_name}无季节数据")
+                                else:  # 饼图
+                                    season_agg = season_data.groupby([dimension_col, "season"])[season_metric_col].sum().reset_index()
+                                    season_agg.rename(columns={season_metric_col: "金额"}, inplace=True)
+                                    dim_season_data = {}
+                                    for dim in selected_dimensions:
+                                        dim_season = season_agg[season_agg[dimension_col] == dim].copy()
+                                        if not dim_season.empty:
+                                            dim_season_data[dim] = dim_season
+                                    if dim_season_data:
+                                        cols = st.columns(len(dim_season_data))
+                                        for idx, (dim, data) in enumerate(dim_season_data.items()):
+                                            with cols[idx]:
+                                                fig_pie_season = px.pie(
+                                                    data,
+                                                    names="season",
+                                                    values="金额",
+                                                    title=f"{dim} - 季节分布 ({season_metric_name})",
+                                                    hole=0.3,
+                                                    color_discrete_sequence=px.colors.qualitative.Set2
+                                                )
+                                                fig_pie_season.update_traces(textposition='inside', textinfo='percent+label')
+                                                st.plotly_chart(fig_pie_season, use_container_width=True)
+                                    else:
+                                        st.info("无有效数据")
+                        
+                        # 年份分析
+                        st.markdown(f"#### {dimension_name}年份销售分析")
+                        col_year1, col_year2 = st.columns([1, 2])
+                        with col_year1:
+                            year_chart_type = st.radio("年份图表类型", ["柱状图（对比年份）", "饼图（各维度年份分布）"], horizontal=False, key="year_chart_type")
+                        with col_year2:
+                            year_metric = st.selectbox("年份金额指标", ["净销售金额", "发货金额", "退货金额"], key="year_metric")
+                        year_metric_col = {"净销售金额": "net_amount", "发货金额": "ship_amount", "退货金额": "return_amount"}[year_metric]
+                        year_metric_name = year_metric
+                        
+                        if "year" not in filtered.columns:
+                            st.info("数据中缺少年份信息，无法生成年份对比图。")
+                        else:
+                            year_data = filtered[filtered["year"].notna()].copy()
+                            if year_data.empty:
+                                st.info("所选范围内无年份数据")
+                            else:
+                                if year_chart_type == "柱状图（对比年份）":
+                                    year_agg = year_data.groupby([dimension_col, "year"])[year_metric_col].sum().reset_index()
+                                    year_agg.rename(columns={year_metric_col: "金额"}, inplace=True)
+                                    year_agg = year_agg[year_agg[dimension_col].isin(selected_dimensions)]
+                                    if not year_agg.empty:
+                                        pivot_year = year_agg.pivot(index="year", columns=dimension_col, values="金额").fillna(0)
+                                        pivot_year = pivot_year.sort_index()
+                                        if not pivot_year.empty:
+                                            fig_year = px.bar(
+                                                pivot_year,
+                                                x=pivot_year.index,
+                                                y=selected_dimensions,
+                                                barmode='group',
+                                                title=f"{dimension_name}年份{year_metric_name}对比",
+                                                labels={"value": f"{year_metric_name}(¥)", "index": "年份"},
                                                 color_discrete_sequence=px.colors.qualitative.Pastel
                                             )
-                                            fig_pie.update_traces(textposition='inside', textinfo='percent+label')
-                                            st.plotly_chart(fig_pie, use_container_width=True)
-                                else:
-                                    st.info("无有效数据")
+                                            fig_year.update_layout(xaxis_title="年份", yaxis_title=f"{year_metric_name}(¥)", legend_title=dimension_name)
+                                            st.plotly_chart(fig_year, use_container_width=True)
+                                        else:
+                                            st.info("无有效年份数据")
+                                    else:
+                                        st.info(f"所选{dimension_name}无年份数据")
+                                else:  # 饼图
+                                    year_agg = year_data.groupby([dimension_col, "year"])[year_metric_col].sum().reset_index()
+                                    year_agg.rename(columns={year_metric_col: "金额"}, inplace=True)
+                                    dim_year_data = {}
+                                    for dim in selected_dimensions:
+                                        dim_year = year_agg[year_agg[dimension_col] == dim].copy()
+                                        if not dim_year.empty:
+                                            dim_year = dim_year.sort_values("year")
+                                            dim_year_data[dim] = dim_year
+                                    if dim_year_data:
+                                        cols = st.columns(len(dim_year_data))
+                                        for idx, (dim, data) in enumerate(dim_year_data.items()):
+                                            with cols[idx]:
+                                                fig_pie_year = px.pie(
+                                                    data,
+                                                    names="year",
+                                                    values="金额",
+                                                    title=f"{dim} - 年份分布 ({year_metric_name})",
+                                                    hole=0.3,
+                                                    color_discrete_sequence=px.colors.qualitative.Set3
+                                                )
+                                                fig_pie_year.update_traces(textposition='inside', textinfo='percent+label')
+                                                st.plotly_chart(fig_pie_year, use_container_width=True)
+                                    else:
+                                        st.info("无有效数据")
                             
                             # ========== 季节分析 ==========
                             st.markdown("#### 主播季节销售分析")
