@@ -1086,7 +1086,7 @@ with tabs[tab_index_product]:
     if "product_page_num" not in st.session_state:
         st.session_state.product_page_num = 1
     if "product_page_size" not in st.session_state:
-        st.session_state.product_page_size = 10   # 默认每页10条
+        st.session_state.product_page_size = 10
     if "sort_by" not in st.session_state:
         st.session_state.sort_by = "净销售金额"
     if "sort_ascending" not in st.session_state:
@@ -1196,7 +1196,7 @@ with tabs[tab_index_product]:
                 净销售金额=("net_amount", "sum")
             ).reset_index().rename(columns={"style_code": "货号"})
             
-            # 关联商品库信息（图片、分类、礼金标签）
+            # 关联商品库信息
             if not master_df.empty and "style_code" in master_df.columns:
                 master_df = master_df.drop_duplicates(subset="style_code", keep="first")
                 img_map = master_df.set_index("style_code")["image_url"].to_dict()
@@ -1229,7 +1229,7 @@ with tabs[tab_index_product]:
             with col_sort2:
                 sort_order = st.radio("排序顺序", ["降序", "升序"], horizontal=True, index=0 if not st.session_state.sort_ascending else 1, key="sort_order_radio")
             
-            # 每页显示数量选择器
+            # 每页显示数量
             page_size_options = [10, 20, 50, 100]
             with col_sort3:
                 selected_page_size = st.selectbox(
@@ -1243,7 +1243,7 @@ with tabs[tab_index_product]:
                     st.session_state.product_page_num = 1
                     st.rerun()
             
-            # 排序变化时的处理
+            # 排序变化处理
             if selected_sort != st.session_state.sort_by or (sort_order == "降序" and st.session_state.sort_ascending) or (sort_order == "升序" and not st.session_state.sort_ascending):
                 st.session_state.show_dialog = False
                 st.session_state.dialog_style_code = None
@@ -1272,14 +1272,14 @@ with tabs[tab_index_product]:
                 grouped = grouped.sort_values("退款率_num", ascending=st.session_state.sort_ascending)
                 grouped = grouped.drop(columns=["退款率_num"])
             
-            # 分页计算
+            # 分页
             page_size = st.session_state.product_page_size
             total_rows = len(grouped)
             total_pages = (total_rows + page_size - 1) // page_size if total_rows > 0 else 1
             if st.session_state.product_page_num > total_pages:
                 st.session_state.product_page_num = 1
             
-            # 分页控件 + 导出按钮
+            # 分页+导出控件
             col_prev, col_page, col_next, col_export = st.columns([1, 2, 1, 1.5])
             with col_prev:
                 if st.button("◀ 上一页", key="product_prev_page"):
@@ -1313,14 +1313,18 @@ with tabs[tab_index_product]:
                 # 导出类型选择
                 export_type = st.radio(
                     "导出类型",
-                    ["汇总（货号级别）", "明细（订单级别）"],
+                    ["汇总（货号级别）", "明细（货号+主播）"],
                     horizontal=True,
                     key="export_type_radio"
                 )
+                # 对于非直播/全部数据源，禁用主播明细选项
+                if export_type == "明细（货号+主播）" and st.session_state.table_suffix not in ["_live", "_all"]:
+                    st.warning("当前数据源无主播信息，无法导出主播明细，请切换至直播数据或全部数据。")
+                    export_type = "汇总（货号级别）"
+                
                 if st.button("📥 下载数据", key="export_filtered_data"):
                     if export_type == "汇总（货号级别）":
                         export_df = grouped.copy()
-                        # 移除图片列
                         if "image_url" in export_df.columns:
                             export_df = export_df.drop(columns=["image_url"])
                         cols_order = ["货号", "master_category", "发货金额", "退货金额", "净销售金额", "退款率", "has_newbie_coupon"]
@@ -1333,34 +1337,44 @@ with tabs[tab_index_product]:
                         export_df["是否新人礼金"] = export_df["是否新人礼金"].map({True: "是", False: "否"})
                         sheet_name = "货号汇总"
                         file_suffix = "货号汇总"
-                    else:  # 明细（订单级别）
-                        detail_df = filtered.copy()
-                        # 添加主播列（如果尚不存在）
-                        if st.session_state.table_suffix in ["_live", "_all"]:
-                            if "anchor" not in detail_df.columns:
-                                detail_df["anchor"] = detail_df["remark"].astype(str).apply(extract_anchor)
-                        # 选择导出列
-                        export_columns = [
-                            "sale_date", "shop_name", "anchor" if "anchor" in detail_df.columns else None,
-                            "style_code", "product_code", "remark", "ship_amount", "return_amount", "net_amount",
-                            "brand", "year", "season", "master_category"
+                    else:  # 明细（货号+主播）
+                        # 按货号+主播聚合
+                        anchor_detail = filtered.groupby(["style_code", "anchor"]).agg(
+                            主播发货金额=("ship_amount", "sum"),
+                            主播退货金额=("return_amount", "sum"),
+                            主播净销售金额=("net_amount", "sum")
+                        ).reset_index()
+                        # 计算主播在该货号下的退款率
+                        anchor_detail["主播退款率"] = np.where(
+                            anchor_detail["主播发货金额"] != 0,
+                            (anchor_detail["主播退货金额"] / anchor_detail["主播发货金额"] * 100).map("{:.2f}%".format),
+                            "-"
+                        )
+                        # 关联货号级别的公共信息
+                        master_cols = grouped[["货号", "master_category", "发货金额", "退货金额", "净销售金额", "退款率", "has_newbie_coupon"]].copy()
+                        export_df = pd.merge(
+                            anchor_detail,
+                            master_cols,
+                            left_on="style_code",
+                            right_on="货号",
+                            how="left"
+                        )
+                        export_df.drop(columns=["style_code"], inplace=True)
+                        # 重命名和排序
+                        export_df.rename(columns={
+                            "anchor": "主播",
+                            "master_category": "商品分类",
+                            "has_newbie_coupon": "是否新人礼金"
+                        }, inplace=True)
+                        export_df["是否新人礼金"] = export_df["是否新人礼金"].map({True: "是", False: "否"})
+                        # 选择最终列
+                        final_cols = [
+                            "货号", "商品分类", "发货金额", "退货金额", "净销售金额", "退款率", "是否新人礼金",
+                            "主播", "主播发货金额", "主播退货金额", "主播净销售金额", "主播退款率"
                         ]
-                        export_columns = [col for col in export_columns if col is not None and col in detail_df.columns]
-                        export_df = detail_df[export_columns].copy()
-                        # 重命名列名为中文
-                        rename_map = {
-                            "sale_date": "日期", "shop_name": "店铺", "anchor": "主播",
-                            "style_code": "货号", "product_code": "商品编码", "remark": "备注",
-                            "ship_amount": "发货金额", "return_amount": "退货金额", "net_amount": "净销售金额",
-                            "brand": "品牌", "year": "年份", "season": "季节", "master_category": "商品分类"
-                        }
-                        export_df.rename(columns=rename_map, inplace=True)
-                        # 调整列顺序
-                        col_order = ["日期", "店铺", "主播", "货号", "商品编码", "商品分类", "品牌", "年份", "季节",
-                                     "发货金额", "退货金额", "净销售金额", "备注"]
-                        export_df = export_df[[c for c in col_order if c in export_df.columns]]
-                        sheet_name = "订单明细"
-                        file_suffix = "订单明细"
+                        export_df = export_df[final_cols]
+                        sheet_name = "货号主播明细"
+                        file_suffix = "货号主播明细"
                     
                     # 导出 Excel
                     output = io.BytesIO()
@@ -1375,18 +1389,17 @@ with tabs[tab_index_product]:
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     )
             
-            # 分页截取数据
+            # 分页显示表格（与之前相同，省略以节省篇幅，实际保留原表格显示代码）
             start_idx = (st.session_state.product_page_num - 1) * page_size
             end_idx = min(start_idx + page_size, total_rows)
             page_df = grouped.iloc[start_idx:end_idx]
             
-            # 显示表头
+            # 显示表头（略，保持原样）
             cols = st.columns([2, 0.5, 1.5, 1.2, 1.2, 1.2, 1, 0.8, 0.8, 0.8])
             headers = ["货号", "图片", "商品分类", "发货金额(¥)", "退货金额(¥)", "净销售金额(¥)", "退款率", "新人礼金", "详情", "趋势"]
             for col, header in zip(cols, headers):
                 col.markdown(f"**{header}**")
             
-            # 逐行显示
             for idx, row in page_df.iterrows():
                 col1, col2, col3, col4, col5, col6, col7, col8, col9, col10 = st.columns([2, 0.5, 1.5, 1.2, 1.2, 1.2, 1, 0.8, 0.8, 0.8])
                 col1.write(row["货号"])
@@ -1400,7 +1413,6 @@ with tabs[tab_index_product]:
                 col6.write(f"{row['净销售金额']:,.2f}")
                 col7.write(row["退款率"])
                 col8.write("✅" if row.get("has_newbie_coupon") else "❌")
-                # 详情按钮
                 if col9.button("📊", key=f"detail_btn_{row['货号']}_{idx}"):
                     style_code = row["货号"]
                     detail_df = filtered[filtered["style_code"] == style_code].copy()
@@ -1446,7 +1458,6 @@ with tabs[tab_index_product]:
                     st.session_state.show_dialog = True
                     st.session_state.detail_clicked = True
                     st.rerun()
-                # 趋势按钮
                 if col10.button("📈", key=f"trend_btn_{row['货号']}_{idx}"):
                     style_code = row["货号"]
                     trend_data = filtered[filtered["style_code"] == style_code].copy()
@@ -1468,7 +1479,7 @@ with tabs[tab_index_product]:
                     st.session_state.trend_clicked = True
                     st.rerun()
     
-    # 详情弹窗
+    # 详情弹窗（保持不变）
     if st.session_state.show_dialog and st.session_state.dialog_style_code:
         style_code = st.session_state.dialog_style_code
         cached = st.session_state.cached_detail_data
@@ -1500,7 +1511,7 @@ with tabs[tab_index_product]:
                 st.rerun()
         show_style_detail()
     
-    # 趋势弹窗
+    # 趋势弹窗（保持不变）
     if st.session_state.show_trend_dialog and st.session_state.trend_style_code:
         style_code = st.session_state.trend_style_code
         @st.dialog(f"📈 货号 {style_code} 销售趋势", width="large")
