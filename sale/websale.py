@@ -117,7 +117,7 @@ if not st.session_state.authenticated:
     st.stop()
 
 # ========== 主页面 - 使用自定义标题替代默认的st.title ==========
-st.markdown('<div class="custom-main-title">📊 抖音&视频号商品销售分析罗盘</div>', unsafe_allow_html=True)
+st.markdown('<div class="custom-main-title">📊 商品销售分析罗盘测试页</div>', unsafe_allow_html=True)
 st.markdown(f'<div class="welcome-text">欢迎，**{st.session_state.username}** ({"管理员" if st.session_state.role == "admin" else ("子账号" if st.session_state.role == "viewer" else "成员")})</div>', unsafe_allow_html=True)
 st.markdown("---")
 
