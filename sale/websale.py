@@ -19,7 +19,7 @@ import plotly.graph_objects as go
 
 st.set_page_config(page_title="业绩统计工具", layout="wide", page_icon="📊")
 
-# ========== 自定义CSS - 调整标题比例和布局 ==========
+# ========== 自定义CSS ==========
 st.markdown("""
 <style>
     .custom-main-title {
@@ -852,12 +852,10 @@ with tabs[tab_index_latest]:
     current_source = source_names.get(st.session_state.table_suffix, "未知")
     st.info(f"📌 当前查看的数据源：**{current_source}**")
 
-    # 加载部门信息
     departments, dept_orgs = get_department_org_lists()
     selected_departments = []
     if departments:
         selected_departments = st.multiselect("按部门筛选（可选）", options=departments, default=[], key="latest_dept_filter")
-        # 根据部门获取组织列表
         if selected_departments:
             allowed_orgs = set()
             for dept in selected_departments:
@@ -875,7 +873,6 @@ with tabs[tab_index_latest]:
             st.warning("数据中缺少组织信息，请先更新数据。")
         else:
             all_orgs = sorted(prod_df["organization"].dropna().unique())
-            # 如果选择了部门，则只显示部门下的组织
             if allowed_orgs is not None:
                 org_options = [org for org in all_orgs if org in allowed_orgs]
             else:
@@ -910,7 +907,6 @@ with tabs[tab_index_latest]:
 
                         latest_data["平台"] = latest_data["remark"].apply(extract_platform)
 
-                        # 按组织+平台汇总
                         org_platform = latest_data.groupby(["organization", "平台"]).agg(
                             当日金额=("net_amount", "sum")
                         ).reset_index()
@@ -950,7 +946,6 @@ with tabs[tab_index_latest]:
 # ========== 日期范围累计 ==========
 with tabs[tab_index_range]:
     if st.session_state.get("df_all_daily") is not None and not st.session_state.df_all_daily.empty:
-        # 部门筛选
         departments, dept_orgs = get_department_org_lists()
         selected_departments = st.multiselect("按部门筛选", options=departments, default=[], key="range_dept_filter") if departments else []
         if selected_departments:
@@ -967,7 +962,7 @@ with tabs[tab_index_range]:
             org_options = [org for org in all_orgs if org in allowed_orgs]
         else:
             org_options = all_orgs
-        selected_orgs = st.multiselect("按组织筛选", options=sorted(org_options), default=[], key="range_org_filter") if org_options else []
+        selected_orgs = st.multiselect("按组织筛选", options=sorted(org_options), default=org_options, key="range_org_filter") if org_options else []
 
         c1, c2 = st.columns(2)
         start = st.date_input("开始日期", value=date.today().replace(day=1), key="range_start_final")
@@ -1028,7 +1023,7 @@ with tabs[tab_index_query]:
             org_options = [org for org in all_orgs if org in allowed_orgs]
         else:
             org_options = all_orgs
-        selected_orgs = st.multiselect("按组织筛选", options=sorted(org_options), default=[], key="query_org_filter") if org_options else []
+        selected_orgs = st.multiselect("按组织筛选", options=sorted(org_options), default=org_options, key="query_org_filter") if org_options else []
 
         query_date = st.date_input("查询日期", value=date.today(), key="query_date_final")
         if st.button("查询", key="query_btn_final"):
@@ -1087,7 +1082,7 @@ with tabs[tab_index_ship_return]:
                 org_options = [org for org in all_orgs if org in allowed_orgs]
             else:
                 org_options = all_orgs
-            selected_orgs = st.multiselect("按组织筛选", options=sorted(org_options), default=[], key="ship_return_org") if org_options else []
+            selected_orgs = st.multiselect("按组织筛选", options=sorted(org_options), default=org_options, key="ship_return_org") if org_options else []
 
             selected_date = st.selectbox("选择日期", dates, format_func=lambda x: x.strftime("%Y-%m-%d"), key="ship_return_date_final")
             filtered = prod_df[prod_df["sale_date"] == selected_date]
@@ -1136,7 +1131,7 @@ with tabs[tab_index_history]:
             org_options = [org for org in all_orgs if org in allowed_orgs]
         else:
             org_options = all_orgs
-        selected_orgs = st.multiselect("按组织筛选", options=sorted(org_options), default=[], key="history_org") if org_options else []
+        selected_orgs = st.multiselect("按组织筛选", options=sorted(org_options), default=org_options, key="history_org") if org_options else []
         if selected_orgs:
             daily_df = daily_df[daily_df["organization"].isin(selected_orgs)]
         if st.session_state.table_suffix == "_all":
@@ -1274,7 +1269,6 @@ with tabs[tab_index_product]:
             else:
                 st.info("当前数据中未识别到任何主播信息，请检查备注字段是否包含“主播：xxx”格式。")
         
-        # 部门筛选
         departments, dept_orgs = get_department_org_lists()
         selected_departments = st.multiselect("部门（可多选）", options=departments, default=[], key="prod_dept_filter") if departments else []
         if selected_departments:
@@ -1288,7 +1282,7 @@ with tabs[tab_index_product]:
             org_options = [org for org in all_orgs if org in allowed_orgs]
         else:
             org_options = all_orgs
-        selected_orgs = st.multiselect("组织（可多选）", options=sorted(org_options), default=[], key="org_filter_final") if org_options else []
+        selected_orgs = st.multiselect("组织（可多选）", options=sorted(org_options), default=org_options, key="org_filter_final") if org_options else []
         
         mask_date = (prod_df["sale_date"] >= pd.to_datetime(start_date)) & (prod_df["sale_date"] <= pd.to_datetime(end_date))
         filtered = prod_df[mask_date].copy()
@@ -1707,7 +1701,6 @@ with tabs[tab_index_anchor_compare]:
         if prod_df.empty:
             st.info(f"当前数据中未识别到任何{dim_name}信息，请检查数据。")
         else:
-            # 若维度为组织，可添加部门筛选
             if selected_dim == "组织":
                 departments, dept_orgs = get_department_org_lists()
                 selected_depts = st.multiselect("按部门筛选（可选）", options=departments, default=[], key="compare_dept_filter") if departments else []
@@ -1798,7 +1791,6 @@ with tabs[tab_index_anchor_compare]:
                                 )
                             st.plotly_chart(fig, use_container_width=True, key=f"compare_{metric}_{chart_type}_{selected_dim}")
                         
-                        # 品类分析（维度不是组织时）
                         if selected_dim != "组织":
                             st.markdown(f"#### {dim_name}品类销售分析")
                             col_cat1, col_cat2 = st.columns([1, 2])
@@ -1887,9 +1879,7 @@ with tabs[tab_index_anchor_compare]:
                                 else:
                                     st.info("无有效数据")
                         
-                        # 季节/年份分析（维度不是组织时）
                         if selected_dim != "组织":
-                            # 季节分析
                             st.markdown(f"#### {dim_name}季节销售分析")
                             col_season1, col_season2 = st.columns([1, 2])
                             with col_season1:
@@ -1955,7 +1945,6 @@ with tabs[tab_index_anchor_compare]:
                                         else:
                                             st.info("无有效数据")
                             
-                            # 年份分析
                             st.markdown(f"#### {dim_name}年份销售分析")
                             col_year1, col_year2 = st.columns([1, 2])
                             with col_year1:
@@ -2074,7 +2063,6 @@ with tabs[tab_index_distribution]:
                 else:
                     st.info("当前数据中未识别到任何主播信息，请检查备注字段是否包含“主播：xxx”格式。")
         
-        # 部门筛选
         departments, dept_orgs = get_department_org_lists()
         selected_departments = st.multiselect("部门（可多选）", options=departments, default=[], key="dist_dept_filter") if departments else []
         if selected_departments:
@@ -2088,7 +2076,7 @@ with tabs[tab_index_distribution]:
             org_options = [org for org in all_orgs if org in allowed_orgs]
         else:
             org_options = all_orgs
-        selected_orgs = st.multiselect("组织（可多选）", options=sorted(org_options), default=[], key="dist_org_v2") if org_options else []
+        selected_orgs = st.multiselect("组织（可多选）", options=sorted(org_options), default=org_options, key="dist_org_v2") if org_options else []
         
         mask_date = (prod_df["sale_date"] >= pd.to_datetime(start_date)) & (prod_df["sale_date"] <= pd.to_datetime(end_date))
         filtered = prod_df[mask_date].copy()
