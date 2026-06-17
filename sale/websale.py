@@ -17,7 +17,7 @@ from supabase import create_client
 import plotly.express as px
 import plotly.graph_objects as go
 
-st.set_page_config(page_title="测试", layout="wide", page_icon="📊")
+st.set_page_config(page_title="业绩统计工具", layout="wide", page_icon="📊")
 
 # ========== 自定义CSS - 调整标题比例和布局 ==========
 st.markdown("""
@@ -86,7 +86,7 @@ def get_all_users():
     users = {
         "admin": {"password": "1234567890", "role": "admin", "default_suffix": ""},
         "XDZ01": {"password": "94949468", "role": "user", "default_suffix": ""},
-        "ZBZ01": {"password": "123456", "role": "user", "default_suffix": "_live"}
+        "ZBZ01": {"password": "123456", "role": "user", "default_suffix": ""}  # 改为非直播
     }
     for username, info in st.session_state.sub_users.items():
         users[username] = info
@@ -117,7 +117,7 @@ if not st.session_state.authenticated:
     st.stop()
 
 # ========== 主页面 - 使用自定义标题替代默认的st.title ==========
-st.markdown('<div class="custom-main-title">📊 测试页商品销售分析罗盘</div>', unsafe_allow_html=True)
+st.markdown('<div class="custom-main-title">📊 商品销售分析罗盘测试页</div>', unsafe_allow_html=True)
 st.markdown(f'<div class="welcome-text">欢迎，**{st.session_state.username}** ({"管理员" if st.session_state.role == "admin" else ("子账号" if st.session_state.role == "viewer" else "成员")})</div>', unsafe_allow_html=True)
 st.markdown("---")
 
@@ -162,6 +162,37 @@ def extract_anchor(remark):
     match = re.search(r'主播[：:]([^_]+)', remark)
     return match.group(1).strip() if match else None
 
+@st.cache_data(ttl=600)
+def get_organization_by_shop_anchor(shop_name, anchor_name):
+    """
+    根据店铺名和主播名查询映射表，返回组织名称。
+    如果找不到精确匹配，尝试用 (shop_name, 'NONE') 作为默认。
+    都找不到则返回 None。
+    """
+    if supabase is None:
+        return None
+    try:
+        # 精确匹配
+        resp = supabase.table("shop_anchor_organization_mapping") \
+            .select("organization") \
+            .eq("shop_name", shop_name) \
+            .eq("anchor_name", anchor_name if anchor_name else "NONE") \
+            .execute()
+        if resp.data:
+            return resp.data[0]["organization"]
+        # 如果没有精确匹配，尝试用 (shop_name, 'NONE')
+        resp = supabase.table("shop_anchor_organization_mapping") \
+            .select("organization") \
+            .eq("shop_name", shop_name) \
+            .eq("anchor_name", "NONE") \
+            .execute()
+        if resp.data:
+            return resp.data[0]["organization"]
+        return None
+    except Exception as e:
+        st.error(f"查询组织映射失败：{e}")
+        return None
+
 def load_daily_sales(suffix=None):
     if supabase is None:
         return pd.DataFrame()
@@ -182,7 +213,7 @@ def save_daily_sales(records, suffix=None):
     if supabase is None or not records:
         return
     table_name = get_table_name("daily_sales", suffix)
-    supabase.table(table_name).upsert(records, on_conflict="sale_date,shop_name").execute()
+    supabase.table(table_name).upsert(records, on_conflict="sale_date,shop_name,organization").execute()
 
 def rebuild_daily_data(suffix=None):
     df = load_daily_sales(suffix)
@@ -192,8 +223,15 @@ def rebuild_daily_data(suffix=None):
         st.session_state.monthly_actual = None
         st.session_state.latest_date = None
         return
-    df = df.rename(columns={"sale_date": "日期", "shop_name": "店铺名称",
-                            "amount": "当日金额", "cumulative_amount": "月累计金额"})
+    # 重命名，保留 organization 列
+    df = df.rename(columns={
+        "sale_date": "日期",
+        "shop_name": "店铺名称",
+        "amount": "当日金额",
+        "cumulative_amount": "月累计金额"
+    })
+    if "organization" not in df.columns:
+        df["organization"] = None
     df_all = df.sort_values(["店铺名称", "日期"])
     latest_date = df_all["日期"].max()
     daily_latest = df_all.loc[df_all.groupby("店铺名称")["日期"].idxmax()].copy()
@@ -215,7 +253,7 @@ def rebuild_daily_from_product(suffix=None):
             page = 0
             page_size = 1000
             while True:
-                resp = supabase.table(product_table).select("sale_date, shop_name, net_amount, remark").range(page * page_size, (page + 1) * page_size - 1).execute()
+                resp = supabase.table(product_table).select("sale_date, shop_name, net_amount, remark, organization").range(page * page_size, (page + 1) * page_size - 1).execute()
                 if not resp.data:
                     break
                 all_data.extend(resp.data)
@@ -228,20 +266,24 @@ def rebuild_daily_from_product(suffix=None):
                 return True, "商品销售表无数据，已清空每日业绩表"
             df = pd.DataFrame(all_data)
             df["sale_date"] = pd.to_datetime(df["sale_date"])
+            # 按店铺、组织、日期汇总
             if suffix == "_all":
                 df["anchor"] = df["remark"].apply(extract_anchor)
-                daily_agg = df.groupby(["sale_date", "anchor"])["net_amount"].sum().reset_index()
-                daily_agg.columns = ["sale_date", "店铺名称", "amount"]
+                # 全部数据按主播汇总，但组织仍保留（可从原始数据取）
+                # 此处我们按日期+主播+组织汇总，组织取第一个非空
+                daily_agg = df.groupby(["sale_date", "anchor", "organization"])["net_amount"].sum().reset_index()
+                daily_agg.columns = ["sale_date", "店铺名称", "organization", "amount"]
             else:
-                daily_agg = df.groupby(["sale_date", "shop_name"])["net_amount"].sum().reset_index()
-                daily_agg.columns = ["sale_date", "店铺名称", "amount"]
+                daily_agg = df.groupby(["sale_date", "shop_name", "organization"])["net_amount"].sum().reset_index()
+                daily_agg.columns = ["sale_date", "店铺名称", "organization", "amount"]
             daily_agg = daily_agg.sort_values(["店铺名称", "sale_date"])
-            daily_agg["cumulative_amount"] = daily_agg.groupby("店铺名称")["amount"].cumsum().round(2)
+            daily_agg["cumulative_amount"] = daily_agg.groupby(["店铺名称", "organization"])["amount"].cumsum().round(2)
             records = []
             for _, row in daily_agg.iterrows():
                 records.append({
                     "sale_date": row["sale_date"].strftime("%Y-%m-%d"),
                     "shop_name": row["店铺名称"],
+                    "organization": row["organization"],
                     "amount": float(row["amount"]),
                     "cumulative_amount": float(row["cumulative_amount"])
                 })
@@ -378,11 +420,16 @@ def save_product_sales(df_orders, suffix=None):
         short_code = parsed["style_code"]
         img = master_map.get(short_code, {}).get("image_url")
         cat = master_map.get(short_code, {}).get("master_category")
+        # 组织名称
+        organization = row.get("组织名称", None)
+        if organization and pd.isna(organization):
+            organization = None
         if remark not in temp_records:
             temp_records[remark] = {
                 "remark": remark,
                 "sale_date": row["日期"].strftime("%Y-%m-%d"),
                 "shop_name": row["店铺名称"],
+                "organization": organization,
                 "product_code": parsed["product_code"],
                 "style_code": short_code,
                 "brand": parsed["brand"],
@@ -403,6 +450,9 @@ def save_product_sales(df_orders, suffix=None):
             existing["ship_amount"] += max(amount, 0)
             existing["return_amount"] += max(-amount, 0)
             existing["net_amount"] += amount
+            # 如果之前没有组织但这次有，更新
+            if not existing.get("organization") and organization:
+                existing["organization"] = organization
     records = list(temp_records.values())
     if records:
         table_name = get_table_name("product_sales", suffix)
@@ -435,9 +485,26 @@ def load_product_sales(suffix=None):
             for col in ["ship_amount", "return_amount", "net_amount"]:
                 if col in df.columns:
                     df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
-            # 补充主播列（用于直播/全部数据）
-            if suffix in ["_live", "_all"] and "anchor" not in df.columns:
+            # 补充主播列（用于全部数据模式）
+            if suffix == "_all" and "anchor" not in df.columns:
                 df["anchor"] = df["remark"].apply(extract_anchor)
+            # 确保 organization 列存在
+            if "organization" not in df.columns:
+                df["organization"] = None
+            # 补充 master_category 分类（从 product_master）
+            if "master_category" not in df.columns or df["master_category"].isnull().all():
+                master_df = load_product_master()
+                if not master_df.empty and "style_code" in master_df.columns:
+                    master_df["style_code"] = master_df["style_code"].astype(str).str.strip().str.upper()
+                    cat_map = master_df.set_index("style_code")["category"].to_dict()
+                    df["master_category"] = df["style_code"].map(cat_map).fillna("未分类")
+            else:
+                master_df = load_product_master()
+                if not master_df.empty and "style_code" in master_df.columns:
+                    master_df["style_code"] = master_df["style_code"].astype(str).str.strip().str.upper()
+                    cat_map = master_df.set_index("style_code")["category"].to_dict()
+                    mask = df["master_category"].isnull()
+                    df.loc[mask, "master_category"] = df.loc[mask, "style_code"].map(cat_map).fillna("未分类")
             return df
         else:
             return pd.DataFrame()
@@ -455,11 +522,22 @@ def validate_order_data(df):
         df_valid["日期"] = pd.to_datetime(df_valid["日期"], errors='coerce')
         if df_valid["日期"].isnull().any():
             return False, "日期列包含无效日期，请检查格式（如 2026-06-01）。", None
+        # 提取店铺名称（从备注末尾）
         df_valid["店铺名称"] = df_valid["备注"].astype(str).str.split("_").str[-1]
         df_valid["店铺名称"] = df_valid["店铺名称"].str.replace(r'^商店[：:]', '', regex=True).str.strip()
         df_valid = df_valid[df_valid["店铺名称"].notna() & (df_valid["店铺名称"] != "")].copy()
         if df_valid.empty:
             return False, "未提取到有效的店铺名称，请检查备注格式。", None
+        # 提取主播
+        df_valid["主播"] = df_valid["备注"].apply(extract_anchor)
+        # 查询组织映射
+        def get_org(row):
+            shop = row["店铺名称"]
+            anchor = row["主播"] if pd.notna(row["主播"]) else None
+            org = get_organization_by_shop_anchor(shop, anchor)
+            return org if org else "未分类"
+        df_valid["组织名称"] = df_valid.apply(get_org, axis=1)
+        # 金额转换
         df_valid["金额/时间"] = pd.to_numeric(df_valid["金额/时间"], errors='coerce')
         if df_valid["金额/时间"].isnull().any():
             return False, "金额/时间列包含非数值内容，请检查。", None
@@ -482,20 +560,22 @@ def process_uploaded_file(uploaded_file, suffix):
             if "duplicate key" in str(e).lower():
                 return False, "数据重复：该文件中的订单备注与已存在数据冲突。"
             return False, f"保存商品销售明细失败：{str(e)}。"
+        # 生成每日汇总
         if suffix == "_all":
-            df_valid["anchor"] = df_valid["备注"].apply(extract_anchor)
-            new_daily = df_valid.groupby(["日期", "anchor"])["金额/时间"].sum().reset_index()
-            new_daily.columns = ["日期", "店铺名称", "当日金额"]
+            # 全部数据：按日期+主播+组织汇总
+            new_daily = df_valid.groupby(["日期", "主播", "组织名称"])["金额/时间"].sum().reset_index()
+            new_daily.columns = ["日期", "店铺名称", "组织名称", "当日金额"]
         else:
-            new_daily = df_valid.groupby(["日期", "店铺名称"])["金额/时间"].sum().reset_index()
-            new_daily.columns = ["日期", "店铺名称", "当日金额"]
+            new_daily = df_valid.groupby(["日期", "店铺名称", "组织名称"])["金额/时间"].sum().reset_index()
+            new_daily.columns = ["日期", "店铺名称", "组织名称", "当日金额"]
         new_daily["日期"] = pd.to_datetime(new_daily["日期"])
         existing = load_daily_sales(suffix)
         if not existing.empty:
+            # 按日期、店铺、组织去重
             new_dates = new_daily["日期"].dt.date.unique()
             existing = existing[~existing["sale_date"].dt.date.isin(new_dates)]
             if not existing.empty:
-                existing_df = existing[["sale_date", "shop_name", "amount"]].rename(
+                existing_df = existing[["sale_date", "shop_name", "organization", "amount"]].rename(
                     columns={"sale_date": "日期", "shop_name": "店铺名称", "amount": "当日金额"}
                 )
                 merged = pd.concat([existing_df, new_daily], ignore_index=True)
@@ -505,12 +585,13 @@ def process_uploaded_file(uploaded_file, suffix):
             merged = new_daily.copy()
         merged = merged.sort_values(["店铺名称", "日期"])
         merged["当日金额"] = pd.to_numeric(merged["当日金额"], errors="coerce").fillna(0)
-        merged["月累计金额"] = merged.groupby("店铺名称")["当日金额"].cumsum().round(2)
+        merged["月累计金额"] = merged.groupby(["店铺名称", "组织名称"])["当日金额"].cumsum().round(2)
         records = []
         for _, row in merged.iterrows():
             records.append({
                 "sale_date": row["日期"].strftime("%Y-%m-%d"),
                 "shop_name": row["店铺名称"],
+                "organization": row["组织名称"],
                 "amount": float(row["当日金额"]),
                 "cumulative_amount": float(row["月累计金额"])
             })
@@ -549,8 +630,8 @@ def manage_sub_accounts():
     with st.expander("创建新子账号"):
         new_username = st.text_input("用户名", key="new_username")
         new_password = st.text_input("密码", type="password", key="new_password")
-        default_suffix = st.selectbox("默认数据源", ["非直播数据", "直播数据", "全部数据"], key="new_default_suffix")
-        suffix_map = {"非直播数据": "", "直播数据": "_live", "全部数据": "_all"}
+        default_suffix = st.selectbox("默认数据源", ["非直播数据", "全部数据"], key="new_default_suffix")
+        suffix_map = {"非直播数据": "", "全部数据": "_all"}
         if st.button("创建子账号"):
             if new_username and new_password:
                 if new_username in st.session_state.sub_users:
@@ -571,7 +652,7 @@ def manage_sub_accounts():
             col1, col2, col3, col4 = st.columns([2, 1, 1, 1])
             col1.write(username)
             col2.write("●" * len(info["password"]))
-            suffix_display = {"": "非直播", "_live": "直播", "_all": "全部"}.get(info["default_suffix"], "未知")
+            suffix_display = {"": "非直播", "_all": "全部"}.get(info["default_suffix"], "未知")
             col3.write(suffix_display)
             with col4:
                 if st.button("删除", key=f"del_{username}"):
@@ -657,7 +738,7 @@ def batch_manage_newbie_coupon():
                     for code in style_codes_input:
                         update_product_master_flag(code, False)
                     st.success(f"成功为 {len(style_codes_input)} 个商品停用新人礼金标签")
-                else:  # 整体替换
+                else:
                     all_codes = master_df["style_code"].tolist()
                     for code in all_codes:
                         update_product_master_flag(code, False)
@@ -679,10 +760,10 @@ with st.sidebar:
     st.header("📂 数据加载")
     if st.session_state.role == "admin":
         st.subheader("🔄 数据源切换")
-        suffix_names = {"": "非直播数据", "_live": "直播数据", "_all": "全部数据"}
+        suffix_names = {"": "非直播数据", "_all": "全部数据"}
         current_source_name = suffix_names.get(st.session_state.table_suffix, "未知")
         st.info(f"📌 当前正在查看：**{current_source_name}**")
-        source_options = {"非直播数据": "", "直播数据": "_live", "全部数据": "_all"}
+        source_options = {"非直播数据": "", "全部数据": "_all"}
         default_index = list(source_options.keys()).index(current_source_name) if current_source_name in source_options else 0
         selected_source = st.selectbox("选择要切换到的数据源", options=list(source_options.keys()), index=default_index, key="source_selectbox_final")
         if st.button("✅ 确认切换", key="confirm_switch_final"):
@@ -731,14 +812,6 @@ with st.sidebar:
             target_file = st.file_uploader("选择目标文件 (Excel)", type=["xlsx", "xls"], key="target_upload_normal_final")
             if st.button("📤 确认上传目标", key="confirm_target_normal_final"):
                 handle_upload(target_file, "", "target")
-        elif current_display_suffix == "_live":
-            st.subheader("🎥 直播数据上传")
-            uploaded_order = st.file_uploader("选择订单文件 (Excel)", type=["xlsx", "xls"], key="order_uploader_live_final")
-            if st.button("📤 确认上传", key="confirm_upload_live_final"):
-                handle_upload(uploaded_order, "_live", "order")
-            target_file = st.file_uploader("选择目标文件 (Excel)", type=["xlsx", "xls"], key="target_upload_live_final")
-            if st.button("📤 确认上传目标", key="confirm_target_live_final"):
-                handle_upload(target_file, "_live", "target")
         else:
             st.subheader("📊 全部数据上传")
             uploaded_order = st.file_uploader("选择订单文件 (Excel)", type=["xlsx", "xls"], key="order_uploader_all_final")
@@ -818,7 +891,7 @@ if st.session_state.role == "admin":
 
 # ========== 最新日明细 ==========
 with tabs[tab_index_latest]:
-    source_names = {"": "非直播数据", "_live": "直播数据", "_all": "全部数据"}
+    source_names = {"": "非直播数据", "_all": "全部数据"}
     current_source = source_names.get(st.session_state.table_suffix, "未知")
     st.info(f"📌 当前查看的数据源：**{current_source}**")
     if st.session_state.table_suffix == "_all":
@@ -854,6 +927,18 @@ with tabs[tab_index_latest]:
             col_name = "主播名称"
     else:
         df = pd.DataFrame(columns=["日期", col_name, "当日金额", "月累计金额"])
+    
+    # 添加组织筛选（如果存在organization列）
+    all_orgs = []
+    if st.session_state.df_all_daily is not None and "organization" in st.session_state.df_all_daily.columns:
+        all_orgs = st.session_state.df_all_daily["organization"].dropna().unique().tolist()
+    if all_orgs:
+        selected_orgs = st.multiselect("按组织筛选", options=sorted(all_orgs), default=[])
+        if selected_orgs and not df.empty:
+            df = df[df["店铺名称"].isin(
+                st.session_state.df_all_daily[st.session_state.df_all_daily["organization"].isin(selected_orgs)]["店铺名称"].unique()
+            )]
+    
     if not df.empty:
         df["目标金额"] = df[col_name].map(st.session_state.target_dict).fillna(0).round(2)
         df["达成率"] = df.apply(lambda r: f"{(r['月累计金额']/r['目标金额']*100):.2f}%" if r['目标金额']!=0 else "-", axis=1)
@@ -1100,7 +1185,7 @@ with tabs[tab_index_product]:
         else:
             prod_df["style_code"] = prod_df["product_code"].str[:8].str.strip().str.upper()
         
-        if st.session_state.table_suffix in ["_live", "_all"]:
+        if st.session_state.table_suffix == "_all":
             if "anchor" not in prod_df.columns:
                 prod_df["anchor"] = prod_df["remark"].astype(str).apply(extract_anchor)
         
@@ -1139,7 +1224,7 @@ with tabs[tab_index_product]:
         selected_coupon_filter = st.selectbox("是否首单礼金款式", coupon_filter_options, key="coupon_filter_final")
         
         selected_anchors = []
-        if st.session_state.table_suffix in ["_live", "_all"]:
+        if st.session_state.table_suffix == "_all":
             if "anchor" not in prod_df.columns:
                 prod_df["anchor"] = prod_df["remark"].astype(str).apply(extract_anchor)
             all_anchors = prod_df["anchor"].dropna().unique().tolist()
@@ -1147,6 +1232,12 @@ with tabs[tab_index_product]:
                 selected_anchors = st.multiselect("主播（可多选）", options=sorted(all_anchors), default=[], key="anchor_filter_final")
             else:
                 st.info("当前数据中未识别到任何主播信息，请检查备注字段是否包含“主播：xxx”格式。")
+        
+        # 组织筛选
+        all_orgs = prod_df["organization"].dropna().unique().tolist() if "organization" in prod_df.columns else []
+        selected_orgs = []
+        if all_orgs:
+            selected_orgs = st.multiselect("组织（可多选）", options=sorted(all_orgs), default=[], key="org_filter_final")
         
         mask_date = (prod_df["sale_date"] >= pd.to_datetime(start_date)) & (prod_df["sale_date"] <= pd.to_datetime(end_date))
         filtered = prod_df[mask_date].copy()
@@ -1165,6 +1256,8 @@ with tabs[tab_index_product]:
             filtered = filtered[filtered["brand"] == selected_brand]
         if selected_anchors:
             filtered = filtered[filtered["anchor"].isin(selected_anchors)]
+        if selected_orgs:
+            filtered = filtered[filtered["organization"].isin(selected_orgs)]
         
         master_df = load_product_master()
         coupon_map = {}
@@ -1292,7 +1385,7 @@ with tabs[tab_index_product]:
                         st.session_state.product_page_num += 1
                         st.rerun()
             with col_export:
-                is_live_or_all = st.session_state.table_suffix in ["_live", "_all"]
+                is_live_or_all = st.session_state.table_suffix == "_all"
                 if is_live_or_all:
                     detail_type_name = "明细（货号+主播）"
                 else:
@@ -1410,7 +1503,7 @@ with tabs[tab_index_product]:
                         def extract_anchor_fn(remark):
                             match = re.search(r'主播[：:]([^_]+)', remark)
                             return match.group(1).strip() if match else None
-                        if suffix in ["_live", "_all"]:
+                        if suffix == "_all":
                             detail_df["anchor"] = detail_df["remark"].apply(extract_anchor_fn)
                             detail_df = detail_df[detail_df["anchor"].notna()]
                             if not detail_df.empty:
@@ -1534,7 +1627,7 @@ with tabs[tab_index_product]:
 
 # ========== 销售对比（主播/店铺维度） ==========
 with tabs[tab_index_anchor_compare]:
-    use_anchor = st.session_state.table_suffix in ["_live", "_all"]
+    use_anchor = st.session_state.table_suffix == "_all"
     dimension_name = "主播" if use_anchor else "店铺"
     dimension_col = "anchor" if use_anchor else "shop_name"
     
@@ -1863,7 +1956,7 @@ with tabs[tab_index_distribution]:
             prod_df["style_code"] = prod_df["style_code"].astype(str).str.strip().str.upper()
         else:
             prod_df["style_code"] = prod_df["product_code"].str[:8].str.strip().str.upper()
-        if st.session_state.table_suffix in ["_live", "_all"]:
+        if st.session_state.table_suffix == "_all":
             if "anchor" not in prod_df.columns:
                 prod_df["anchor"] = prod_df["remark"].astype(str).apply(extract_anchor)
         
@@ -1896,7 +1989,7 @@ with tabs[tab_index_distribution]:
             selected_brand = st.selectbox("品牌", brands_all, key="dist_brand_v2")
         with col_anchor:
             selected_anchors = []
-            if st.session_state.table_suffix in ["_live", "_all"]:
+            if st.session_state.table_suffix == "_all":
                 if "anchor" not in prod_df.columns:
                     prod_df["anchor"] = prod_df["remark"].astype(str).apply(extract_anchor)
                 all_anchors = prod_df["anchor"].dropna().unique().tolist()
@@ -1904,6 +1997,12 @@ with tabs[tab_index_distribution]:
                     selected_anchors = st.multiselect("主播（可多选）", options=sorted(all_anchors), default=[], key="dist_anchor_v2")
                 else:
                     st.info("当前数据中未识别到任何主播信息，请检查备注字段是否包含“主播：xxx”格式。")
+        
+        # 组织筛选
+        all_orgs = prod_df["organization"].dropna().unique().tolist() if "organization" in prod_df.columns else []
+        selected_orgs = []
+        if all_orgs:
+            selected_orgs = st.multiselect("组织（可多选）", options=sorted(all_orgs), default=[], key="dist_org_v2")
         
         mask_date = (prod_df["sale_date"] >= pd.to_datetime(start_date)) & (prod_df["sale_date"] <= pd.to_datetime(end_date))
         filtered = prod_df[mask_date].copy()
@@ -1917,6 +2016,8 @@ with tabs[tab_index_distribution]:
             filtered = filtered[filtered["brand"] == selected_brand]
         if selected_anchors:
             filtered = filtered[filtered["anchor"].isin(selected_anchors)]
+        if selected_orgs:
+            filtered = filtered[filtered["organization"].isin(selected_orgs)]
         
         if filtered.empty:
             st.warning("所选条件下无销售数据")
