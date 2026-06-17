@@ -1,12 +1,8 @@
 # -*- coding: utf-8 -*-
 """
-订单业绩统计工具 - 最终完整版
+订单业绩统计工具 - 最终完整版（含部门筛选）
 管理员账号：admin / 1234567890
 子账号示例：NC01 / 123456
-
-新增功能：
-- 所有模块支持按组织筛选
-- 销售对比支持按组织对比
 """
 
 import streamlit as st
@@ -126,7 +122,7 @@ if "monthly_actual" not in st.session_state:
 if "processing_upload" not in st.session_state:
     st.session_state.processing_upload = False
 if "compare_dimension" not in st.session_state:
-    st.session_state.compare_dimension = "店铺"  # 店铺 / 主播 / 组织
+    st.session_state.compare_dimension = "店铺"
 
 # ========== 辅助函数 ==========
 def extract_anchor(remark):
@@ -140,7 +136,6 @@ def get_organization_by_shop_anchor(shop_name, anchor_name):
     if supabase is None:
         return None
     try:
-        # 精确匹配
         resp = supabase.table("shop_anchor_organization_mapping") \
             .select("organization") \
             .eq("shop_name", shop_name) \
@@ -152,6 +147,29 @@ def get_organization_by_shop_anchor(shop_name, anchor_name):
     except Exception as e:
         st.error(f"查询组织映射失败：{e}")
         return None
+
+@st.cache_data(ttl=600)
+def load_department_mapping():
+    """加载组织→部门映射，返回 {组织: 部门} 字典"""
+    if supabase is None:
+        return {}
+    try:
+        resp = supabase.table("organization_department_mapping").select("organization, department").execute()
+        if resp.data:
+            return {row["organization"]: row["department"] for row in resp.data}
+        return {}
+    except Exception as e:
+        st.error(f"加载部门映射失败：{e}")
+        return {}
+
+def get_departments_and_orgs():
+    """返回 (所有部门列表, 部门→组织列表的字典)"""
+    mapping = load_department_mapping()
+    dept_orgs = {}
+    for org, dept in mapping.items():
+        dept_orgs.setdefault(dept, []).append(org)
+    departments = sorted(dept_orgs.keys())
+    return departments, dept_orgs
 
 def load_daily_sales(suffix=None):
     if supabase is None:
@@ -818,11 +836,34 @@ if st.session_state.role == "admin":
     tab_index_debug = 8
     tab_index_export = 9
 
-# ========== 最新日明细（按组织维度 + 平台拆解，基于商品明细） ==========
+# ========== 辅助函数：获取部门和组织 ==========
+def get_department_org_lists():
+    """返回 (部门列表, 部门->组织列表映射)"""
+    mapping = load_department_mapping()
+    dept_orgs = {}
+    for org, dept in mapping.items():
+        dept_orgs.setdefault(dept, []).append(org)
+    departments = sorted(dept_orgs.keys())
+    return departments, dept_orgs
+
+# ========== 最新日明细（按组织+平台拆解） ==========
 with tabs[tab_index_latest]:
     source_names = {"": "非直播数据", "_all": "全部数据"}
     current_source = source_names.get(st.session_state.table_suffix, "未知")
     st.info(f"📌 当前查看的数据源：**{current_source}**")
+
+    # 加载部门信息
+    departments, dept_orgs = get_department_org_lists()
+    selected_departments = []
+    if departments:
+        selected_departments = st.multiselect("按部门筛选（可选）", options=departments, default=[], key="latest_dept_filter")
+        # 根据部门获取组织列表
+        if selected_departments:
+            allowed_orgs = set()
+            for dept in selected_departments:
+                allowed_orgs.update(dept_orgs.get(dept, []))
+        else:
+            allowed_orgs = None
 
     with st.spinner("正在加载商品数据..."):
         prod_df = load_product_sales(st.session_state.table_suffix)
@@ -834,10 +875,15 @@ with tabs[tab_index_latest]:
             st.warning("数据中缺少组织信息，请先更新数据。")
         else:
             all_orgs = sorted(prod_df["organization"].dropna().unique())
-            if not all_orgs:
-                st.warning("未识别到任何组织，请检查数据。")
+            # 如果选择了部门，则只显示部门下的组织
+            if allowed_orgs is not None:
+                org_options = [org for org in all_orgs if org in allowed_orgs]
             else:
-                selected_orgs = st.multiselect("按组织筛选（可选）", options=all_orgs, default=all_orgs, key="latest_org_filter")
+                org_options = all_orgs
+            if not org_options:
+                st.warning("所选部门下无组织数据")
+            else:
+                selected_orgs = st.multiselect("按组织筛选（可选）", options=org_options, default=org_options, key="latest_org_filter")
                 if selected_orgs:
                     df_filtered = prod_df[prod_df["organization"].isin(selected_orgs)]
                 else:
@@ -864,36 +910,25 @@ with tabs[tab_index_latest]:
 
                         latest_data["平台"] = latest_data["remark"].apply(extract_platform)
 
-                        # 按组织+平台汇总当日金额
+                        # 按组织+平台汇总
                         org_platform = latest_data.groupby(["organization", "平台"]).agg(
                             当日金额=("net_amount", "sum")
                         ).reset_index()
 
-                        # 透视成宽表
                         pivot = org_platform.pivot(index="organization", columns="平台", values="当日金额").fillna(0)
-
-                        # 确保所有平台列都存在
                         for plat in ["抖音", "视频号", "其他"]:
                             if plat not in pivot.columns:
                                 pivot[plat] = 0
 
-                        # 重命名列（加前缀“当日_”）
                         pivot.columns = [f"当日_{col}" for col in pivot.columns]
-
-                        # 重置索引，将 organization 变为列
                         pivot = pivot.reset_index().rename(columns={"organization": "组织名称"})
-
-                        # 计算总计（明确指定列）
                         pivot["当日_总计"] = pivot[["当日_抖音", "当日_视频号", "当日_其他"]].sum(axis=1)
 
-                        # 调整列顺序
                         cols_order = ["组织名称", "当日_总计", "当日_抖音", "当日_视频号", "当日_其他"]
                         pivot = pivot[cols_order]
 
-                        # 显示数据表
                         st.dataframe(pivot, use_container_width=True, hide_index=True)
 
-                        # 指标卡
                         total_day = pivot["当日_总计"].sum()
                         col1, col2, col3 = st.columns(3)
                         with col1:
@@ -903,7 +938,6 @@ with tabs[tab_index_latest]:
                         with col3:
                             st.metric("📅 最新日期", latest_date.strftime("%Y-%m-%d"))
 
-                        # 导出
                         output = io.BytesIO()
                         with pd.ExcelWriter(output, engine='openpyxl') as writer:
                             pivot.to_excel(writer, index=False)
@@ -912,15 +946,29 @@ with tabs[tab_index_latest]:
                             data=output.getvalue(),
                             file_name=f"最新日明细_组织_{latest_date.strftime('%Y%m%d')}.xlsx"
                         )
+
 # ========== 日期范围累计 ==========
 with tabs[tab_index_range]:
     if st.session_state.get("df_all_daily") is not None and not st.session_state.df_all_daily.empty:
-        # 组织筛选
+        # 部门筛选
+        departments, dept_orgs = get_department_org_lists()
+        selected_departments = st.multiselect("按部门筛选", options=departments, default=[], key="range_dept_filter") if departments else []
+        if selected_departments:
+            allowed_orgs = set()
+            for dept in selected_departments:
+                allowed_orgs.update(dept_orgs.get(dept, []))
+        else:
+            allowed_orgs = None
+
         all_orgs = []
         if "organization" in st.session_state.df_all_daily.columns:
             all_orgs = st.session_state.df_all_daily["organization"].dropna().unique().tolist()
-        selected_orgs = st.multiselect("按组织筛选", options=sorted(all_orgs), default=[], key="range_org_filter") if all_orgs else []
-        
+        if allowed_orgs is not None:
+            org_options = [org for org in all_orgs if org in allowed_orgs]
+        else:
+            org_options = all_orgs
+        selected_orgs = st.multiselect("按组织筛选", options=sorted(org_options), default=[], key="range_org_filter") if org_options else []
+
         c1, c2 = st.columns(2)
         start = st.date_input("开始日期", value=date.today().replace(day=1), key="range_start_final")
         end = st.date_input("结束日期", value=date.today(), key="range_end_final")
@@ -931,8 +979,7 @@ with tabs[tab_index_range]:
                 mask = (st.session_state.df_all_daily["日期"] >= pd.to_datetime(start)) & (st.session_state.df_all_daily["日期"] <= pd.to_datetime(end))
                 range_data = st.session_state.df_all_daily[mask].copy()
                 if selected_orgs:
-                    org_shops = st.session_state.df_all_daily[st.session_state.df_all_daily["organization"].isin(selected_orgs)]["店铺名称"].unique()
-                    range_data = range_data[range_data["店铺名称"].isin(org_shops)]
+                    range_data = range_data[range_data["organization"].isin(selected_orgs)]
                 if range_data.empty:
                     st.warning("无数据")
                 else:
@@ -966,17 +1013,28 @@ with tabs[tab_index_range]:
 # ========== 日期查询 ==========
 with tabs[tab_index_query]:
     if st.session_state.get("df_all_daily") is not None and not st.session_state.df_all_daily.empty:
+        departments, dept_orgs = get_department_org_lists()
+        selected_departments = st.multiselect("按部门筛选", options=departments, default=[], key="query_dept_filter") if departments else []
+        if selected_departments:
+            allowed_orgs = set()
+            for dept in selected_departments:
+                allowed_orgs.update(dept_orgs.get(dept, []))
+        else:
+            allowed_orgs = None
         all_orgs = []
         if "organization" in st.session_state.df_all_daily.columns:
             all_orgs = st.session_state.df_all_daily["organization"].dropna().unique().tolist()
-        selected_orgs = st.multiselect("按组织筛选", options=sorted(all_orgs), default=[], key="query_org_filter") if all_orgs else []
-        
+        if allowed_orgs is not None:
+            org_options = [org for org in all_orgs if org in allowed_orgs]
+        else:
+            org_options = all_orgs
+        selected_orgs = st.multiselect("按组织筛选", options=sorted(org_options), default=[], key="query_org_filter") if org_options else []
+
         query_date = st.date_input("查询日期", value=date.today(), key="query_date_final")
         if st.button("查询", key="query_btn_final"):
             res = st.session_state.df_all_daily[st.session_state.df_all_daily["日期"] == pd.to_datetime(query_date)].copy()
             if selected_orgs:
-                org_shops = st.session_state.df_all_daily[st.session_state.df_all_daily["organization"].isin(selected_orgs)]["店铺名称"].unique()
-                res = res[res["店铺名称"].isin(org_shops)]
+                res = res[res["organization"].isin(selected_orgs)]
             if res.empty:
                 st.warning("无数据")
             else:
@@ -1016,9 +1074,21 @@ with tabs[tab_index_ship_return]:
     else:
         dates = sorted(prod_df["sale_date"].unique(), reverse=True)
         if dates:
-            # 组织筛选（这里用商品数据中的组织）
+            departments, dept_orgs = get_department_org_lists()
+            selected_departments = st.multiselect("按部门筛选", options=departments, default=[], key="ship_dept_filter") if departments else []
+            if selected_departments:
+                allowed_orgs = set()
+                for dept in selected_departments:
+                    allowed_orgs.update(dept_orgs.get(dept, []))
+            else:
+                allowed_orgs = None
             all_orgs = prod_df["organization"].dropna().unique().tolist() if "organization" in prod_df.columns else []
-            selected_orgs = st.multiselect("按组织筛选", options=sorted(all_orgs), default=[], key="ship_return_org") if all_orgs else []
+            if allowed_orgs is not None:
+                org_options = [org for org in all_orgs if org in allowed_orgs]
+            else:
+                org_options = all_orgs
+            selected_orgs = st.multiselect("按组织筛选", options=sorted(org_options), default=[], key="ship_return_org") if org_options else []
+
             selected_date = st.selectbox("选择日期", dates, format_func=lambda x: x.strftime("%Y-%m-%d"), key="ship_return_date_final")
             filtered = prod_df[prod_df["sale_date"] == selected_date]
             if selected_orgs:
@@ -1053,9 +1123,20 @@ with tabs[tab_index_history]:
     with st.spinner("正在加载历史数据，请稍候..."):
         daily_df = load_daily_sales()
     if not daily_df.empty:
-        # 组织筛选
+        departments, dept_orgs = get_department_org_lists()
+        selected_departments = st.multiselect("按部门筛选", options=departments, default=[], key="history_dept_filter") if departments else []
+        if selected_departments:
+            allowed_orgs = set()
+            for dept in selected_departments:
+                allowed_orgs.update(dept_orgs.get(dept, []))
+        else:
+            allowed_orgs = None
         all_orgs = daily_df["organization"].dropna().unique().tolist() if "organization" in daily_df.columns else []
-        selected_orgs = st.multiselect("按组织筛选", options=sorted(all_orgs), default=[], key="history_org") if all_orgs else []
+        if allowed_orgs is not None:
+            org_options = [org for org in all_orgs if org in allowed_orgs]
+        else:
+            org_options = all_orgs
+        selected_orgs = st.multiselect("按组织筛选", options=sorted(org_options), default=[], key="history_org") if org_options else []
         if selected_orgs:
             daily_df = daily_df[daily_df["organization"].isin(selected_orgs)]
         if st.session_state.table_suffix == "_all":
@@ -1193,9 +1274,21 @@ with tabs[tab_index_product]:
             else:
                 st.info("当前数据中未识别到任何主播信息，请检查备注字段是否包含“主播：xxx”格式。")
         
-        # 组织筛选
+        # 部门筛选
+        departments, dept_orgs = get_department_org_lists()
+        selected_departments = st.multiselect("部门（可多选）", options=departments, default=[], key="prod_dept_filter") if departments else []
+        if selected_departments:
+            allowed_orgs = set()
+            for dept in selected_departments:
+                allowed_orgs.update(dept_orgs.get(dept, []))
+        else:
+            allowed_orgs = None
         all_orgs = prod_df["organization"].dropna().unique().tolist() if "organization" in prod_df.columns else []
-        selected_orgs = st.multiselect("组织（可多选）", options=sorted(all_orgs), default=[], key="org_filter_final") if all_orgs else []
+        if allowed_orgs is not None:
+            org_options = [org for org in all_orgs if org in allowed_orgs]
+        else:
+            org_options = all_orgs
+        selected_orgs = st.multiselect("组织（可多选）", options=sorted(org_options), default=[], key="org_filter_final") if org_options else []
         
         mask_date = (prod_df["sale_date"] >= pd.to_datetime(start_date)) & (prod_df["sale_date"] <= pd.to_datetime(end_date))
         filtered = prod_df[mask_date].copy()
@@ -1585,11 +1678,9 @@ with tabs[tab_index_product]:
 
 # ========== 销售对比 ==========
 with tabs[tab_index_anchor_compare]:
-    # 维度选择
     dimension_options = ["店铺", "主播", "组织"]
-    # 根据数据源限制可用维度
     if st.session_state.table_suffix != "_all":
-        dimension_options = ["店铺", "组织"]  # 非全部数据没有主播
+        dimension_options = ["店铺", "组织"]
     selected_dim = st.selectbox("对比维度", dimension_options, index=0, key="compare_dim_select")
     
     with st.spinner("正在加载数据..."):
@@ -1597,7 +1688,6 @@ with tabs[tab_index_anchor_compare]:
     if prod_df.empty:
         st.info("暂无商品销售数据，请先上传订单文件。")
     else:
-        # 根据维度选择确定分组列
         if selected_dim == "店铺":
             dim_col = "shop_name"
             dim_name = "店铺"
@@ -1606,18 +1696,30 @@ with tabs[tab_index_anchor_compare]:
                 prod_df["anchor"] = prod_df["remark"].apply(extract_anchor)
             dim_col = "anchor"
             dim_name = "主播"
-        else:  # 组织
+        else:
             if "organization" not in prod_df.columns:
                 st.error("数据中缺少组织信息，请先更新数据。")
                 st.stop()
             dim_col = "organization"
             dim_name = "组织"
         
-        # 过滤掉空值
         prod_df = prod_df[prod_df[dim_col].notna()].copy()
         if prod_df.empty:
             st.info(f"当前数据中未识别到任何{dim_name}信息，请检查数据。")
         else:
+            # 若维度为组织，可添加部门筛选
+            if selected_dim == "组织":
+                departments, dept_orgs = get_department_org_lists()
+                selected_depts = st.multiselect("按部门筛选（可选）", options=departments, default=[], key="compare_dept_filter") if departments else []
+                if selected_depts:
+                    allowed_orgs = set()
+                    for dept in selected_depts:
+                        allowed_orgs.update(dept_orgs.get(dept, []))
+                    prod_df = prod_df[prod_df["organization"].isin(allowed_orgs)]
+                    if prod_df.empty:
+                        st.warning("所选部门下无数据")
+                        st.stop()
+            
             all_dimensions = sorted(prod_df[dim_col].unique())
             col_select1, col_select2, col_select3 = st.columns(3)
             with col_select1:
@@ -1648,7 +1750,6 @@ with tabs[tab_index_anchor_compare]:
                 if filtered.empty:
                     st.warning("所选日期范围内无销售数据")
                 else:
-                    # 按维度和日期聚合
                     daily_agg = filtered.groupby(["sale_date", dim_col]).agg(
                         净销售金额=("net_amount", "sum"),
                         发货金额=("ship_amount", "sum"),
@@ -1697,7 +1798,7 @@ with tabs[tab_index_anchor_compare]:
                                 )
                             st.plotly_chart(fig, use_container_width=True, key=f"compare_{metric}_{chart_type}_{selected_dim}")
                         
-                        # 品类分析（仅当维度不是组织时，组织本身已是聚合维度）
+                        # 品类分析（维度不是组织时）
                         if selected_dim != "组织":
                             st.markdown(f"#### {dim_name}品类销售分析")
                             col_cat1, col_cat2 = st.columns([1, 2])
@@ -1786,7 +1887,7 @@ with tabs[tab_index_anchor_compare]:
                                 else:
                                     st.info("无有效数据")
                         
-                        # 季节和年份分析（仅当维度不是组织时）
+                        # 季节/年份分析（维度不是组织时）
                         if selected_dim != "组织":
                             # 季节分析
                             st.markdown(f"#### {dim_name}季节销售分析")
@@ -1973,9 +2074,21 @@ with tabs[tab_index_distribution]:
                 else:
                     st.info("当前数据中未识别到任何主播信息，请检查备注字段是否包含“主播：xxx”格式。")
         
-        # 组织筛选
+        # 部门筛选
+        departments, dept_orgs = get_department_org_lists()
+        selected_departments = st.multiselect("部门（可多选）", options=departments, default=[], key="dist_dept_filter") if departments else []
+        if selected_departments:
+            allowed_orgs = set()
+            for dept in selected_departments:
+                allowed_orgs.update(dept_orgs.get(dept, []))
+        else:
+            allowed_orgs = None
         all_orgs = prod_df["organization"].dropna().unique().tolist() if "organization" in prod_df.columns else []
-        selected_orgs = st.multiselect("组织（可多选）", options=sorted(all_orgs), default=[], key="dist_org_v2") if all_orgs else []
+        if allowed_orgs is not None:
+            org_options = [org for org in all_orgs if org in allowed_orgs]
+        else:
+            org_options = all_orgs
+        selected_orgs = st.multiselect("组织（可多选）", options=sorted(org_options), default=[], key="dist_org_v2") if org_options else []
         
         mask_date = (prod_df["sale_date"] >= pd.to_datetime(start_date)) & (prod_df["sale_date"] <= pd.to_datetime(end_date))
         filtered = prod_df[mask_date].copy()
