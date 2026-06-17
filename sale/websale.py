@@ -846,7 +846,7 @@ def get_department_org_lists():
     departments = sorted(dept_orgs.keys())
     return departments, dept_orgs
 
-# ========== 最新日明细（按组织+平台拆解） ==========
+# ========== 最新日明细（按组织+平台拆解，含当月累计） ==========
 with tabs[tab_index_latest]:
     source_names = {"": "非直播数据", "_all": "全部数据"}
     current_source = source_names.get(st.session_state.table_suffix, "未知")
@@ -893,8 +893,7 @@ with tabs[tab_index_latest]:
                     if pd.isna(latest_date):
                         st.warning("无有效日期")
                     else:
-                        latest_data = df_filtered[df_filtered["sale_date"] == latest_date].copy()
-
+                        # ---- 提取平台 ----
                         def extract_platform(remark):
                             if not isinstance(remark, str):
                                 return "其他"
@@ -905,44 +904,84 @@ with tabs[tab_index_latest]:
                             else:
                                 return "其他"
 
-                        latest_data["平台"] = latest_data["remark"].apply(extract_platform)
+                        df_filtered["平台"] = df_filtered["remark"].apply(extract_platform)
 
-                        org_platform = latest_data.groupby(["organization", "平台"]).agg(
+                        # ---- 1. 当日数据（最新日） ----
+                        latest_data = df_filtered[df_filtered["sale_date"] == latest_date].copy()
+                        day_agg = latest_data.groupby(["organization", "平台"]).agg(
                             当日金额=("net_amount", "sum")
                         ).reset_index()
 
-                        pivot = org_platform.pivot(index="organization", columns="平台", values="当日金额").fillna(0)
+                        # ---- 2. 当月累计数据（当月1日至最新日） ----
+                        month_start = latest_date.replace(day=1)
+                        month_data = df_filtered[
+                            (df_filtered["sale_date"] >= month_start) &
+                            (df_filtered["sale_date"] <= latest_date)
+                        ].copy()
+                        month_agg = month_data.groupby(["organization", "平台"]).agg(
+                            月累计金额=("net_amount", "sum")
+                        ).reset_index()
+
+                        # ---- 合并当日和月累计 ----
+                        combined = pd.merge(day_agg, month_agg, on=["organization", "平台"], how="outer").fillna(0)
+
+                        # ---- 透视成宽表 ----
+                        # 当日透视
+                        pivot_day = combined.pivot(index="organization", columns="平台", values="当日金额").fillna(0)
                         for plat in ["抖音", "视频号", "其他"]:
-                            if plat not in pivot.columns:
-                                pivot[plat] = 0
+                            if plat not in pivot_day.columns:
+                                pivot_day[plat] = 0
+                        pivot_day.columns = [f"当日_{col}" for col in pivot_day.columns]
+                        pivot_day["当日_总计"] = pivot_day.sum(axis=1)
 
-                        pivot.columns = [f"当日_{col}" for col in pivot.columns]
-                        pivot = pivot.reset_index().rename(columns={"organization": "组织名称"})
-                        pivot["当日_总计"] = pivot[["当日_抖音", "当日_视频号", "当日_其他"]].sum(axis=1)
+                        # 月累计透视
+                        pivot_month = combined.pivot(index="organization", columns="平台", values="月累计金额").fillna(0)
+                        for plat in ["抖音", "视频号", "其他"]:
+                            if plat not in pivot_month.columns:
+                                pivot_month[plat] = 0
+                        pivot_month.columns = [f"月累_{col}" for col in pivot_month.columns]
+                        pivot_month["月累_总计"] = pivot_month.sum(axis=1)
 
-                        cols_order = ["组织名称", "当日_总计", "当日_抖音", "当日_视频号", "当日_其他"]
-                        pivot = pivot[cols_order]
+                        # 合并两个透视表
+                        result_df = pivot_day.join(pivot_month)
+                        result_df = result_df.reset_index().rename(columns={"organization": "组织名称"})
+                        result_df = result_df.sort_values("组织名称")
 
-                        st.dataframe(pivot, use_container_width=True, hide_index=True)
+                        # 调整列顺序
+                        cols_order = [
+                            "组织名称",
+                            "当日_总计", "月累_总计",
+                            "当日_抖音", "月累_抖音",
+                            "当日_视频号", "月累_视频号",
+                            "当日_其他", "月累_其他"
+                        ]
+                        # 只保留存在的列
+                        cols_order = [c for c in cols_order if c in result_df.columns]
+                        result_df = result_df[cols_order]
 
-                        total_day = pivot["当日_总计"].sum()
+                        # ---- 显示 ----
+                        st.dataframe(result_df, use_container_width=True, hide_index=True)
+
+                        # 指标卡
+                        total_day = result_df["当日_总计"].sum()
+                        total_month = result_df["月累_总计"].sum()
                         col1, col2, col3 = st.columns(3)
                         with col1:
                             st.metric("📊 当日总金额", f"{total_day:,.2f}")
                         with col2:
-                            st.metric("📌 组织数", len(pivot))
+                            st.metric("📈 月累计总金额", f"{total_month:,.2f}")
                         with col3:
-                            st.metric("📅 最新日期", latest_date.strftime("%Y-%m-%d"))
+                            st.metric("📌 组织数", len(result_df))
 
+                        # 导出
                         output = io.BytesIO()
                         with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                            pivot.to_excel(writer, index=False)
+                            result_df.to_excel(writer, index=False)
                         st.download_button(
                             "💾 导出 Excel",
                             data=output.getvalue(),
                             file_name=f"最新日明细_组织_{latest_date.strftime('%Y%m%d')}.xlsx"
                         )
-
 # ========== 日期范围累计 ==========
 with tabs[tab_index_range]:
     if st.session_state.get("df_all_daily") is not None and not st.session_state.df_all_daily.empty:
