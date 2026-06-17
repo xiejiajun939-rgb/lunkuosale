@@ -818,113 +818,101 @@ if st.session_state.role == "admin":
     tab_index_debug = 8
     tab_index_export = 9
 
-# ========== 最新日明细（按组织维度 + 平台拆解） ==========
+# ========== 最新日明细（按组织维度 + 平台拆解，基于商品明细） ==========
 with tabs[tab_index_latest]:
     source_names = {"": "非直播数据", "_all": "全部数据"}
     current_source = source_names.get(st.session_state.table_suffix, "未知")
     st.info(f"📌 当前查看的数据源：**{current_source}**")
 
-    df_daily_all = st.session_state.df_all_daily
-    if df_daily_all is None or df_daily_all.empty:
-        st.info("暂无店铺业绩数据，请先上传订单文件")
+    # 加载商品销售明细（包含 remark，可提取平台）
+    with st.spinner("正在加载商品数据..."):
+        prod_df = load_product_sales(st.session_state.table_suffix)
+
+    if prod_df.empty:
+        st.info("暂无商品销售数据，请先上传订单文件")
     else:
-        if "organization" not in df_daily_all.columns:
+        # 确保有 organization 列
+        if "organization" not in prod_df.columns:
             st.warning("数据中缺少组织信息，请先更新数据。")
         else:
-            all_orgs = sorted(df_daily_all["organization"].dropna().unique())
+            # 获取所有组织
+            all_orgs = sorted(prod_df["organization"].dropna().unique())
             if not all_orgs:
                 st.warning("未识别到任何组织，请检查数据。")
             else:
                 selected_orgs = st.multiselect("按组织筛选（可选）", options=all_orgs, default=all_orgs, key="latest_org_filter")
                 if selected_orgs:
-                    df_filtered = df_daily_all[df_daily_all["organization"].isin(selected_orgs)]
+                    df_filtered = prod_df[prod_df["organization"].isin(selected_orgs)]
                 else:
-                    df_filtered = df_daily_all.copy()
+                    df_filtered = prod_df.copy()
 
                 if df_filtered.empty:
                     st.warning("所选组织无数据")
                 else:
-                    latest_date = df_filtered["日期"].max()
+                    # 获取最新日期
+                    latest_date = df_filtered["sale_date"].max()
                     if pd.isna(latest_date):
                         st.warning("无有效日期")
                     else:
-                        latest_data = df_filtered[df_filtered["日期"] == latest_date].copy()
+                        latest_data = df_filtered[df_filtered["sale_date"] == latest_date].copy()
 
-                        # ---- 提取平台 ----
-                        def get_platform(row):
-                            name = row.get("店铺名称", "")
-                            if "抖音" in name:
+                        # ---- 从 remark 提取平台 ----
+                        def extract_platform(remark):
+                            if not isinstance(remark, str):
+                                return "其他"
+                            if "抖音" in remark or "抖音" in remark:
                                 return "抖音"
-                            elif "视频号" in name:
+                            elif "视频号" in remark:
                                 return "视频号"
                             else:
                                 return "其他"
 
-                        latest_data["平台"] = latest_data.apply(get_platform, axis=1)
+                        latest_data["平台"] = latest_data["remark"].apply(extract_platform)
 
                         # ---- 按组织+平台聚合 ----
-                        org_platform_summary = latest_data.groupby(["organization", "平台"]).agg(
-                            当日金额=("当日金额", "sum"),
-                            月累计金额=("月累计金额", "sum")
+                        # 先按组织、平台汇总净销售金额
+                        org_platform = latest_data.groupby(["organization", "平台"]).agg(
+                            当日金额=("net_amount", "sum")
                         ).reset_index()
 
-                        # ---- 转成宽表：每个组织一行，平台拆列 ----
-                        # 分别处理当日金额和月累计金额
-                        pivot_day = org_platform_summary.pivot(index="organization", columns="平台", values="当日金额").fillna(0)
-                        pivot_month = org_platform_summary.pivot(index="organization", columns="平台", values="月累计金额").fillna(0)
-
-                        # 确保所有平台列都存在（抖音、视频号、其他）
+                        # ---- 透视成宽表 ----
+                        pivot = org_platform.pivot(index="organization", columns="平台", values="当日金额").fillna(0)
+                        # 确保所有平台列都存在
                         for plat in ["抖音", "视频号", "其他"]:
-                            if plat not in pivot_day.columns:
-                                pivot_day[plat] = 0
-                            if plat not in pivot_month.columns:
-                                pivot_month[plat] = 0
+                            if plat not in pivot.columns:
+                                pivot[plat] = 0
 
                         # 计算总计
-                        pivot_day["当日金额_总计"] = pivot_day.sum(axis=1)
-                        pivot_month["月累计金额_总计"] = pivot_month.sum(axis=1)
+                        pivot["当日_总计"] = pivot.sum(axis=1)
 
                         # 重命名列
-                        pivot_day.columns = [f"当日_{col}" for col in pivot_day.columns]
-                        pivot_month.columns = [f"月累_{col}" for col in pivot_month.columns]
+                        pivot.columns = [f"当日_{col}" if col != "organization" else col for col in pivot.columns]
+                        pivot = pivot.reset_index().rename(columns={"organization": "组织名称"})
 
-                        # 合并两个透视表
-                        result_df = pivot_day.join(pivot_month)
-                        result_df = result_df.reset_index().rename(columns={"organization": "组织名称"})
+                        # 排序
+                        pivot = pivot.sort_values("组织名称")
 
-                        # 按组织名称排序
-                        result_df = result_df.sort_values("组织名称")
-
-                        # ---- 调整列顺序，方便阅读 ----
-                        cols_order = [
-                            "组织名称",
-                            "当日_总计", "月累_总计",
-                            "当日_抖音", "月累_抖音",
-                            "当日_视频号", "月累_视频号",
-                            "当日_其他", "月累_其他"
-                        ]
-                        # 只保留存在的列
-                        cols_order = [c for c in cols_order if c in result_df.columns]
-                        result_df = result_df[cols_order]
+                        # 调整列顺序
+                        cols_order = ["组织名称", "当日_总计", "当日_抖音", "当日_视频号", "当日_其他"]
+                        pivot = pivot[cols_order]
 
                         # 显示数据表
-                        st.dataframe(result_df, use_container_width=True, hide_index=True)
+                        st.dataframe(pivot, use_container_width=True, hide_index=True)
 
-                        # ---- 指标卡 ----
-                        total_day = result_df["当日_总计"].sum()
-                        total_month = result_df["月累_总计"].sum()
+                        # 指标卡
+                        total_day = pivot["当日_总计"].sum()
                         col1, col2, col3 = st.columns(3)
                         with col1:
                             st.metric("📊 当日总金额", f"{total_day:,.2f}")
                         with col2:
-                            st.metric("📈 月累计总金额", f"{total_month:,.2f}")
+                            st.metric("📌 组织数", len(pivot))
                         with col3:
-                            st.metric("📌 组织数", len(result_df))
+                            st.metric("📅 最新日期", latest_date.strftime("%Y-%m-%d"))
 
-                        # ---- 导出 ----
+                        # 导出
                         output = io.BytesIO()
                         with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                            result_df.to_excel(writer, index=False)
+                            pivot.to_excel(writer, index=False)
                         st.download_button(
                             "💾 导出 Excel",
                             data=output.getvalue(),
