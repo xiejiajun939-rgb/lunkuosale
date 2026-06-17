@@ -818,7 +818,7 @@ if st.session_state.role == "admin":
     tab_index_debug = 8
     tab_index_export = 9
 
-# ========== 最新日明细（按组织维度） ==========
+# ========== 最新日明细（按组织维度 + 平台拆解） ==========
 with tabs[tab_index_latest]:
     source_names = {"": "非直播数据", "_all": "全部数据"}
     current_source = source_names.get(st.session_state.table_suffix, "未知")
@@ -849,30 +849,82 @@ with tabs[tab_index_latest]:
                         st.warning("无有效日期")
                     else:
                         latest_data = df_filtered[df_filtered["日期"] == latest_date].copy()
-                        # 按组织聚合
-                        org_summary = latest_data.groupby("organization").agg(
+
+                        # ---- 提取平台 ----
+                        def get_platform(row):
+                            name = row.get("店铺名称", "")
+                            if "抖音" in name:
+                                return "抖音"
+                            elif "视频号" in name:
+                                return "视频号"
+                            else:
+                                return "其他"
+
+                        latest_data["平台"] = latest_data.apply(get_platform, axis=1)
+
+                        # ---- 按组织+平台聚合 ----
+                        org_platform_summary = latest_data.groupby(["organization", "平台"]).agg(
                             当日金额=("当日金额", "sum"),
                             月累计金额=("月累计金额", "sum")
                         ).reset_index()
-                        org_summary.rename(columns={"organization": "组织名称"}, inplace=True)
-                        org_summary = org_summary.sort_values("组织名称")
 
-                        total_day = org_summary["当日金额"].sum()
-                        total_month = org_summary["月累计金额"].sum()
+                        # ---- 转成宽表：每个组织一行，平台拆列 ----
+                        # 分别处理当日金额和月累计金额
+                        pivot_day = org_platform_summary.pivot(index="organization", columns="平台", values="当日金额").fillna(0)
+                        pivot_month = org_platform_summary.pivot(index="organization", columns="平台", values="月累计金额").fillna(0)
 
-                        st.dataframe(org_summary, use_container_width=True, hide_index=True)
+                        # 确保所有平台列都存在（抖音、视频号、其他）
+                        for plat in ["抖音", "视频号", "其他"]:
+                            if plat not in pivot_day.columns:
+                                pivot_day[plat] = 0
+                            if plat not in pivot_month.columns:
+                                pivot_month[plat] = 0
 
+                        # 计算总计
+                        pivot_day["当日金额_总计"] = pivot_day.sum(axis=1)
+                        pivot_month["月累计金额_总计"] = pivot_month.sum(axis=1)
+
+                        # 重命名列
+                        pivot_day.columns = [f"当日_{col}" for col in pivot_day.columns]
+                        pivot_month.columns = [f"月累_{col}" for col in pivot_month.columns]
+
+                        # 合并两个透视表
+                        result_df = pivot_day.join(pivot_month)
+                        result_df = result_df.reset_index().rename(columns={"organization": "组织名称"})
+
+                        # 按组织名称排序
+                        result_df = result_df.sort_values("组织名称")
+
+                        # ---- 调整列顺序，方便阅读 ----
+                        cols_order = [
+                            "组织名称",
+                            "当日_总计", "月累_总计",
+                            "当日_抖音", "月累_抖音",
+                            "当日_视频号", "月累_视频号",
+                            "当日_其他", "月累_其他"
+                        ]
+                        # 只保留存在的列
+                        cols_order = [c for c in cols_order if c in result_df.columns]
+                        result_df = result_df[cols_order]
+
+                        # 显示数据表
+                        st.dataframe(result_df, use_container_width=True, hide_index=True)
+
+                        # ---- 指标卡 ----
+                        total_day = result_df["当日_总计"].sum()
+                        total_month = result_df["月累_总计"].sum()
                         col1, col2, col3 = st.columns(3)
                         with col1:
                             st.metric("📊 当日总金额", f"{total_day:,.2f}")
                         with col2:
                             st.metric("📈 月累计总金额", f"{total_month:,.2f}")
                         with col3:
-                            st.metric("📌 组织数", len(org_summary))
+                            st.metric("📌 组织数", len(result_df))
 
+                        # ---- 导出 ----
                         output = io.BytesIO()
                         with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                            org_summary.to_excel(writer, index=False)
+                            result_df.to_excel(writer, index=False)
                         st.download_button(
                             "💾 导出 Excel",
                             data=output.getvalue(),
