@@ -824,21 +824,17 @@ with tabs[tab_index_latest]:
     current_source = source_names.get(st.session_state.table_suffix, "未知")
     st.info(f"📌 当前查看的数据源：**{current_source}**")
 
-    # 获取每日数据
     df_daily_all = st.session_state.df_all_daily
     if df_daily_all is None or df_daily_all.empty:
         st.info("暂无店铺业绩数据，请先上传订单文件")
     else:
-        # 确保有 organization 列
         if "organization" not in df_daily_all.columns:
             st.warning("数据中缺少组织信息，请先更新数据。")
         else:
-            # 获取所有组织（排除空值）
             all_orgs = sorted(df_daily_all["organization"].dropna().unique())
             if not all_orgs:
                 st.warning("未识别到任何组织，请检查数据。")
             else:
-                # 组织多选筛选器（可选）
                 selected_orgs = st.multiselect("按组织筛选（可选）", options=all_orgs, default=all_orgs, key="latest_org_filter")
                 if selected_orgs:
                     df_filtered = df_daily_all[df_daily_all["organization"].isin(selected_orgs)]
@@ -848,38 +844,32 @@ with tabs[tab_index_latest]:
                 if df_filtered.empty:
                     st.warning("所选组织无数据")
                 else:
-                    # 获取最新日期
                     latest_date = df_filtered["日期"].max()
                     if pd.isna(latest_date):
                         st.warning("无有效日期")
                     else:
-                        # 按组织汇总当日金额和月累计金额
                         latest_data = df_filtered[df_filtered["日期"] == latest_date].copy()
                         # 按组织聚合
                         org_summary = latest_data.groupby("organization").agg(
                             当日金额=("当日金额", "sum"),
-                            月累计金额=("月累计金额", "sum")  # 取最新日期的月累计（假设同一组织下各店铺月累计一致）
-                        ).reset_index().sort_values("组织名称")
+                            月累计金额=("月累计金额", "sum")
+                        ).reset_index()
+                        org_summary.rename(columns={"organization": "组织名称"}, inplace=True)
+                        org_summary = org_summary.sort_values("组织名称")
 
-                        # 计算目标（可选，如果目标按组织有定义，但目前target_dict是按店铺的，这里暂时不处理）
-                        # 可以显示合计
                         total_day = org_summary["当日金额"].sum()
                         total_month = org_summary["月累计金额"].sum()
 
-                        # 显示数据表
                         st.dataframe(org_summary, use_container_width=True, hide_index=True)
 
-                        # 指标卡
                         col1, col2, col3 = st.columns(3)
                         with col1:
                             st.metric("📊 当日总金额", f"{total_day:,.2f}")
                         with col2:
                             st.metric("📈 月累计总金额", f"{total_month:,.2f}")
                         with col3:
-                            # 如果有目标，可计算达成率，暂不处理
                             st.metric("📌 组织数", len(org_summary))
 
-                        # 导出
                         output = io.BytesIO()
                         with pd.ExcelWriter(output, engine='openpyxl') as writer:
                             org_summary.to_excel(writer, index=False)
@@ -888,7 +878,6 @@ with tabs[tab_index_latest]:
                             data=output.getvalue(),
                             file_name=f"最新日明细_组织_{latest_date.strftime('%Y%m%d')}.xlsx"
                         )
-
 # ========== 日期范围累计 ==========
 with tabs[tab_index_range]:
     if st.session_state.get("df_all_daily") is not None and not st.session_state.df_all_daily.empty:
