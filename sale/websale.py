@@ -824,18 +824,15 @@ with tabs[tab_index_latest]:
     current_source = source_names.get(st.session_state.table_suffix, "未知")
     st.info(f"📌 当前查看的数据源：**{current_source}**")
 
-    # 加载商品销售明细（包含 remark，可提取平台）
     with st.spinner("正在加载商品数据..."):
         prod_df = load_product_sales(st.session_state.table_suffix)
 
     if prod_df.empty:
         st.info("暂无商品销售数据，请先上传订单文件")
     else:
-        # 确保有 organization 列
         if "organization" not in prod_df.columns:
             st.warning("数据中缺少组织信息，请先更新数据。")
         else:
-            # 获取所有组织
             all_orgs = sorted(prod_df["organization"].dropna().unique())
             if not all_orgs:
                 st.warning("未识别到任何组织，请检查数据。")
@@ -849,18 +846,16 @@ with tabs[tab_index_latest]:
                 if df_filtered.empty:
                     st.warning("所选组织无数据")
                 else:
-                    # 获取最新日期
                     latest_date = df_filtered["sale_date"].max()
                     if pd.isna(latest_date):
                         st.warning("无有效日期")
                     else:
                         latest_data = df_filtered[df_filtered["sale_date"] == latest_date].copy()
 
-                        # ---- 从 remark 提取平台 ----
                         def extract_platform(remark):
                             if not isinstance(remark, str):
                                 return "其他"
-                            if "抖音" in remark or "抖音" in remark:
+                            if "抖音" in remark:
                                 return "抖音"
                             elif "视频号" in remark:
                                 return "视频号"
@@ -869,28 +864,27 @@ with tabs[tab_index_latest]:
 
                         latest_data["平台"] = latest_data["remark"].apply(extract_platform)
 
-                        # ---- 按组织+平台聚合 ----
-                        # 先按组织、平台汇总净销售金额
+                        # 按组织+平台汇总当日金额
                         org_platform = latest_data.groupby(["organization", "平台"]).agg(
                             当日金额=("net_amount", "sum")
                         ).reset_index()
 
-                        # ---- 透视成宽表 ----
+                        # 透视成宽表
                         pivot = org_platform.pivot(index="organization", columns="平台", values="当日金额").fillna(0)
+
                         # 确保所有平台列都存在
                         for plat in ["抖音", "视频号", "其他"]:
                             if plat not in pivot.columns:
                                 pivot[plat] = 0
 
-                        # 计算总计
-                        pivot["当日_总计"] = pivot.sum(axis=1)
+                        # 重命名列（加前缀“当日_”）
+                        pivot.columns = [f"当日_{col}" for col in pivot.columns]
 
-                        # 重命名列
-                        pivot.columns = [f"当日_{col}" if col != "organization" else col for col in pivot.columns]
+                        # 重置索引，将 organization 变为列
                         pivot = pivot.reset_index().rename(columns={"organization": "组织名称"})
 
-                        # 排序
-                        pivot = pivot.sort_values("组织名称")
+                        # 计算总计（明确指定列）
+                        pivot["当日_总计"] = pivot[["当日_抖音", "当日_视频号", "当日_其他"]].sum(axis=1)
 
                         # 调整列顺序
                         cols_order = ["组织名称", "当日_总计", "当日_抖音", "当日_视频号", "当日_其他"]
