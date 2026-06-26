@@ -917,37 +917,63 @@ with tabs[tab_index_range]:
             if start > end:
                 st.error("开始日期不能晚于结束日期")
             else:
-                mask = (st.session_state.df_all_daily["日期"] >= pd.to_datetime(start)) & (st.session_state.df_all_daily["日期"] <= pd.to_datetime(end))
-                range_data = st.session_state.df_all_daily[mask].copy()
-                if range_data.empty:
-                    st.warning("无数据")
+                # 从 product_sales 加载数据（按日期范围过滤）
+                with st.spinner("正在加载数据..."):
+                    prod_df = load_product_sales(st.session_state.table_suffix)
+                if prod_df.empty:
+                    st.warning("无商品数据，无法计算发货/退货")
                 else:
-                    if st.session_state.table_suffix == "_all":
-                        summary = range_data.groupby("店铺名称")["当日金额"].sum().reset_index().rename(columns={"店铺名称": "主播名称"})
-                        summary["累计金额"] = summary["当日金额"].round(2)
-                        summary = summary[["主播名称", "累计金额"]].sort_values("主播名称")
-                        st.dataframe(summary, use_container_width=True, hide_index=True)
-                        st.metric("📊 总业绩合计", f"{summary['累计金额'].sum():,.2f}")
+                    mask = (prod_df["sale_date"] >= pd.to_datetime(start)) & (prod_df["sale_date"] <= pd.to_datetime(end))
+                    range_data = prod_df[mask].copy()
+                    if range_data.empty:
+                        st.warning("所选日期范围内无数据")
                     else:
-                        summary = range_data.groupby("店铺名称")["当日金额"].sum().reset_index()
-                        summary["累计金额"] = summary["当日金额"].round(2)
-                        summary = summary[["店铺名称", "累计金额"]].sort_values("店铺名称")
+                        # 根据数据源决定分组字段
+                        if st.session_state.table_suffix == "_all":
+                            # 全部数据：按主播分组
+                            if "anchor" not in range_data.columns:
+                                range_data["anchor"] = range_data["remark"].astype(str).apply(extract_anchor)
+                            group_col = "anchor"
+                            name_col = "主播名称"
+                        else:
+                            # 非直播/直播：按店铺分组
+                            group_col = "shop_name"
+                            name_col = "店铺名称"
+                        
+                        # 聚合
+                        summary = range_data.groupby(group_col).agg(
+                            发货金额=("ship_amount", "sum"),
+                            退货金额=("return_amount", "sum"),
+                            净销售金额=("net_amount", "sum")
+                        ).reset_index().rename(columns={group_col: name_col})
+                        
+                        # 四舍五入
+                        summary["发货金额"] = summary["发货金额"].round(2)
+                        summary["退货金额"] = summary["退货金额"].round(2)
+                        summary["净销售金额"] = summary["净销售金额"].round(2)
+                        
                         st.dataframe(summary, use_container_width=True, hide_index=True)
-                        douyin_df = summary[summary["店铺名称"].str.contains("抖音", case=False, na=False)]
-                        video_df = summary[summary["店铺名称"].str.contains("视频号", case=False, na=False)]
+                        
+                        # 合计
+                        total_ship = summary["发货金额"].sum()
+                        total_return = summary["退货金额"].sum()
+                        total_net = summary["净销售金额"].sum()
+                        
                         col1, col2, col3 = st.columns(3)
                         with col1:
-                            st.metric("📱 抖音合计", f"{douyin_df['累计金额'].sum():,.2f}")
+                            st.metric("📦 总发货", f"{total_ship:,.2f}")
                         with col2:
-                            st.metric("📺 视频号合计", f"{video_df['累计金额'].sum():,.2f}")
+                            st.metric("📦 总退货", f"{total_return:,.2f}")
                         with col3:
-                            st.metric("📊 总业绩合计", f"{summary['累计金额'].sum():,.2f}")
-                    output = io.BytesIO()
-                    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                        summary.to_excel(writer, index=False)
-                    st.download_button("💾 导出", data=output.getvalue(), file_name=f"累计_{start}_{end}.xlsx")
+                            st.metric("📊 净销售额", f"{total_net:,.2f}")
+                        
+                        # 导出
+                        output = io.BytesIO()
+                        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                            summary.to_excel(writer, index=False)
+                        st.download_button("💾 导出", data=output.getvalue(), file_name=f"累计_{start}_{end}.xlsx")
     else:
-        st.info("暂无数据")
+        st.info("暂无数据，请先上传订单文件")
 
 # ========== 日期查询 ==========
 with tabs[tab_index_query]:
