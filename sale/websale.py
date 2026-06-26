@@ -910,7 +910,6 @@ with tabs[tab_index_latest]:
 # ========== 日期范围累计 ==========
 with tabs[tab_index_range]:
     if st.session_state.get("df_all_daily") is not None and not st.session_state.df_all_daily.empty:
-        c1, c2 = st.columns(2)
         start = st.date_input("开始日期", value=date.today().replace(day=1), key="range_start_final")
         end = st.date_input("结束日期", value=date.today(), key="range_end_final")
         if st.button("计算累计", key="calc_range_final"):
@@ -953,37 +952,40 @@ with tabs[tab_index_range]:
                             range_data = range_data[range_data[group_col].isin(selected_values)]
                             if range_data.empty:
                                 st.warning("所选维度在日期范围内无数据")
-                                st.stop()
+                                # 不再使用 st.stop()，而是显示空表格提示
                         
-                        # 聚合
-                        summary = range_data.groupby(group_col).agg(
-                            发货金额=("ship_amount", "sum"),
-                            退货金额=("return_amount", "sum"),
-                            净销售金额=("net_amount", "sum")
-                        ).reset_index().rename(columns={group_col: name_col})
-                        
-                        summary["发货金额"] = summary["发货金额"].round(2)
-                        summary["退货金额"] = summary["退货金额"].round(2)
-                        summary["净销售金额"] = summary["净销售金额"].round(2)
-                        
-                        st.dataframe(summary, use_container_width=True, hide_index=True)
-                        
-                        total_ship = summary["发货金额"].sum()
-                        total_return = summary["退货金额"].sum()
-                        total_net = summary["净销售金额"].sum()
-                        
-                        col1, col2, col3 = st.columns(3)
-                        with col1:
-                            st.metric("📦 总发货", f"{total_ship:,.2f}")
-                        with col2:
-                            st.metric("📦 总退货", f"{total_return:,.2f}")
-                        with col3:
-                            st.metric("📊 净销售额", f"{total_net:,.2f}")
-                        
-                        output = io.BytesIO()
-                        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                            summary.to_excel(writer, index=False)
-                        st.download_button("💾 导出", data=output.getvalue(), file_name=f"累计_{start}_{end}.xlsx")
+                        # 如果筛选后数据非空，则聚合显示
+                        if not range_data.empty:
+                            summary = range_data.groupby(group_col).agg(
+                                发货金额=("ship_amount", "sum"),
+                                退货金额=("return_amount", "sum"),
+                                净销售金额=("net_amount", "sum")
+                            ).reset_index().rename(columns={group_col: name_col})
+                            
+                            summary["发货金额"] = summary["发货金额"].round(2)
+                            summary["退货金额"] = summary["退货金额"].round(2)
+                            summary["净销售金额"] = summary["净销售金额"].round(2)
+                            
+                            st.dataframe(summary, use_container_width=True, hide_index=True)
+                            
+                            total_ship = summary["发货金额"].sum()
+                            total_return = summary["退货金额"].sum()
+                            total_net = summary["净销售金额"].sum()
+                            
+                            col1, col2, col3 = st.columns(3)
+                            with col1:
+                                st.metric("📦 总发货", f"{total_ship:,.2f}")
+                            with col2:
+                                st.metric("📦 总退货", f"{total_return:,.2f}")
+                            with col3:
+                                st.metric("📊 净销售额", f"{total_net:,.2f}")
+                            
+                            output = io.BytesIO()
+                            with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                                summary.to_excel(writer, index=False)
+                            st.download_button("💾 导出", data=output.getvalue(), file_name=f"累计_{start}_{end}.xlsx")
+                        else:
+                            st.info("当前筛选条件下无数据，请调整筛选条件")
     else:
         st.info("暂无数据，请先上传订单文件")
 
