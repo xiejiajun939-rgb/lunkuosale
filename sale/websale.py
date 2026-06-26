@@ -1743,6 +1743,9 @@ with tabs[tab_index_anchor_compare]:
                                     season_agg = season_agg[season_agg[dimension_col].isin(selected_dimensions)]
                                     if not season_agg.empty:
                                         pivot_season = season_agg.pivot(index="season", columns=dimension_col, values="金额").fillna(0)
+                                        # ========== 修复关键点：补全所有选中的维度列 ==========
+                                        pivot_season = pivot_season.reindex(columns=selected_dimensions, fill_value=0)
+                                        # ====================================================
                                         season_order = ["春", "夏", "秋", "冬"]
                                         pivot_season = pivot_season.reindex([s for s in season_order if s in pivot_season.index])
                                         if not pivot_season.empty:
@@ -1809,6 +1812,9 @@ with tabs[tab_index_anchor_compare]:
                                     year_agg = year_agg[year_agg[dimension_col].isin(selected_dimensions)]
                                     if not year_agg.empty:
                                         pivot_year = year_agg.pivot(index="year", columns=dimension_col, values="金额").fillna(0)
+                                        # ========== 修复关键点：补全所有选中的维度列 ==========
+                                        pivot_year = pivot_year.reindex(columns=selected_dimensions, fill_value=0)
+                                        # ====================================================
                                         pivot_year = pivot_year.sort_index()
                                         if not pivot_year.empty:
                                             fig_year = px.bar(
