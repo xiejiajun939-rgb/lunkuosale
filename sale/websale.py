@@ -821,13 +821,13 @@ tab_index_latest = 0
 tab_index_range = 1
 tab_index_query = 2
 tab_index_ship_return = 3
-tab_index_history = 4
-tab_index_product = 5
-tab_index_anchor_compare = 6
-tab_index_distribution = 7
+tab_index_product = 4
+tab_index_anchor_compare = 5
+tab_index_distribution = 6
 if st.session_state.role == "admin":
-    tab_index_debug = 8
-    tab_index_export = 9
+    tab_index_debug = 7
+    tab_index_export = 8
+    tab_index_history = 9
 
 # ========== 最新日明细 ==========
 with tabs[tab_index_latest]:
