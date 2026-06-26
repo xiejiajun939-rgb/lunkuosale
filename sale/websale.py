@@ -1077,32 +1077,7 @@ with tabs[tab_index_ship_return]:
         else:
             st.info("无日期数据")
 
-# ========== 历史业绩 ==========
-with tabs[tab_index_history]:
-    with st.spinner("正在加载历史数据，请稍候..."):
-        daily_df = load_daily_sales()
-    if not daily_df.empty:
-        if st.session_state.table_suffix == "_all":
-            daily_df = daily_df.rename(columns={"shop_name": "主播名称"})
-        st.dataframe(daily_df, use_container_width=True, hide_index=True)
-        if st.session_state.table_suffix == "_all":
-            st.metric("📊 总业绩合计", f"{daily_df['amount'].sum():,.2f}")
-        else:
-            douyin_df = daily_df[daily_df["shop_name"].str.contains("抖音", case=False, na=False)]
-            video_df = daily_df[daily_df["shop_name"].str.contains("视频号", case=False, na=False)]
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric("📱 抖音合计", f"{douyin_df['amount'].sum():,.2f}")
-            with col2:
-                st.metric("📺 视频号合计", f"{video_df['amount'].sum():,.2f}")
-            with col3:
-                st.metric("📊 总业绩合计", f"{daily_df['amount'].sum():,.2f}")
-        output = io.BytesIO()
-        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            daily_df.to_excel(writer, index=False)
-        st.download_button("💾 导出全部", data=output.getvalue(), file_name="历史业绩.xlsx")
-    else:
-        st.info("暂无历史数据")
+
 
 # ========== 商品分析 ==========
 with tabs[tab_index_product]:
@@ -2186,3 +2161,29 @@ if st.session_state.role == "admin":
                 file_name=f"product_master_{date.today()}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
+# ========== 管理员专属：历史业绩 ==========
+with tabs[tab_index_history]:
+    with st.spinner("正在加载历史数据，请稍候..."):
+        daily_df = load_daily_sales()
+    if not daily_df.empty:
+        if st.session_state.table_suffix == "_all":
+            daily_df = daily_df.rename(columns={"shop_name": "主播名称"})
+        st.dataframe(daily_df, use_container_width=True, hide_index=True)
+        if st.session_state.table_suffix == "_all":
+            st.metric("📊 总业绩合计", f"{daily_df['amount'].sum():,.2f}")
+        else:
+            douyin_df = daily_df[daily_df["shop_name"].str.contains("抖音", case=False, na=False)]
+            video_df = daily_df[daily_df["shop_name"].str.contains("视频号", case=False, na=False)]
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("📱 抖音合计", f"{douyin_df['amount'].sum():,.2f}")
+            with col2:
+                st.metric("📺 视频号合计", f"{video_df['amount'].sum():,.2f}")
+            with col3:
+                st.metric("📊 总业绩合计", f"{daily_df['amount'].sum():,.2f}")
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            daily_df.to_excel(writer, index=False)
+        st.download_button("💾 导出全部", data=output.getvalue(), file_name="历史业绩.xlsx")
+    else:
+        st.info("暂无历史数据")
