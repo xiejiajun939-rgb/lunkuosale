@@ -910,85 +910,101 @@ with tabs[tab_index_latest]:
 # ========== 日期范围累计 ==========
 with tabs[tab_index_range]:
     if st.session_state.get("df_all_daily") is not None and not st.session_state.df_all_daily.empty:
-        start = st.date_input("开始日期", value=date.today().replace(day=1), key="range_start_final")
-        end = st.date_input("结束日期", value=date.today(), key="range_end_final")
-        if st.button("计算累计", key="calc_range_final"):
-            if start > end:
-                st.error("开始日期不能晚于结束日期")
+        # 日期选择放在外部
+        col_date1, col_date2 = st.columns(2)
+        with col_date1:
+            start = st.date_input("开始日期", value=date.today().replace(day=1), key="range_start_final")
+        with col_date2:
+            end = st.date_input("结束日期", value=date.today(), key="range_end_final")
+        
+        # 先加载数据（但为了性能，可以在点击按钮后加载，但为了获取筛选选项，需要先加载一次）
+        # 为避免重复加载，可以在按钮内部加载，但筛选选项需要动态生成，所以必须提前加载数据以获取所有维度值。
+        # 但数据加载可能耗时，所以采用缓存。
+        # 更好的做法：在按钮内部加载数据并生成筛选选项，但多选框需要放在按钮外部以保持状态。
+        # 解决方案：在按钮内部加载数据，同时生成筛选选项，但将多选框放在按钮外部，通过 session_state 传递。
+        # 简单做法：把多选框放在按钮外部，按钮内部只负责计算。
+        # 但为了获取维度值，我们可以在按钮外部加载一次数据（但数据可能很大），或者使用缓存。
+        # 实际上，在按钮外部加载数据会使得每次页面刷新都加载，影响性能。但为了功能，可以这样。
+        # 或者，首次加载时使用缓存，然后按钮内部使用缓存数据。
+        # 我们采用：在按钮外部使用 load_product_sales 加载（带缓存），但这样会每次刷新都加载，可以接受。
+        with st.spinner("加载数据..."):
+            prod_df = load_product_sales(st.session_state.table_suffix)
+        
+        if prod_df.empty:
+            st.warning("无商品数据，无法计算发货/退货")
+        else:
+            # 预先获取所有维度值（用于筛选多选框）
+            if st.session_state.table_suffix == "_all":
+                if "anchor" not in prod_df.columns:
+                    prod_df["anchor"] = prod_df["remark"].astype(str).apply(extract_anchor)
+                group_col = "anchor"
+                name_col = "主播名称"
             else:
-                with st.spinner("正在加载数据..."):
-                    prod_df = load_product_sales(st.session_state.table_suffix)
-                if prod_df.empty:
-                    st.warning("无商品数据，无法计算发货/退货")
+                group_col = "shop_name"
+                name_col = "店铺名称"
+            
+            all_values = prod_df[group_col].dropna().unique().tolist()
+            all_values = sorted([v for v in all_values if v != "" and v is not None])
+            
+            # 筛选多选框（放在按钮外部）
+            selected_values = st.multiselect(
+                f"筛选 {name_col}（不选则显示全部）",
+                options=all_values,
+                default=[]
+            )
+            
+            # 计算按钮
+            if st.button("计算累计", key="calc_range_final"):
+                if start > end:
+                    st.error("开始日期不能晚于结束日期")
                 else:
                     mask = (prod_df["sale_date"] >= pd.to_datetime(start)) & (prod_df["sale_date"] <= pd.to_datetime(end))
                     range_data = prod_df[mask].copy()
                     if range_data.empty:
                         st.warning("所选日期范围内无数据")
                     else:
-                        # 确定分组字段和显示名称
-                        if st.session_state.table_suffix == "_all":
-                            if "anchor" not in range_data.columns:
-                                range_data["anchor"] = range_data["remark"].astype(str).apply(extract_anchor)
-                            group_col = "anchor"
-                            name_col = "主播名称"
-                        else:
-                            group_col = "shop_name"
-                            name_col = "店铺名称"
-                        
-                        # 获取所有可用的维度值（排除空值）
-                        all_values = range_data[group_col].dropna().unique().tolist()
-                        all_values = sorted([v for v in all_values if v != "" and v is not None])
-                        
-                        # 增加筛选多选框
-                        selected_values = st.multiselect(
-                            f"筛选 {name_col}（不选则显示全部）",
-                            options=all_values,
-                            default=[]
-                        )
-                        
                         # 应用筛选
                         if selected_values:
                             range_data = range_data[range_data[group_col].isin(selected_values)]
                             if range_data.empty:
                                 st.warning("所选维度在日期范围内无数据")
-                                # 不再使用 st.stop()，而是显示空表格提示
-                        
-                        # 如果筛选后数据非空，则聚合显示
-                        if not range_data.empty:
-                            summary = range_data.groupby(group_col).agg(
-                                发货金额=("ship_amount", "sum"),
-                                退货金额=("return_amount", "sum"),
-                                净销售金额=("net_amount", "sum")
-                            ).reset_index().rename(columns={group_col: name_col})
-                            
-                            summary["发货金额"] = summary["发货金额"].round(2)
-                            summary["退货金额"] = summary["退货金额"].round(2)
-                            summary["净销售金额"] = summary["净销售金额"].round(2)
-                            
-                            st.dataframe(summary, use_container_width=True, hide_index=True)
-                            
-                            total_ship = summary["发货金额"].sum()
-                            total_return = summary["退货金额"].sum()
-                            total_net = summary["净销售金额"].sum()
-                            
-                            col1, col2, col3 = st.columns(3)
-                            with col1:
-                                st.metric("📦 总发货", f"{total_ship:,.2f}")
-                            with col2:
-                                st.metric("📦 总退货", f"{total_return:,.2f}")
-                            with col3:
-                                st.metric("📊 净销售额", f"{total_net:,.2f}")
-                            
-                            output = io.BytesIO()
-                            with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                                summary.to_excel(writer, index=False)
-                            st.download_button("💾 导出", data=output.getvalue(), file_name=f"累计_{start}_{end}.xlsx")
-                        else:
-                            st.info("当前筛选条件下无数据，请调整筛选条件")
+                                # 不要用 st.stop()，而是显示空表格
+                                # 这里可以显示一个空表格
+                                summary = pd.DataFrame(columns=[name_col, "发货金额", "退货金额", "净销售金额"])
+                                st.dataframe(summary, use_container_width=True, hide_index=True)
+                                # 不显示总计
+                            else:
+                                # 聚合
+                                summary = range_data.groupby(group_col).agg(
+                                    发货金额=("ship_amount", "sum"),
+                                    退货金额=("return_amount", "sum"),
+                                    净销售金额=("net_amount", "sum")
+                                ).reset_index().rename(columns={group_col: name_col})
+                                
+                                summary["发货金额"] = summary["发货金额"].round(2)
+                                summary["退货金额"] = summary["退货金额"].round(2)
+                                summary["净销售金额"] = summary["净销售金额"].round(2)
+                                
+                                st.dataframe(summary, use_container_width=True, hide_index=True)
+                                
+                                total_ship = summary["发货金额"].sum()
+                                total_return = summary["退货金额"].sum()
+                                total_net = summary["净销售金额"].sum()
+                                
+                                col1, col2, col3 = st.columns(3)
+                                with col1:
+                                    st.metric("📦 总发货", f"{total_ship:,.2f}")
+                                with col2:
+                                    st.metric("📦 总退货", f"{total_return:,.2f}")
+                                with col3:
+                                    st.metric("📊 净销售额", f"{total_net:,.2f}")
+                                
+                                output = io.BytesIO()
+                                with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                                    summary.to_excel(writer, index=False)
+                                st.download_button("💾 导出", data=output.getvalue(), file_name=f"累计_{start}_{end}.xlsx")
     else:
         st.info("暂无数据，请先上传订单文件")
-
 # ========== 日期查询 ==========
 with tabs[tab_index_query]:
     if st.session_state.get("df_all_daily") is not None and not st.session_state.df_all_daily.empty:
