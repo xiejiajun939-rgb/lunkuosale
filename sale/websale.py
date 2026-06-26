@@ -805,12 +805,12 @@ with st.sidebar:
 # ========== 动态创建选项卡 ==========
 base_tab_labels = [
     "📅 最新日明细", "🏪 日期范围累计", "🔍 日期查询",
-    "📦 发货退货明细", "🗄️ 历史业绩", "📊 商品分析",
+    "📦 发货退货明细", "📊 商品分析",
     "🎤 销售对比", "📈 销售分布与品牌"
 ]
 admin_extra_tabs = []
 if st.session_state.role == "admin":
-    admin_extra_tabs = ["🔧 调试", "📚 商品库导出"]
+    admin_extra_tabs = ["🔧 调试", "📚 商品库导出", "🗄️ 历史业绩"]
     all_tab_labels = base_tab_labels + admin_extra_tabs
 else:
     all_tab_labels = base_tab_labels
