@@ -167,9 +167,22 @@ def load_daily_sales(suffix=None):
         return pd.DataFrame()
     try:
         table_name = get_table_name("daily_sales", suffix)
-        resp = supabase.table(table_name).select("*").execute()
-        if resp.data:
-            df = pd.DataFrame(resp.data)
+        all_data = []
+        page = 0
+        page_size = 1000
+        while True:
+            resp = supabase.table(table_name)\
+                .select("*")\
+                .range(page * page_size, (page + 1) * page_size - 1)\
+                .execute()
+            if not resp.data:
+                break
+            all_data.extend(resp.data)
+            if len(resp.data) < page_size:
+                break
+            page += 1
+        if all_data:
+            df = pd.DataFrame(all_data)
             df["sale_date"] = pd.to_datetime(df["sale_date"])
             return df
         else:
