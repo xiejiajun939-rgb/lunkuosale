@@ -1,6 +1,13 @@
+# -*- coding: utf-8 -*-
+"""
+订单业绩统计工具 - 完整版（含快捷日期、缓存优化、精细化权限）
+管理员账号：admin / 1234567890
+子账号存储在 Supabase 的 sub_accounts 表中
+"""
+
 import streamlit as st
 import pandas as pd
-from datetime import date
+from datetime import date, timedelta
 import io
 import hashlib
 import time
@@ -9,7 +16,6 @@ import numpy as np
 from supabase import create_client
 import plotly.express as px
 import plotly.graph_objects as go
-from datetime import date, timedelta
 
 st.set_page_config(page_title="业绩统计工具", layout="wide", page_icon="📊")
 
@@ -46,7 +52,7 @@ def get_table_name(base_name, suffix=None):
         suffix = st.session_state.get("table_suffix", "")
     return f"{base_name}{suffix}"
 
-# ========== 子账号数据库操作（新结构） ==========
+# ========== 子账号数据库操作 ==========
 def load_sub_accounts_from_db():
     if supabase is None:
         return {}
@@ -55,11 +61,8 @@ def load_sub_accounts_from_db():
         if resp.data:
             sub_users = {}
             for row in resp.data:
-                # 新结构：permissions 字段存储为 JSON，格式如 {"": ["tab1","tab2"], "_live": [...], "_all": [...]}
                 perms = row.get("permissions", {})
-                # 兼容旧数据：若没有 perms，则从 allowed_tabs 迁移
                 if not perms and "allowed_tabs" in row:
-                    # 默认所有数据源权限相同
                     perms = {"": row["allowed_tabs"], "_live": row["allowed_tabs"], "_all": row["allowed_tabs"]}
                 sub_users[row["username"]] = {
                     "password": row["password"],
@@ -188,6 +191,48 @@ def apply_data_permission(df, username=None, role=None):
             df = df[df["anchor"].isin(filter_shop_names)]
     return df
 
+# ========== 日期快捷按钮通用函数 ==========
+def date_quick_buttons(start_key, end_key, default_start=None, default_end=None):
+    if start_key not in st.session_state:
+        st.session_state[start_key] = default_start or date.today().replace(day=1)
+    if end_key not in st.session_state:
+        st.session_state[end_key] = default_end or date.today()
+    cols = st.columns(4)
+    with cols[0]:
+        if st.button("📅 今日", key=f"{start_key}_today"):
+            today = date.today()
+            st.session_state[start_key] = today
+            st.session_state[end_key] = today
+            st.rerun()
+    with cols[1]:
+        if st.button("📆 本周", key=f"{start_key}_week"):
+            today = date.today()
+            start_of_week = today - timedelta(days=today.weekday())
+            end_of_week = start_of_week + timedelta(days=6)
+            st.session_state[start_key] = start_of_week
+            st.session_state[end_key] = end_of_week
+            st.rerun()
+    with cols[2]:
+        if st.button("📊 近7天", key=f"{start_key}_7days"):
+            today = date.today()
+            start = today - timedelta(days=6)
+            st.session_state[start_key] = start
+            st.session_state[end_key] = today
+            st.rerun()
+    with cols[3]:
+        if st.button("📆 本月", key=f"{start_key}_month"):
+            today = date.today()
+            start_of_month = today.replace(day=1)
+            if today.month == 12:
+                end_of_month = today.replace(year=today.year+1, month=1, day=1) - timedelta(days=1)
+            else:
+                end_of_month = today.replace(month=today.month+1, day=1) - timedelta(days=1)
+            if today < end_of_month:
+                end_of_month = today - timedelta(days=1)
+            st.session_state[start_key] = start_of_month
+            st.session_state[end_key] = end_of_month
+            st.rerun()
+
 # ========== 辅助函数 ==========
 def extract_anchor(remark):
     if not isinstance(remark, str):
@@ -195,7 +240,7 @@ def extract_anchor(remark):
     match = re.search(r'主播[：:]([^_]+)', remark)
     return match.group(1).strip() if match else None
 
-@st.cache_data(ttl=300)  # 缓存5分钟
+@st.cache_data(ttl=300)
 def load_daily_sales(suffix=None, apply_filter=True):
     if supabase is None:
         return pd.DataFrame()
@@ -204,7 +249,6 @@ def load_daily_sales(suffix=None, apply_filter=True):
         all_data = []
         page = 0
         page_size = 1000
-        # 只选择必要列，避免 select(*)
         query_columns = "id, sale_date, shop_name, amount, cumulative_amount"
         while True:
             resp = supabase.table(table_name)\
@@ -462,7 +506,7 @@ def save_product_sales(df_orders, suffix=None):
             batch = records[i:i+batch_size]
             supabase.table(table_name).upsert(batch, on_conflict="remark").execute()
 
-@st.cache_data(ttl=300)  # 缓存5分钟
+@st.cache_data(ttl=300)
 def load_product_sales(suffix=None, apply_filter=True):
     if supabase is None:
         return pd.DataFrame()
@@ -471,7 +515,6 @@ def load_product_sales(suffix=None, apply_filter=True):
         all_data = []
         page = 0
         page_size = 1000
-        # 核心字段，不含 image_url 等大字段（后续可单独按需加载）
         needed_cols = "sale_date, shop_name, product_code, style_code, brand, year, season, product_category, style, color_code, size_code, ship_amount, return_amount, net_amount, remark"
         while True:
             resp = supabase.table(table_name)\
@@ -487,16 +530,13 @@ def load_product_sales(suffix=None, apply_filter=True):
         if all_data:
             df = pd.DataFrame(all_data)
             df["sale_date"] = pd.to_datetime(df["sale_date"])
-            # 补全可能缺失的 style_code
             if "style_code" not in df.columns or df["style_code"].isnull().all():
                 df["style_code"] = df["product_code"].str[:8]
             else:
                 df["style_code"] = df["style_code"].fillna(df["product_code"].str[:8])
-            # 金额字段转数值
             for col in ["ship_amount", "return_amount", "net_amount"]:
                 if col in df.columns:
                     df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
-            # 主播信息（用于 _all 数据）
             if suffix in ["_live", "_all"] and "anchor" not in df.columns:
                 df["anchor"] = df["remark"].apply(extract_anchor)
             if apply_filter:
@@ -701,7 +741,7 @@ rebuild_daily_data(st.session_state.table_suffix)
 if st.session_state.target_dict == {}:
     st.session_state.target_dict = load_targets(st.session_state.table_suffix)
 
-# ========== 侧边栏（含数据源切换） ==========
+# ========== 侧边栏 ==========
 with st.sidebar:
     st.header("📂 数据加载")
     st.subheader("🔄 数据源切换")
@@ -709,20 +749,16 @@ with st.sidebar:
     current_source_name = suffix_names.get(st.session_state.table_suffix, "未知")
     st.info(f"📌 当前正在查看：**{current_source_name}**")
 
-    # 可用数据源：管理员可切换所有，子账号根据其 default_suffix 和权限决定
     if st.session_state.role == "admin":
         available_suffixes = {"非直播数据": "", "直播数据": "_live", "全部数据": "_all"}
     else:
         user_info = st.session_state.sub_users.get(st.session_state.username, {})
         default_suffix = user_info.get("default_suffix", "")
-        # 允许查看所有数据源（仅当权限中存在对应键，且至少有一个选项卡）
         perms = user_info.get("permissions", {})
         available = {}
-        # 检查每个数据源是否有权限（即是否有非空选项卡列表）
         for name, suf in [("非直播数据", ""), ("直播数据", "_live"), ("全部数据", "_all")]:
             if suf in perms and perms[suf]:
                 available[name] = suf
-        # 如果没有任何权限，则只显示默认数据源
         if not available:
             available = {suffix_names.get(default_suffix, "非直播数据"): default_suffix}
         available_suffixes = available
@@ -741,7 +777,6 @@ with st.sidebar:
             st.rerun()
     st.markdown("---")
 
-    # ----- 上传和工具（仅管理员可见） -----
     if st.session_state.role == "admin":
         current_display_suffix = st.session_state.table_suffix
         def handle_upload(uploaded_file, suffix, file_type="order"):
@@ -839,7 +874,7 @@ with st.sidebar:
                 del st.session_state[key]
         st.rerun()
 
-# ========== 动态创建选项卡（根据当前数据源和用户权限） ==========
+# ========== 动态创建选项卡 ==========
 base_tabs = [
     "📅 最新日明细",
     "🏪 日期范围累计",
@@ -851,25 +886,19 @@ base_tabs = [
 ]
 admin_extra_tabs = ["🔧 调试", "📚 商品库导出", "🗄️ 历史业绩", "⚙️ 系统设置"]
 
-# 确定当前用户可见的选项卡列表
 if st.session_state.role == "admin":
     tab_labels = base_tabs + admin_extra_tabs
 else:
-    # 子账号：根据当前数据源 suffix 获取权限
     current_suffix = st.session_state.table_suffix
     user_info = st.session_state.sub_users.get(st.session_state.username, {})
     perms = user_info.get("permissions", {})
-    # 如果当前数据源没有单独配置，则使用默认（通常为空字符串）
     allowed = perms.get(current_suffix, [])
-    # 如果 allowed 为空，则尝试使用默认权限（非直播）
     if not allowed and "" in perms:
         allowed = perms[""]
-    # 如果仍然为空，则使用 base_tabs（或空）
     if not allowed:
-        allowed = base_tabs  # 或者 [] 表示无权限
-    # 过滤掉不在 base_tabs 中的无效选项卡
+        allowed = base_tabs
     valid_tabs = [tab for tab in allowed if tab in base_tabs]
-    tab_labels = valid_tabs if valid_tabs else base_tabs  # 至少显示基础
+    tab_labels = valid_tabs if valid_tabs else base_tabs
 
 tabs = st.tabs(tab_labels)
 
@@ -971,11 +1000,18 @@ if idx_latest is not None:
 if idx_range is not None:
     with tabs[idx_range]:
         if st.session_state.get("df_all_daily") is not None and not st.session_state.df_all_daily.empty:
+            date_quick_buttons("range_start_final", "range_end_final",
+                               default_start=date.today().replace(day=1),
+                               default_end=date.today())
             col_date1, col_date2 = st.columns(2)
             with col_date1:
-                start = st.date_input("开始日期", value=date.today().replace(day=1), key="range_start_final")
+                start = st.date_input("开始日期",
+                                      value=st.session_state.get("range_start_final", date.today().replace(day=1)),
+                                      key="range_start_final")
             with col_date2:
-                end = st.date_input("结束日期", value=date.today(), key="range_end_final")
+                end = st.date_input("结束日期",
+                                    value=st.session_state.get("range_end_final", date.today()),
+                                    key="range_end_final")
             with st.spinner("加载数据..."):
                 prod_df = load_product_sales(st.session_state.table_suffix)
             if prod_df.empty:
@@ -1042,7 +1078,12 @@ if idx_range is not None:
 if idx_query is not None:
     with tabs[idx_query]:
         if st.session_state.get("df_all_daily") is not None and not st.session_state.df_all_daily.empty:
-            query_date = st.date_input("查询日期", value=date.today(), key="query_date_final")
+            if st.button("📅 今日", key="query_today"):
+                st.session_state["query_date_final"] = date.today()
+                st.rerun()
+            query_date = st.date_input("查询日期",
+                                       value=st.session_state.get("query_date_final", date.today()),
+                                       key="query_date_final")
             if st.button("查询", key="query_btn_final"):
                 res = st.session_state.df_all_daily[st.session_state.df_all_daily["日期"] == pd.to_datetime(query_date)].copy()
                 if res.empty:
@@ -1085,6 +1126,10 @@ if idx_ship_return is not None:
         else:
             dates = sorted(prod_df["sale_date"].unique(), reverse=True)
             if dates:
+                if st.button("📅 今日", key="ship_today"):
+                    max_date = prod_df["sale_date"].max().date()
+                    st.session_state["ship_return_date_final"] = max_date
+                    st.rerun()
                 selected_date = st.selectbox("选择日期", dates, format_func=lambda x: x.strftime("%Y-%m-%d"), key="ship_return_date_final")
                 filtered = prod_df[prod_df["sale_date"] == selected_date]
                 if st.session_state.table_suffix == "_all":
@@ -1112,7 +1157,7 @@ if idx_ship_return is not None:
             else:
                 st.info("无日期数据")
 
-# ========== 历史业绩（仅管理员可见） ==========
+# ========== 历史业绩 ==========
 if idx_history is not None:
     with tabs[idx_history]:
         with st.spinner("正在加载历史数据，请稍候..."):
@@ -1213,11 +1258,22 @@ if idx_product is not None:
             min_date = prod_df["sale_date"].min().date()
             max_date = prod_df["sale_date"].max().date()
             
+            date_quick_buttons("prod_start_final", "prod_end_final",
+                               default_start=min_date,
+                               default_end=max_date)
             col_date1, col_date2 = st.columns(2)
             with col_date1:
-                start_date = st.date_input("开始日期", value=min_date, key="prod_start_final", min_value=min_date, max_value=max_date)
+                start_date = st.date_input("开始日期",
+                                           value=st.session_state.get("prod_start_final", min_date),
+                                           key="prod_start_final",
+                                           min_value=min_date,
+                                           max_value=max_date)
             with col_date2:
-                end_date = st.date_input("结束日期", value=max_date, key="prod_end_final", min_value=min_date, max_value=max_date)
+                end_date = st.date_input("结束日期",
+                                         value=st.session_state.get("prod_end_final", max_date),
+                                         key="prod_end_final",
+                                         min_value=min_date,
+                                         max_value=max_date)
             
             st.subheader("🔍 筛选条件")
             col_platform, col_shop = st.columns(2)
@@ -1681,11 +1737,23 @@ if idx_anchor_compare is not None:
                 
                 min_date = prod_df["sale_date"].min().date()
                 max_date = prod_df["sale_date"].max().date()
+                
+                date_quick_buttons("compare_start", "compare_end",
+                                   default_start=min_date,
+                                   default_end=max_date)
                 col_date1, col_date2 = st.columns(2)
                 with col_date1:
-                    start_date = st.date_input("开始日期", value=min_date, key="compare_start", min_value=min_date, max_value=max_date)
+                    start_date = st.date_input("开始日期",
+                                               value=st.session_state.get("compare_start", min_date),
+                                               key="compare_start",
+                                               min_value=min_date,
+                                               max_value=max_date)
                 with col_date2:
-                    end_date = st.date_input("结束日期", value=max_date, key="compare_end", min_value=min_date, max_value=max_date)
+                    end_date = st.date_input("结束日期",
+                                             value=st.session_state.get("compare_end", max_date),
+                                             key="compare_end",
+                                             min_value=min_date,
+                                             max_value=max_date)
                 
                 if not selected_dimensions:
                     st.info(f"请至少选择一个{dimension_name}")
@@ -1988,13 +2056,25 @@ if idx_distribution is not None:
                     prod_df["anchor"] = prod_df["remark"].astype(str).apply(extract_anchor)
             
             st.markdown("#### 筛选条件")
-            col_date1, col_date2 = st.columns(2)
             min_date = prod_df["sale_date"].min().date()
             max_date = prod_df["sale_date"].max().date()
+            
+            date_quick_buttons("dist_start_v2", "dist_end_v2",
+                               default_start=min_date,
+                               default_end=max_date)
+            col_date1, col_date2 = st.columns(2)
             with col_date1:
-                start_date = st.date_input("开始日期", value=min_date, key="dist_start_v2", min_value=min_date, max_value=max_date)
+                start_date = st.date_input("开始日期",
+                                           value=st.session_state.get("dist_start_v2", min_date),
+                                           key="dist_start_v2",
+                                           min_value=min_date,
+                                           max_value=max_date)
             with col_date2:
-                end_date = st.date_input("结束日期", value=max_date, key="dist_end_v2", min_value=min_date, max_value=max_date)
+                end_date = st.date_input("结束日期",
+                                         value=st.session_state.get("dist_end_v2", max_date),
+                                         key="dist_end_v2",
+                                         min_value=min_date,
+                                         max_value=max_date)
             
             col_platform, col_shop = st.columns(2)
             with col_platform:
@@ -2200,7 +2280,7 @@ if idx_distribution is not None:
                 else:
                     st.info("当前筛选条件下无首单礼金商品")
 
-# ========== 系统设置（仅管理员）- 使用表单防止即时刷新 ==========
+# ========== 系统设置 ==========
 if idx_system is not None:
     with tabs[idx_system]:
         st.subheader("👥 账号管理与权限设置（按数据源分别设置）")
@@ -2214,94 +2294,83 @@ if idx_system is not None:
         if st.session_state.sub_users:
             for username, info in list(st.session_state.sub_users.items()):
                 with st.expander(f"账号：{username}"):
-                    # 使用 st.form 包裹，避免即时刷新
-                    with st.form(key=f"form_{username}"):
-                        st.markdown(f"**{username}** 的权限配置")
-                        # 获取当前权限字典
-                        perms = info.get("permissions", {})
-                        for suf in ["", "_live", "_all"]:
-                            if suf not in perms:
-                                perms[suf] = []
-                        # 显示三个数据源的选项卡多选
-                        suffix_display = {"": "非直播数据", "_live": "直播数据", "_all": "全部数据"}
-                        new_perms = {}
-                        for suf, display_name in suffix_display.items():
-                            current_allowed = perms.get(suf, [])
-                            all_options = base_tabs
-                            default = [tab for tab in current_allowed if tab in all_options]
-                            # 使用唯一的 key
-                            selected = st.multiselect(
-                                f"{display_name} 允许的选项卡",
-                                options=all_options,
-                                default=default,
-                                key=f"perm_{username}_{suf}_form"
-                            )
-                            new_perms[suf] = selected
-                        
-                        # 默认数据源选择
-                        current_default = info.get("default_suffix", "")
-                        default_options = {"非直播数据": "", "直播数据": "_live", "全部数据": "_all"}
-                        default_display = [k for k, v in default_options.items() if v == current_default]
-                        default_display = default_display[0] if default_display else "非直播数据"
-                        new_default_display = st.selectbox(
-                            "默认数据源",
-                            options=list(default_options.keys()),
-                            index=list(default_options.keys()).index(default_display),
-                            key=f"default_suffix_{username}_form"
+                    st.markdown(f"**{username}** 的权限配置")
+                    perms = info.get("permissions", {})
+                    for suf in ["", "_live", "_all"]:
+                        if suf not in perms:
+                            perms[suf] = []
+                    suffix_display = {"": "非直播数据", "_live": "直播数据", "_all": "全部数据"}
+                    new_perms = {}
+                    for suf, display_name in suffix_display.items():
+                        current_allowed = perms.get(suf, [])
+                        all_options = base_tabs
+                        default = [tab for tab in current_allowed if tab in all_options]
+                        selected = st.multiselect(
+                            f"{display_name} 允许的选项卡",
+                            options=all_options,
+                            default=default,
+                            key=f"perm_{username}_{suf}"
                         )
-                        new_default = default_options[new_default_display]
-
-                        # 数据过滤权限
-                        st.markdown("**数据过滤权限**")
-                        platform_options = ["all", "抖音", "视频号"]
-                        current_platform = info.get("filter_platform", "all")
-                        new_platform = st.selectbox(
-                            "限制平台（all=全部）",
-                            options=platform_options,
-                            index=platform_options.index(current_platform) if current_platform in platform_options else 0,
-                            key=f"platform_{username}_form"
-                        )
-                        
-                        @st.cache_data(ttl=600)
-                        def get_all_shop_names():
-                            df = load_product_sales(apply_filter=False)
-                            if df.empty:
-                                return []
-                            if st.session_state.table_suffix == "_all":
-                                if "anchor" in df.columns:
-                                    return sorted(df["anchor"].dropna().unique().tolist())
-                                else:
-                                    return []
-                            else:
-                                if "shop_name" in df.columns:
-                                    return sorted(df["shop_name"].dropna().unique().tolist())
-                                else:
-                                    return []
-                        all_shop_names = get_all_shop_names()
-                        current_shop_names = info.get("filter_shop_names", [])
-                        current_shop_names = [name for name in current_shop_names if name in all_shop_names]
-                        new_shop_names = st.multiselect(
-                            "限制店铺/主播（空表示全部）",
-                            options=all_shop_names,
-                            default=current_shop_names,
-                            key=f"shops_{username}_form"
-                        )
-
-                        # 提交按钮
-                        submitted = st.form_submit_button("保存全部权限")
-                        if submitted:
-                            st.session_state.sub_users[username]["permissions"] = new_perms
-                            st.session_state.sub_users[username]["default_suffix"] = new_default
-                            st.session_state.sub_users[username]["filter_platform"] = new_platform
-                            st.session_state.sub_users[username]["filter_shop_names"] = new_shop_names
-                            ok, msg = save_sub_account_to_db(username, st.session_state.sub_users[username])
-                            if ok:
-                                st.success(f"权限已保存到数据库")
-                                st.rerun()
-                            else:
-                                st.error(f"保存失败：{msg}")
+                        new_perms[suf] = selected
                     
-                    # 删除按钮放在表单外部，避免意外提交
+                    current_default = info.get("default_suffix", "")
+                    default_options = {"非直播数据": "", "直播数据": "_live", "全部数据": "_all"}
+                    default_display = [k for k, v in default_options.items() if v == current_default]
+                    default_display = default_display[0] if default_display else "非直播数据"
+                    new_default_display = st.selectbox(
+                        "默认数据源",
+                        options=list(default_options.keys()),
+                        index=list(default_options.keys()).index(default_display),
+                        key=f"default_suffix_{username}"
+                    )
+                    new_default = default_options[new_default_display]
+
+                    st.markdown("**数据过滤权限**")
+                    platform_options = ["all", "抖音", "视频号"]
+                    current_platform = info.get("filter_platform", "all")
+                    new_platform = st.selectbox(
+                        "限制平台（all=全部）",
+                        options=platform_options,
+                        index=platform_options.index(current_platform) if current_platform in platform_options else 0,
+                        key=f"platform_{username}"
+                    )
+                    @st.cache_data(ttl=600)
+                    def get_all_shop_names():
+                        df = load_product_sales(apply_filter=False)
+                        if df.empty:
+                            return []
+                        if st.session_state.table_suffix == "_all":
+                            if "anchor" in df.columns:
+                                return sorted(df["anchor"].dropna().unique().tolist())
+                            else:
+                                return []
+                        else:
+                            if "shop_name" in df.columns:
+                                return sorted(df["shop_name"].dropna().unique().tolist())
+                            else:
+                                return []
+                    all_shop_names = get_all_shop_names()
+                    current_shop_names = info.get("filter_shop_names", [])
+                    current_shop_names = [name for name in current_shop_names if name in all_shop_names]
+                    new_shop_names = st.multiselect(
+                        "限制店铺/主播（空表示全部）",
+                        options=all_shop_names,
+                        default=current_shop_names,
+                        key=f"shops_{username}"
+                    )
+
+                    if st.button(f"保存全部权限", key=f"save_perm_{username}"):
+                        st.session_state.sub_users[username]["permissions"] = new_perms
+                        st.session_state.sub_users[username]["default_suffix"] = new_default
+                        st.session_state.sub_users[username]["filter_platform"] = new_platform
+                        st.session_state.sub_users[username]["filter_shop_names"] = new_shop_names
+                        ok, msg = save_sub_account_to_db(username, st.session_state.sub_users[username])
+                        if ok:
+                            st.success(f"权限已保存到数据库")
+                            st.rerun()
+                        else:
+                            st.error(f"保存失败：{msg}")
+                    
                     if st.button(f"删除账号", key=f"del_{username}"):
                         ok, msg = delete_sub_account_from_db(username)
                         if ok:
@@ -2314,39 +2383,37 @@ if idx_system is not None:
             st.info("暂无子账号")
         
         with st.expander("➕ 创建新子账号"):
-            with st.form(key="create_account_form"):
-                col1, col2 = st.columns(2)
-                with col1:
-                    new_username = st.text_input("用户名", key="new_username_sys_form")
-                    new_password = st.text_input("密码", type="password", key="new_password_sys_form")
-                with col2:
-                    default_suffix = st.selectbox("默认数据源", ["非直播数据", "直播数据", "全部数据"], key="new_default_suffix_sys_form")
-                    suffix_map = {"非直播数据": "", "直播数据": "_live", "全部数据": "_all"}
-                    default_perms = {suf: base_tabs for suf in ["", "_live", "_all"]}
-                    default_platform = "all"
-                submitted_create = st.form_submit_button("创建子账号")
-                if submitted_create:
-                    if new_username and new_password:
-                        if new_username in st.session_state.sub_users:
-                            st.error("用户名已存在")
-                        else:
-                            new_info = {
-                                "password": new_password,
-                                "role": "viewer",
-                                "default_suffix": suffix_map[default_suffix],
-                                "permissions": default_perms,
-                                "filter_platform": default_platform,
-                                "filter_shop_names": []
-                            }
-                            ok, msg = save_sub_account_to_db(new_username, new_info)
-                            if ok:
-                                st.session_state.sub_users[new_username] = new_info
-                                st.success(f"子账号 {new_username} 创建成功（已保存到数据库）")
-                                st.rerun()
-                            else:
-                                st.error(f"创建失败：{msg}")
+            col1, col2 = st.columns(2)
+            with col1:
+                new_username = st.text_input("用户名", key="new_username_sys")
+                new_password = st.text_input("密码", type="password", key="new_password_sys")
+            with col2:
+                default_suffix = st.selectbox("默认数据源", ["非直播数据", "直播数据", "全部数据"], key="new_default_suffix_sys")
+                suffix_map = {"非直播数据": "", "直播数据": "_live", "全部数据": "_all"}
+                default_perms = {suf: base_tabs for suf in ["", "_live", "_all"]}
+                default_platform = "all"
+            if st.button("创建子账号", key="create_sys"):
+                if new_username and new_password:
+                    if new_username in st.session_state.sub_users:
+                        st.error("用户名已存在")
                     else:
-                        st.error("请填写用户名和密码")
+                        new_info = {
+                            "password": new_password,
+                            "role": "viewer",
+                            "default_suffix": suffix_map[default_suffix],
+                            "permissions": default_perms,
+                            "filter_platform": default_platform,
+                            "filter_shop_names": []
+                        }
+                        ok, msg = save_sub_account_to_db(new_username, new_info)
+                        if ok:
+                            st.session_state.sub_users[new_username] = new_info
+                            st.success(f"子账号 {new_username} 创建成功（已保存到数据库）")
+                            st.rerun()
+                        else:
+                            st.error(f"创建失败：{msg}")
+                else:
+                    st.error("请填写用户名和密码")
 
 # ========== 调试 ==========
 if idx_debug is not None:
