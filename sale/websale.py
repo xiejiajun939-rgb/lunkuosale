@@ -19,7 +19,7 @@ import plotly.graph_objects as go
 
 st.set_page_config(page_title="业绩统计工具", layout="wide", page_icon="📊")
 
-# ========== 自定义CSS - 调整标题比例和布局 ==========
+# ========== 自定义CSS ==========
 st.markdown("""
 <style>
     .custom-main-title {
@@ -75,7 +75,14 @@ st.markdown("""
 
 # ========== 子账号存储 ==========
 if "sub_users" not in st.session_state:
-    st.session_state.sub_users = {"NC01": {"password": "123456", "role": "viewer", "default_suffix": "_all"}}
+    st.session_state.sub_users = {
+        "NC01": {
+            "password": "123456",
+            "role": "viewer",
+            "default_suffix": "_all",
+            "allowed_tabs": ["📊 商品分析", "🎤 销售对比", "📈 销售分布与品牌"]
+        }
+    }
 
 def get_all_users():
     users = {
@@ -548,42 +555,6 @@ def load_target_file(uploaded_file, suffix):
     except Exception as e:
         return False, str(e)
 
-def manage_sub_accounts():
-    st.subheader("👥 子账号管理")
-    with st.expander("创建新子账号"):
-        new_username = st.text_input("用户名", key="new_username")
-        new_password = st.text_input("密码", type="password", key="new_password")
-        default_suffix = st.selectbox("默认数据源", ["非直播数据", "直播数据", "全部数据"], key="new_default_suffix")
-        suffix_map = {"非直播数据": "", "直播数据": "_live", "全部数据": "_all"}
-        if st.button("创建子账号"):
-            if new_username and new_password:
-                if new_username in st.session_state.sub_users:
-                    st.error("用户名已存在")
-                else:
-                    st.session_state.sub_users[new_username] = {
-                        "password": new_password,
-                        "role": "viewer",
-                        "default_suffix": suffix_map[default_suffix]
-                    }
-                    st.success(f"子账号 {new_username} 创建成功")
-                    st.rerun()
-            else:
-                st.error("请填写用户名和密码")
-    st.markdown("#### 已有子账号")
-    if st.session_state.sub_users:
-        for username, info in list(st.session_state.sub_users.items()):
-            col1, col2, col3, col4 = st.columns([2, 1, 1, 1])
-            col1.write(username)
-            col2.write("●" * len(info["password"]))
-            suffix_display = {"": "非直播", "_live": "直播", "_all": "全部"}.get(info["default_suffix"], "未知")
-            col3.write(suffix_display)
-            with col4:
-                if st.button("删除", key=f"del_{username}"):
-                    del st.session_state.sub_users[username]
-                    st.rerun()
-    else:
-        st.info("暂无子账号")
-
 def manage_newbie_coupon():
     st.subheader("🏷️ 单商品礼金标签管理")
     master_df = load_product_master()
@@ -777,8 +748,7 @@ with st.sidebar:
             else:
                 st.error(msg)
         st.markdown("---")
-        manage_sub_accounts()
-        st.markdown("---")
+        # 侧边栏不再显示子账号管理，已移至主界面"系统设置"
         with st.expander("🏷️ 单商品礼金标签管理"):
             manage_newbie_coupon()
         with st.expander("📦 批量礼金标签管理"):
@@ -804,17 +774,21 @@ base_tabs = [
     "🎤 销售对比",
     "📈 销售分布与品牌"
 ]
-admin_extra_tabs = ["🔧 调试", "📚 商品库导出", "🗄️ 历史业绩"]
+admin_extra_tabs = ["🔧 调试", "📚 商品库导出", "🗄️ 历史业绩", "⚙️ 系统设置"]
 
 # 根据角色和用户名决定显示哪些选项卡
 if st.session_state.role == "admin":
     tab_labels = base_tabs + admin_extra_tabs
-elif st.session_state.username == "NC01":
-    # NC01 只显示这三个
-    tab_labels = ["📊 商品分析", "🎤 销售对比", "📈 销售分布与品牌"]
 else:
-    # 其他非管理员用户显示基础选项卡（不含历史业绩等）
-    tab_labels = base_tabs
+    # 子账号：根据 allowed_tabs 决定
+    user_info = st.session_state.sub_users.get(st.session_state.username)
+    if user_info and user_info.get("allowed_tabs"):
+        # 确保只显示有效选项卡（过滤掉可能不在 base_tabs 中的项）
+        valid_tabs = [tab for tab in user_info["allowed_tabs"] if tab in base_tabs or tab in admin_extra_tabs]
+        tab_labels = valid_tabs if valid_tabs else base_tabs  # 若配置无效则显示基础
+    else:
+        # 默认显示基础选项卡
+        tab_labels = base_tabs
 
 tabs = st.tabs(tab_labels)
 
@@ -832,6 +806,7 @@ idx_distribution = get_tab_index("📈 销售分布与品牌")
 idx_debug = get_tab_index("🔧 调试")
 idx_export = get_tab_index("📚 商品库导出")
 idx_history = get_tab_index("🗄️ 历史业绩")
+idx_system = get_tab_index("⚙️ 系统设置")
 
 # ========== 最新日明细 ==========
 if idx_latest is not None:
@@ -1654,15 +1629,14 @@ if idx_anchor_compare is not None:
                         if daily_agg.empty:
                             st.warning(f"所选{dimension_name}在日期范围内无销售数据")
                         else:
-                            # 调试信息（可选）
+                            # 调试信息
                             st.caption(f"当前选中的 {dimension_name}：{selected_dimensions}")
                             
                             for metric in selected_metrics:
                                 st.markdown(f"#### {metric} 趋势对比")
                                 pivot_df = daily_agg.pivot(index="sale_date", columns=dimension_col, values=metric)
-                                # ---------- 核心修复：补全所有选中维度列 ----------
+                                # 补全列
                                 pivot_df = pivot_df.reindex(columns=selected_dimensions, fill_value=0)
-                                # 调试：显示补全后的列
                                 st.caption(f"补全后的列：{list(pivot_df.columns)}")
                                 
                                 if chart_type == "折线图":
@@ -2152,6 +2126,68 @@ if idx_distribution is not None:
                     )
                 else:
                     st.info("当前筛选条件下无首单礼金商品")
+
+# ========== 系统设置（仅管理员） ==========
+if idx_system is not None:
+    with tabs[idx_system]:
+        st.subheader("👥 账号管理与权限设置")
+        st.info("在这里管理子账号及其可访问的选项卡权限。")
+        
+        # 显示已有子账号
+        if st.session_state.sub_users:
+            for username, info in list(st.session_state.sub_users.items()):
+                with st.expander(f"账号：{username}"):
+                    col1, col2 = st.columns([3, 1])
+                    with col1:
+                        # 显示当前权限
+                        current_allowed = info.get("allowed_tabs", base_tabs)
+                        # 所有可选项（基础 + 管理员额外？但子账号不应有管理员专用选项卡，所以只给基础）
+                        # 可根据需要调整
+                        all_options = base_tabs  # 基础选项卡
+                        new_allowed = st.multiselect(
+                            f"允许 {username} 访问的选项卡",
+                            options=all_options,
+                            default=[tab for tab in current_allowed if tab in all_options],
+                            key=f"perm_{username}"
+                        )
+                        if st.button(f"保存权限", key=f"save_perm_{username}"):
+                            st.session_state.sub_users[username]["allowed_tabs"] = new_allowed
+                            st.success(f"权限已更新，{username} 现在可访问：{', '.join(new_allowed)}")
+                            st.rerun()
+                    with col2:
+                        if st.button(f"删除账号", key=f"del_{username}"):
+                            del st.session_state.sub_users[username]
+                            st.success(f"账号 {username} 已删除")
+                            st.rerun()
+        else:
+            st.info("暂无子账号")
+        
+        # 创建新子账号
+        with st.expander("➕ 创建新子账号"):
+            col1, col2 = st.columns(2)
+            with col1:
+                new_username = st.text_input("用户名", key="new_username_sys")
+                new_password = st.text_input("密码", type="password", key="new_password_sys")
+            with col2:
+                default_suffix = st.selectbox("默认数据源", ["非直播数据", "直播数据", "全部数据"], key="new_default_suffix_sys")
+                suffix_map = {"非直播数据": "", "直播数据": "_live", "全部数据": "_all"}
+                # 默认权限：允许所有基础选项卡
+                default_allowed = base_tabs
+            if st.button("创建子账号", key="create_sys"):
+                if new_username and new_password:
+                    if new_username in st.session_state.sub_users:
+                        st.error("用户名已存在")
+                    else:
+                        st.session_state.sub_users[new_username] = {
+                            "password": new_password,
+                            "role": "viewer",
+                            "default_suffix": suffix_map[default_suffix],
+                            "allowed_tabs": default_allowed
+                        }
+                        st.success(f"子账号 {new_username} 创建成功")
+                        st.rerun()
+                else:
+                    st.error("请填写用户名和密码")
 
 # ========== 管理员专属：调试选项卡 ==========
 if idx_debug is not None:
