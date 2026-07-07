@@ -1,11 +1,3 @@
-# -*- coding: utf-8 -*-
-"""
-订单业绩统计工具 - 完整版（含数据源切换权限）
-管理员账号：admin / 1234567890
-子账号存储在 Supabase 的 sub_accounts 表中
-子账号可在侧边栏切换数据源（仅当被授权多个数据源时）
-"""
-
 import streamlit as st
 import pandas as pd
 from datetime import date
@@ -53,7 +45,7 @@ def get_table_name(base_name, suffix=None):
         suffix = st.session_state.get("table_suffix", "")
     return f"{base_name}{suffix}"
 
-# ========== 子账号数据库操作 ==========
+# ========== 子账号数据库操作（新结构） ==========
 def load_sub_accounts_from_db():
     if supabase is None:
         return {}
@@ -62,11 +54,17 @@ def load_sub_accounts_from_db():
         if resp.data:
             sub_users = {}
             for row in resp.data:
+                # 新结构：permissions 字段存储为 JSON，格式如 {"": ["tab1","tab2"], "_live": [...], "_all": [...]}
+                perms = row.get("permissions", {})
+                # 兼容旧数据：若没有 perms，则从 allowed_tabs 迁移
+                if not perms and "allowed_tabs" in row:
+                    # 默认所有数据源权限相同
+                    perms = {"": row["allowed_tabs"], "_live": row["allowed_tabs"], "_all": row["allowed_tabs"]}
                 sub_users[row["username"]] = {
                     "password": row["password"],
                     "role": row.get("role", "viewer"),
                     "default_suffix": row.get("default_suffix", ""),
-                    "allowed_tabs": row.get("allowed_tabs", []),
+                    "permissions": perms,
                     "filter_platform": row.get("filter_platform", "all"),
                     "filter_shop_names": row.get("filter_shop_names", [])
                 }
@@ -86,7 +84,7 @@ def save_sub_account_to_db(username, info):
             "password": info["password"],
             "role": info["role"],
             "default_suffix": info["default_suffix"],
-            "allowed_tabs": info.get("allowed_tabs", []),
+            "permissions": info.get("permissions", {}),
             "filter_platform": info.get("filter_platform", "all"),
             "filter_shop_names": info.get("filter_shop_names", [])
         }
@@ -687,7 +685,7 @@ rebuild_daily_data(st.session_state.table_suffix)
 if st.session_state.target_dict == {}:
     st.session_state.target_dict = load_targets(st.session_state.table_suffix)
 
-# ========== 侧边栏 ==========
+# ========== 侧边栏（含数据源切换） ==========
 with st.sidebar:
     st.header("📂 数据加载")
     st.subheader("🔄 数据源切换")
@@ -695,15 +693,23 @@ with st.sidebar:
     current_source_name = suffix_names.get(st.session_state.table_suffix, "未知")
     st.info(f"📌 当前正在查看：**{current_source_name}**")
 
-    # 确定可用数据源选项
+    # 可用数据源：管理员可切换所有，子账号根据其 default_suffix 和权限决定
     if st.session_state.role == "admin":
         available_suffixes = {"非直播数据": "", "直播数据": "_live", "全部数据": "_all"}
     else:
         user_info = st.session_state.sub_users.get(st.session_state.username, {})
         default_suffix = user_info.get("default_suffix", "")
-        name_map = {"": "非直播数据", "_live": "直播数据", "_all": "全部数据"}
-        available_name = name_map.get(default_suffix, "非直播数据")
-        available_suffixes = {available_name: default_suffix}
+        # 允许查看所有数据源（仅当权限中存在对应键，且至少有一个选项卡）
+        perms = user_info.get("permissions", {})
+        available = {}
+        # 检查每个数据源是否有权限（即是否有非空选项卡列表）
+        for name, suf in [("非直播数据", ""), ("直播数据", "_live"), ("全部数据", "_all")]:
+            if suf in perms and perms[suf]:
+                available[name] = suf
+        # 如果没有任何权限，则只显示默认数据源
+        if not available:
+            available = {suffix_names.get(default_suffix, "非直播数据"): default_suffix}
+        available_suffixes = available
 
     options = list(available_suffixes.keys())
     if current_source_name in options:
@@ -817,7 +823,7 @@ with st.sidebar:
                 del st.session_state[key]
         st.rerun()
 
-# ========== 动态创建选项卡 ==========
+# ========== 动态创建选项卡（根据当前数据源和用户权限） ==========
 base_tabs = [
     "📅 最新日明细",
     "🏪 日期范围累计",
@@ -829,15 +835,25 @@ base_tabs = [
 ]
 admin_extra_tabs = ["🔧 调试", "📚 商品库导出", "🗄️ 历史业绩", "⚙️ 系统设置"]
 
+# 确定当前用户可见的选项卡列表
 if st.session_state.role == "admin":
     tab_labels = base_tabs + admin_extra_tabs
 else:
-    user_info = st.session_state.sub_users.get(st.session_state.username)
-    if user_info and user_info.get("allowed_tabs"):
-        valid_tabs = [tab for tab in user_info["allowed_tabs"] if tab in base_tabs or tab in admin_extra_tabs]
-        tab_labels = valid_tabs if valid_tabs else base_tabs
-    else:
-        tab_labels = base_tabs
+    # 子账号：根据当前数据源 suffix 获取权限
+    current_suffix = st.session_state.table_suffix
+    user_info = st.session_state.sub_users.get(st.session_state.username, {})
+    perms = user_info.get("permissions", {})
+    # 如果当前数据源没有单独配置，则使用默认（通常为空字符串）
+    allowed = perms.get(current_suffix, [])
+    # 如果 allowed 为空，则尝试使用默认权限（非直播）
+    if not allowed and "" in perms:
+        allowed = perms[""]
+    # 如果仍然为空，则使用 base_tabs（或空）
+    if not allowed:
+        allowed = base_tabs  # 或者 [] 表示无权限
+    # 过滤掉不在 base_tabs 中的无效选项卡
+    valid_tabs = [tab for tab in allowed if tab in base_tabs]
+    tab_labels = valid_tabs if valid_tabs else base_tabs  # 至少显示基础
 
 tabs = st.tabs(tab_labels)
 
@@ -851,17 +867,10 @@ idx_ship_return = get_tab_index("📦 发货退货明细")
 idx_product = get_tab_index("📊 商品分析")
 idx_anchor_compare = get_tab_index("🎤 销售对比")
 idx_distribution = get_tab_index("📈 销售分布与品牌")
-if st.session_state.role == "admin":
-    # 管理员角色下这些选项卡一定存在，直接获取索引
-    idx_system = tab_labels.index("⚙️ 系统设置")
-    idx_debug = tab_labels.index("🔧 调试")
-    idx_export = tab_labels.index("📚 商品库导出")
-    idx_history = tab_labels.index("🗄️ 历史业绩")
-else:
-    idx_system = None
-    idx_debug = None
-    idx_export = None
-    idx_history = None
+idx_debug = get_tab_index("🔧 调试")
+idx_export = get_tab_index("📚 商品库导出")
+idx_history = get_tab_index("🗄️ 历史业绩")
+idx_system = get_tab_index("⚙️ 系统设置")
 
 # ========== 最新日明细 ==========
 if idx_latest is not None:
@@ -2178,48 +2187,59 @@ if idx_distribution is not None:
 # ========== 系统设置（仅管理员） ==========
 if idx_system is not None:
     with tabs[idx_system]:
-        st.subheader("👥 账号管理与权限设置（含数据源及数据权限）")
-        st.info("在此配置子账号的访问权限，包括可查看的选项卡、默认数据源以及数据过滤（平台和具体店铺/主播）。")
-        
+        st.subheader("👥 账号管理与权限设置（按数据源分别设置）")
+        st.info("对每个子账号，可分别配置其在“非直播数据”、“直播数据”、“全部数据”下能看到的选项卡。")
+
         if st.button("🔄 重新从数据库加载账号"):
             st.session_state.sub_users = load_sub_accounts_from_db()
             st.success("已重新加载")
             st.rerun()
-        
+
         if st.session_state.sub_users:
             for username, info in list(st.session_state.sub_users.items()):
                 with st.expander(f"账号：{username}"):
-                    # 选项卡权限
-                    st.markdown("**① 选项卡权限**")
-                    current_allowed = info.get("allowed_tabs", base_tabs)
-                    all_options = base_tabs
-                    new_allowed = st.multiselect(
-                        f"允许 {username} 访问的选项卡",
-                        options=all_options,
-                        default=[tab for tab in current_allowed if tab in all_options],
-                        key=f"perm_{username}"
-                    )
+                    st.markdown(f"**{username}** 的权限配置")
+                    # 获取当前权限字典
+                    perms = info.get("permissions", {})
+                    # 确保三个数据源都有条目
+                    for suf in ["", "_live", "_all"]:
+                        if suf not in perms:
+                            perms[suf] = []
+                    # 显示三个数据源的选项卡多选
+                    suffix_display = {"": "非直播数据", "_live": "直播数据", "_all": "全部数据"}
+                    new_perms = {}
+                    for suf, display_name in suffix_display.items():
+                        current_allowed = perms.get(suf, [])
+                        # 确保只选 base_tabs 中的项
+                        all_options = base_tabs
+                        default = [tab for tab in current_allowed if tab in all_options]
+                        selected = st.multiselect(
+                            f"{display_name} 允许的选项卡",
+                            options=all_options,
+                            default=default,
+                            key=f"perm_{username}_{suf}"
+                        )
+                        new_perms[suf] = selected
                     
-                    # 默认数据源权限
-                    st.markdown("**② 默认数据源（登录后默认查看）**")
-                    suffix_options = {"非直播数据": "", "直播数据": "_live", "全部数据": "_all"}
-                    current_suffix = info.get("default_suffix", "")
-                    current_suffix_display = [k for k, v in suffix_options.items() if v == current_suffix]
-                    current_suffix_display = current_suffix_display[0] if current_suffix_display else "非直播数据"
-                    new_suffix_display = st.selectbox(
-                        f"默认数据源",
-                        options=list(suffix_options.keys()),
-                        index=list(suffix_options.keys()).index(current_suffix_display),
-                        key=f"suffix_{username}"
+                    # 默认数据源选择
+                    current_default = info.get("default_suffix", "")
+                    default_options = {"非直播数据": "", "直播数据": "_live", "全部数据": "_all"}
+                    default_display = [k for k, v in default_options.items() if v == current_default]
+                    default_display = default_display[0] if default_display else "非直播数据"
+                    new_default_display = st.selectbox(
+                        "默认数据源",
+                        options=list(default_options.keys()),
+                        index=list(default_options.keys()).index(default_display),
+                        key=f"default_suffix_{username}"
                     )
-                    new_suffix = suffix_options[new_suffix_display]
-                    
-                    # 数据过滤权限
-                    st.markdown("**③ 数据过滤权限（限制可见数据范围）**")
+                    new_default = default_options[new_default_display]
+
+                    # 数据过滤权限（平台和店铺）
+                    st.markdown("**数据过滤权限**")
                     platform_options = ["all", "抖音", "视频号"]
                     current_platform = info.get("filter_platform", "all")
                     new_platform = st.selectbox(
-                        f"限制平台（all=全部）",
+                        "限制平台（all=全部）",
                         options=platform_options,
                         index=platform_options.index(current_platform) if current_platform in platform_options else 0,
                         key=f"platform_{username}"
@@ -2243,15 +2263,15 @@ if idx_system is not None:
                     current_shop_names = info.get("filter_shop_names", [])
                     current_shop_names = [name for name in current_shop_names if name in all_shop_names]
                     new_shop_names = st.multiselect(
-                        f"限制店铺/主播（空表示全部）",
+                        "限制店铺/主播（空表示全部）",
                         options=all_shop_names,
                         default=current_shop_names,
                         key=f"shops_{username}"
                     )
-                    
+
                     if st.button(f"保存全部权限", key=f"save_perm_{username}"):
-                        st.session_state.sub_users[username]["allowed_tabs"] = new_allowed
-                        st.session_state.sub_users[username]["default_suffix"] = new_suffix
+                        st.session_state.sub_users[username]["permissions"] = new_perms
+                        st.session_state.sub_users[username]["default_suffix"] = new_default
                         st.session_state.sub_users[username]["filter_platform"] = new_platform
                         st.session_state.sub_users[username]["filter_shop_names"] = new_shop_names
                         ok, msg = save_sub_account_to_db(username, st.session_state.sub_users[username])
@@ -2280,7 +2300,8 @@ if idx_system is not None:
             with col2:
                 default_suffix = st.selectbox("默认数据源", ["非直播数据", "直播数据", "全部数据"], key="new_default_suffix_sys")
                 suffix_map = {"非直播数据": "", "直播数据": "_live", "全部数据": "_all"}
-                default_allowed = base_tabs
+                # 默认权限：所有数据源均允许所有基础选项卡
+                default_perms = {suf: base_tabs for suf in ["", "_live", "_all"]}
                 default_platform = "all"
             if st.button("创建子账号", key="create_sys"):
                 if new_username and new_password:
@@ -2291,7 +2312,7 @@ if idx_system is not None:
                             "password": new_password,
                             "role": "viewer",
                             "default_suffix": suffix_map[default_suffix],
-                            "allowed_tabs": default_allowed,
+                            "permissions": default_perms,
                             "filter_platform": default_platform,
                             "filter_shop_names": []
                         }
@@ -2305,7 +2326,7 @@ if idx_system is not None:
                 else:
                     st.error("请填写用户名和密码")
 
-# ========== 管理员专属：调试选项卡 ==========
+# ========== 调试 ==========
 if idx_debug is not None:
     with tabs[idx_debug]:
         st.subheader("🔧 调试信息")
@@ -2316,7 +2337,7 @@ if idx_debug is not None:
             "子账号数": len(st.session_state.sub_users)
         })
 
-# ========== 管理员专属：商品库导出选项卡 ==========
+# ========== 商品库导出 ==========
 if idx_export is not None:
     with tabs[idx_export]:
         st.subheader("📚 导出商品库数据（product_master）")
