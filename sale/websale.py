@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-订单业绩统计工具 - 最终完整版（账号持久化）
+订单业绩统计工具 - 完整版（含数据权限控制）
 管理员账号：admin / 1234567890
 子账号存储在 Supabase 的 sub_accounts 表中
 """
@@ -22,54 +22,15 @@ st.set_page_config(page_title="业绩统计工具", layout="wide", page_icon="�
 # ========== 自定义CSS ==========
 st.markdown("""
 <style>
-    .custom-main-title {
-        font-size: 28px !important;
-        font-weight: 600 !important;
-        margin-top: -0.5rem !important;
-        margin-bottom: 0.25rem !important;
-        padding-bottom: 0 !important;
-    }
-    .welcome-text {
-        font-size: 14px !important;
-        color: #555 !important;
-        margin-top: 0 !important;
-        margin-bottom: 0.5rem !important;
-    }
-    h1 {
-        font-size: 28px !important;
-        margin-top: -0.5rem !important;
-        margin-bottom: 0.25rem !important;
-    }
-    h2 {
-        font-size: 24px !important;
-        margin-top: 0.5rem !important;
-        margin-bottom: 0.25rem !important;
-        font-weight: 500 !important;
-    }
-    h3 {
-        font-size: 20px !important;
-        margin-top: 0.5rem !important;
-        margin-bottom: 0.25rem !important;
-        font-weight: 500 !important;
-    }
-    h4 {
-        font-size: 18px !important;
-        margin-top: 0.5rem !important;
-        margin-bottom: 0.25rem !important;
-        font-weight: 500 !important;
-    }
-    h5, h6 {
-        font-size: 16px !important;
-        margin-top: 0.25rem !important;
-        margin-bottom: 0.25rem !important;
-    }
-    hr {
-        margin-top: 0.5rem !important;
-        margin-bottom: 0.5rem !important;
-    }
-    .css-1d391kg h1, .css-1d391kg h2, .css-1d391kg h3 {
-        font-size: 1.2rem !important;
-    }
+    .custom-main-title { font-size: 28px !important; font-weight: 600 !important; margin-top: -0.5rem !important; margin-bottom: 0.25rem !important; padding-bottom: 0 !important; }
+    .welcome-text { font-size: 14px !important; color: #555 !important; margin-top: 0 !important; margin-bottom: 0.5rem !important; }
+    h1 { font-size: 28px !important; margin-top: -0.5rem !important; margin-bottom: 0.25rem !important; }
+    h2 { font-size: 24px !important; margin-top: 0.5rem !important; margin-bottom: 0.25rem !important; font-weight: 500 !important; }
+    h3 { font-size: 20px !important; margin-top: 0.5rem !important; margin-bottom: 0.25rem !important; font-weight: 500 !important; }
+    h4 { font-size: 18px !important; margin-top: 0.5rem !important; margin-bottom: 0.25rem !important; font-weight: 500 !important; }
+    h5, h6 { font-size: 16px !important; margin-top: 0.25rem !important; margin-bottom: 0.25rem !important; }
+    hr { margin-top: 0.5rem !important; margin-bottom: 0.5rem !important; }
+    .css-1d391kg h1, .css-1d391kg h2, .css-1d391kg h3 { font-size: 1.2rem !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -93,7 +54,6 @@ def get_table_name(base_name, suffix=None):
 
 # ========== 子账号数据库操作 ==========
 def load_sub_accounts_from_db():
-    """从 Supabase 加载所有子账号，返回字典（兼容 session_state 结构）"""
     if supabase is None:
         return {}
     try:
@@ -105,7 +65,9 @@ def load_sub_accounts_from_db():
                     "password": row["password"],
                     "role": row.get("role", "viewer"),
                     "default_suffix": row.get("default_suffix", ""),
-                    "allowed_tabs": row.get("allowed_tabs", [])
+                    "allowed_tabs": row.get("allowed_tabs", []),
+                    "filter_platform": row.get("filter_platform", "all"),
+                    "filter_shop_names": row.get("filter_shop_names", [])
                 }
             return sub_users
         else:
@@ -115,7 +77,6 @@ def load_sub_accounts_from_db():
         return {}
 
 def save_sub_account_to_db(username, info):
-    """插入或更新子账号（密码、角色、后缀、权限）"""
     if supabase is None:
         return False, "Supabase 未连接"
     try:
@@ -124,7 +85,9 @@ def save_sub_account_to_db(username, info):
             "password": info["password"],
             "role": info["role"],
             "default_suffix": info["default_suffix"],
-            "allowed_tabs": info.get("allowed_tabs", [])
+            "allowed_tabs": info.get("allowed_tabs", []),
+            "filter_platform": info.get("filter_platform", "all"),
+            "filter_shop_names": info.get("filter_shop_names", [])
         }
         resp = supabase.table("sub_accounts").upsert(data, on_conflict="username").execute()
         return True, "保存成功"
@@ -140,9 +103,7 @@ def delete_sub_account_from_db(username):
     except Exception as e:
         return False, str(e)
 
-# ========== 用户验证 ==========
 def get_all_users():
-    """返回所有用户（硬编码 + 数据库子账号）"""
     users = {
         "admin": {"password": "1234567890", "role": "admin", "default_suffix": ""},
         "XDZ01": {"password": "94949468", "role": "user", "default_suffix": ""},
@@ -182,7 +143,7 @@ st.markdown('<div class="custom-main-title">📊 抖音&视频号商品销售分
 st.markdown(f'<div class="welcome-text">欢迎，**{st.session_state.username}** ({"管理员" if st.session_state.role == "admin" else ("子账号" if st.session_state.role == "viewer" else "成员")})</div>', unsafe_allow_html=True)
 st.markdown("---")
 
-# ========== 初始化 session_state（包括从数据库加载子账号） ==========
+# ========== 初始化 session_state ==========
 if "sub_users" not in st.session_state:
     st.session_state.sub_users = load_sub_accounts_from_db()
 
@@ -201,6 +162,36 @@ if "monthly_actual" not in st.session_state:
 if "processing_upload" not in st.session_state:
     st.session_state.processing_upload = False
 
+# ========== 数据权限过滤函数 ==========
+def apply_data_permission(df, username=None, role=None):
+    if username is None:
+        username = st.session_state.get("username", "")
+    if role is None:
+        role = st.session_state.get("role", "")
+    if role == "admin" or username == "admin":
+        return df
+    user_info = st.session_state.sub_users.get(username)
+    if not user_info:
+        return df
+    filter_platform = user_info.get("filter_platform", "all")
+    filter_shop_names = user_info.get("filter_shop_names", [])
+    # 平台过滤
+    if filter_platform != "all":
+        if "shop_name" in df.columns:
+            if filter_platform == "抖音":
+                df = df[df["shop_name"].str.contains("抖音", case=False, na=False)]
+            elif filter_platform == "视频号":
+                df = df[df["shop_name"].str.contains("视频号", case=False, na=False)]
+        elif "anchor" in df.columns:
+            pass  # 无法可靠按平台过滤
+    # 店铺/主播名称过滤
+    if filter_shop_names:
+        if "shop_name" in df.columns:
+            df = df[df["shop_name"].isin(filter_shop_names)]
+        elif "anchor" in df.columns:
+            df = df[df["anchor"].isin(filter_shop_names)]
+    return df
+
 # ========== 辅助函数 ==========
 def extract_anchor(remark):
     if not isinstance(remark, str):
@@ -208,7 +199,7 @@ def extract_anchor(remark):
     match = re.search(r'主播[：:]([^_]+)', remark)
     return match.group(1).strip() if match else None
 
-def load_daily_sales(suffix=None):
+def load_daily_sales(suffix=None, apply_filter=True):
     if supabase is None:
         return pd.DataFrame()
     try:
@@ -227,6 +218,8 @@ def load_daily_sales(suffix=None):
         if all_data:
             df = pd.DataFrame(all_data)
             df["sale_date"] = pd.to_datetime(df["sale_date"])
+            if apply_filter:
+                df = apply_data_permission(df)
             return df
         else:
             return pd.DataFrame()
@@ -462,14 +455,12 @@ def save_product_sales(df_orders, suffix=None):
     records = list(temp_records.values())
     if records:
         table_name = get_table_name("product_sales", suffix)
-        # 分批插入，避免超时
         batch_size = 500
         for i in range(0, len(records), batch_size):
             batch = records[i:i+batch_size]
             supabase.table(table_name).upsert(batch, on_conflict="remark").execute()
 
-@st.cache_data(ttl=600)
-def load_product_sales(suffix=None):
+def load_product_sales(suffix=None, apply_filter=True):
     if supabase is None:
         return pd.DataFrame()
     try:
@@ -497,6 +488,8 @@ def load_product_sales(suffix=None):
                     df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
             if suffix in ["_live", "_all"] and "anchor" not in df.columns:
                 df["anchor"] = df["remark"].apply(extract_anchor)
+            if apply_filter:
+                df = apply_data_permission(df)
             return df
         else:
             return pd.DataFrame()
@@ -696,7 +689,6 @@ def batch_manage_newbie_coupon():
 rebuild_daily_data(st.session_state.table_suffix)
 if st.session_state.target_dict == {}:
     st.session_state.target_dict = load_targets(st.session_state.table_suffix)
-
 # ========== 侧边栏 ==========
 with st.sidebar:
     st.header("📂 数据加载")
@@ -1670,7 +1662,6 @@ if idx_anchor_compare is not None:
                             for metric in selected_metrics:
                                 st.markdown(f"#### {metric} 趋势对比")
                                 pivot_df = daily_agg.pivot(index="sale_date", columns=dimension_col, values=metric)
-                                # 补全所有选中维度列
                                 pivot_df = pivot_df.reindex(columns=selected_dimensions, fill_value=0)
                                 st.caption(f"补全后的列：{list(pivot_df.columns)}")
                                 
@@ -2165,8 +2156,8 @@ if idx_distribution is not None:
 # ========== 系统设置（仅管理员） ==========
 if idx_system is not None:
     with tabs[idx_system]:
-        st.subheader("👥 账号管理与权限设置（数据持久化到数据库）")
-        st.info("在这里管理子账号及其可访问的选项卡权限。修改将立即保存到 Supabase。")
+        st.subheader("👥 账号管理与权限设置（含数据权限）")
+        st.info("可配置每个子账号能查看的平台和具体店铺/主播。")
         
         if st.button("🔄 重新从数据库加载账号"):
             st.session_state.sub_users = load_sub_accounts_from_db()
@@ -2178,6 +2169,7 @@ if idx_system is not None:
                 with st.expander(f"账号：{username}"):
                     col1, col2 = st.columns([3, 1])
                     with col1:
+                        # 选项卡权限
                         current_allowed = info.get("allowed_tabs", base_tabs)
                         all_options = base_tabs
                         new_allowed = st.multiselect(
@@ -2186,8 +2178,44 @@ if idx_system is not None:
                             default=[tab for tab in current_allowed if tab in all_options],
                             key=f"perm_{username}"
                         )
+                        # 数据权限
+                        st.markdown("**数据权限设置**")
+                        platform_options = ["all", "抖音", "视频号"]
+                        current_platform = info.get("filter_platform", "all")
+                        new_platform = st.selectbox(
+                            f"允许查看的平台",
+                            options=platform_options,
+                            index=platform_options.index(current_platform) if current_platform in platform_options else 0,
+                            key=f"platform_{username}"
+                        )
+                        # 获取所有店铺/主播
+                        @st.cache_data(ttl=600)
+                        def get_all_shop_names():
+                            df = load_product_sales(apply_filter=False)
+                            if df.empty:
+                                return []
+                            if st.session_state.table_suffix == "_all":
+                                if "anchor" in df.columns:
+                                    return sorted(df["anchor"].dropna().unique().tolist())
+                                else:
+                                    return []
+                            else:
+                                if "shop_name" in df.columns:
+                                    return sorted(df["shop_name"].dropna().unique().tolist())
+                                else:
+                                    return []
+                        all_shop_names = get_all_shop_names()
+                        current_shop_names = info.get("filter_shop_names", [])
+                        new_shop_names = st.multiselect(
+                            f"允许查看的店铺/主播（空表示全部）",
+                            options=all_shop_names,
+                            default=[name for name in current_shop_names if name in all_shop_names],
+                            key=f"shops_{username}"
+                        )
                         if st.button(f"保存权限", key=f"save_perm_{username}"):
                             st.session_state.sub_users[username]["allowed_tabs"] = new_allowed
+                            st.session_state.sub_users[username]["filter_platform"] = new_platform
+                            st.session_state.sub_users[username]["filter_shop_names"] = new_shop_names
                             ok, msg = save_sub_account_to_db(username, st.session_state.sub_users[username])
                             if ok:
                                 st.success(f"权限已保存到数据库")
@@ -2215,6 +2243,7 @@ if idx_system is not None:
                 default_suffix = st.selectbox("默认数据源", ["非直播数据", "直播数据", "全部数据"], key="new_default_suffix_sys")
                 suffix_map = {"非直播数据": "", "直播数据": "_live", "全部数据": "_all"}
                 default_allowed = base_tabs
+                default_platform = "all"
             if st.button("创建子账号", key="create_sys"):
                 if new_username and new_password:
                     if new_username in st.session_state.sub_users:
@@ -2224,7 +2253,9 @@ if idx_system is not None:
                             "password": new_password,
                             "role": "viewer",
                             "default_suffix": suffix_map[default_suffix],
-                            "allowed_tabs": default_allowed
+                            "allowed_tabs": default_allowed,
+                            "filter_platform": default_platform,
+                            "filter_shop_names": []
                         }
                         ok, msg = save_sub_account_to_db(new_username, new_info)
                         if ok:
