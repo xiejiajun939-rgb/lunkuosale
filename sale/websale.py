@@ -9,6 +9,7 @@ import numpy as np
 from supabase import create_client
 import plotly.express as px
 import plotly.graph_objects as go
+from datetime import date, timedelta
 
 st.set_page_config(page_title="业绩统计工具", layout="wide", page_icon="📊")
 
