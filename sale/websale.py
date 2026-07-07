@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-订单业绩统计工具 - 完整版（含快捷日期、缓存优化、精细化权限）
+订单业绩统计工具 - 完整版（新日期选择器风格）
 管理员账号：admin / 1234567890
 子账号存储在 Supabase 的 sub_accounts 表中
 """
@@ -31,6 +31,34 @@ st.markdown("""
     h5, h6 { font-size: 16px !important; margin-top: 0.25rem !important; margin-bottom: 0.25rem !important; }
     hr { margin-top: 0.5rem !important; margin-bottom: 0.5rem !important; }
     .css-1d391kg h1, .css-1d391kg h2, .css-1d391kg h3 { font-size: 1.2rem !important; }
+    /* 新日期按钮样式 */
+    div[data-testid="stButton"] button {
+        padding: 4px 12px !important;
+        font-size: 13px !important;
+        border-radius: 6px !important;
+        background-color: #f0f2f6 !important;
+        border: 1px solid #d1d5db !important;
+        color: #1f2937 !important;
+        white-space: nowrap !important;
+    }
+    div[data-testid="stButton"] button:hover {
+        background-color: #e5e7eb !important;
+    }
+    div[data-testid="stDateInput"] label {
+        display: none !important;
+    }
+    div[data-testid="stSelectbox"] label {
+        display: none !important;
+    }
+    div[data-testid="stDateInput"] {
+        margin-top: -5px !important;
+    }
+    .date-row {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        flex-wrap: wrap;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -191,36 +219,49 @@ def apply_data_permission(df, username=None, role=None):
             df = df[df["anchor"].isin(filter_shop_names)]
     return df
 
-# ========== 日期快捷按钮通用函数 ==========
-def date_quick_buttons(start_key, end_key, default_start=None, default_end=None):
+# ========== 新日期快捷按钮函数 ==========
+def date_quick_buttons(start_key, end_key, default_start=None, default_end=None, min_date=None, max_date=None):
+    """
+    渲染日期快捷按钮（今日、近7天、本周、本月）+ 更多下拉（自然月/年选择）
+    采用紧凑单行布局，样式更接近截图风格
+    """
     if start_key not in st.session_state:
         st.session_state[start_key] = default_start or date.today().replace(day=1)
     if end_key not in st.session_state:
         st.session_state[end_key] = default_end or date.today()
-    cols = st.columns(4)
+
+    def clamp(d):
+        if min_date and d < min_date:
+            return min_date
+        if max_date and d > max_date:
+            return max_date
+        return d
+
+    # 快捷按钮行（5列：今日、近7天、本周、本月、更多）
+    cols = st.columns([1, 1, 1, 1, 1.5])
     with cols[0]:
-        if st.button("📅 今日", key=f"{start_key}_today"):
+        if st.button("📅 今日", key=f"{start_key}_today", use_container_width=True):
             today = date.today()
-            st.session_state[start_key] = today
-            st.session_state[end_key] = today
+            st.session_state[start_key] = clamp(today)
+            st.session_state[end_key] = clamp(today)
             st.rerun()
     with cols[1]:
-        if st.button("📆 本周", key=f"{start_key}_week"):
+        if st.button("📊 近7天", key=f"{start_key}_7days", use_container_width=True):
+            today = date.today()
+            start = today - timedelta(days=6)
+            st.session_state[start_key] = clamp(start)
+            st.session_state[end_key] = clamp(today)
+            st.rerun()
+    with cols[2]:
+        if st.button("📆 本周", key=f"{start_key}_week", use_container_width=True):
             today = date.today()
             start_of_week = today - timedelta(days=today.weekday())
             end_of_week = start_of_week + timedelta(days=6)
-            st.session_state[start_key] = start_of_week
-            st.session_state[end_key] = end_of_week
-            st.rerun()
-    with cols[2]:
-        if st.button("📊 近7天", key=f"{start_key}_7days"):
-            today = date.today()
-            start = today - timedelta(days=6)
-            st.session_state[start_key] = start
-            st.session_state[end_key] = today
+            st.session_state[start_key] = clamp(start_of_week)
+            st.session_state[end_key] = clamp(end_of_week)
             st.rerun()
     with cols[3]:
-        if st.button("📆 本月", key=f"{start_key}_month"):
+        if st.button("📆 本月", key=f"{start_key}_month", use_container_width=True):
             today = date.today()
             start_of_month = today.replace(day=1)
             if today.month == 12:
@@ -229,9 +270,72 @@ def date_quick_buttons(start_key, end_key, default_start=None, default_end=None)
                 end_of_month = today.replace(month=today.month+1, day=1) - timedelta(days=1)
             if today < end_of_month:
                 end_of_month = today - timedelta(days=1)
-            st.session_state[start_key] = start_of_month
-            st.session_state[end_key] = end_of_month
+            st.session_state[start_key] = clamp(start_of_month)
+            st.session_state[end_key] = clamp(end_of_month)
             st.rerun()
+
+    # “更多”下拉菜单（自然月、自然年、自定义月等）
+    with cols[4]:
+        more_options = ["更多 ▼", "自然月", "自然年", "自定义月"]
+        selected_more = st.selectbox(
+            "",
+            options=more_options,
+            index=0,
+            key=f"{start_key}_more",
+            label_visibility="collapsed"
+        )
+        if selected_more != "更多 ▼":
+            # 自然月：选择年份+月份
+            if selected_more == "自然月":
+                # 用两个列选择年、月
+                col_y, col_m = st.columns(2)
+                with col_y:
+                    year = st.number_input("年", min_value=2020, max_value=2030, value=date.today().year, key=f"{start_key}_year", label_visibility="collapsed")
+                with col_m:
+                    month = st.number_input("月", min_value=1, max_value=12, value=date.today().month, key=f"{start_key}_month_num", label_visibility="collapsed")
+                if st.button("确定", key=f"{start_key}_month_apply"):
+                    start_d = date(year, month, 1)
+                    if month == 12:
+                        end_d = date(year+1, 1, 1) - timedelta(days=1)
+                    else:
+                        end_d = date(year, month+1, 1) - timedelta(days=1)
+                    # 如果结束日期超过今天，则裁剪到今天
+                    today = date.today()
+                    if end_d > today:
+                        end_d = today
+                    st.session_state[start_key] = clamp(start_d)
+                    st.session_state[end_key] = clamp(end_d)
+                    st.rerun()
+            elif selected_more == "自然年":
+                year = st.number_input("年份", min_value=2020, max_value=2030, value=date.today().year, key=f"{start_key}_year_only", label_visibility="collapsed")
+                if st.button("确定", key=f"{start_key}_year_apply"):
+                    start_d = date(year, 1, 1)
+                    end_d = date(year, 12, 31)
+                    today = date.today()
+                    if end_d > today:
+                        end_d = today
+                    st.session_state[start_key] = clamp(start_d)
+                    st.session_state[end_key] = clamp(end_d)
+                    st.rerun()
+            elif selected_more == "自定义月":
+                st.info("可自行扩展更多功能")
+
+    # 日期输入行（两个日期输入框并排）
+    col_d1, col_d2 = st.columns(2)
+    with col_d1:
+        start_val = st.session_state.get(start_key, default_start or date.today())
+        if min_date and start_val < min_date:
+            start_val = min_date
+        if max_date and start_val > max_date:
+            start_val = max_date
+        st.date_input("开始日期", value=start_val, key=start_key, min_value=min_date, max_value=max_date, label_visibility="collapsed")
+    with col_d2:
+        end_val = st.session_state.get(end_key, default_end or date.today())
+        if min_date and end_val < min_date:
+            end_val = min_date
+        if max_date and end_val > max_date:
+            end_val = max_date
+        st.date_input("结束日期", value=end_val, key=end_key, min_value=min_date, max_value=max_date, label_visibility="collapsed")
 
 # ========== 辅助函数 ==========
 def extract_anchor(remark):
@@ -1000,18 +1104,14 @@ if idx_latest is not None:
 if idx_range is not None:
     with tabs[idx_range]:
         if st.session_state.get("df_all_daily") is not None and not st.session_state.df_all_daily.empty:
+            # 使用新日期选择器
             date_quick_buttons("range_start_final", "range_end_final",
                                default_start=date.today().replace(day=1),
                                default_end=date.today())
-            col_date1, col_date2 = st.columns(2)
-            with col_date1:
-                start = st.date_input("开始日期",
-                                      value=st.session_state.get("range_start_final", date.today().replace(day=1)),
-                                      key="range_start_final")
-            with col_date2:
-                end = st.date_input("结束日期",
-                                    value=st.session_state.get("range_end_final", date.today()),
-                                    key="range_end_final")
+            # 获取日期值（已存储在 session_state 中）
+            start = st.session_state.get("range_start_final", date.today().replace(day=1))
+            end = st.session_state.get("range_end_final", date.today())
+
             with st.spinner("加载数据..."):
                 prod_df = load_product_sales(st.session_state.table_suffix)
             if prod_df.empty:
@@ -1260,20 +1360,12 @@ if idx_product is not None:
             
             date_quick_buttons("prod_start_final", "prod_end_final",
                                default_start=min_date,
-                               default_end=max_date)
-            col_date1, col_date2 = st.columns(2)
-            with col_date1:
-                start_date = st.date_input("开始日期",
-                                           value=st.session_state.get("prod_start_final", min_date),
-                                           key="prod_start_final",
-                                           min_value=min_date,
-                                           max_value=max_date)
-            with col_date2:
-                end_date = st.date_input("结束日期",
-                                         value=st.session_state.get("prod_end_final", max_date),
-                                         key="prod_end_final",
-                                         min_value=min_date,
-                                         max_value=max_date)
+                               default_end=max_date,
+                               min_date=min_date,
+                               max_date=max_date)
+            # 获取日期值
+            start_date = st.session_state.get("prod_start_final", min_date)
+            end_date = st.session_state.get("prod_end_final", max_date)
             
             st.subheader("🔍 筛选条件")
             col_platform, col_shop = st.columns(2)
@@ -1740,20 +1832,11 @@ if idx_anchor_compare is not None:
                 
                 date_quick_buttons("compare_start", "compare_end",
                                    default_start=min_date,
-                                   default_end=max_date)
-                col_date1, col_date2 = st.columns(2)
-                with col_date1:
-                    start_date = st.date_input("开始日期",
-                                               value=st.session_state.get("compare_start", min_date),
-                                               key="compare_start",
-                                               min_value=min_date,
-                                               max_value=max_date)
-                with col_date2:
-                    end_date = st.date_input("结束日期",
-                                             value=st.session_state.get("compare_end", max_date),
-                                             key="compare_end",
-                                             min_value=min_date,
-                                             max_value=max_date)
+                                   default_end=max_date,
+                                   min_date=min_date,
+                                   max_date=max_date)
+                start_date = st.session_state.get("compare_start", min_date)
+                end_date = st.session_state.get("compare_end", max_date)
                 
                 if not selected_dimensions:
                     st.info(f"请至少选择一个{dimension_name}")
@@ -2061,20 +2144,11 @@ if idx_distribution is not None:
             
             date_quick_buttons("dist_start_v2", "dist_end_v2",
                                default_start=min_date,
-                               default_end=max_date)
-            col_date1, col_date2 = st.columns(2)
-            with col_date1:
-                start_date = st.date_input("开始日期",
-                                           value=st.session_state.get("dist_start_v2", min_date),
-                                           key="dist_start_v2",
-                                           min_value=min_date,
-                                           max_value=max_date)
-            with col_date2:
-                end_date = st.date_input("结束日期",
-                                         value=st.session_state.get("dist_end_v2", max_date),
-                                         key="dist_end_v2",
-                                         min_value=min_date,
-                                         max_value=max_date)
+                               default_end=max_date,
+                               min_date=min_date,
+                               max_date=max_date)
+            start_date = st.session_state.get("dist_start_v2", min_date)
+            end_date = st.session_state.get("dist_end_v2", max_date)
             
             col_platform, col_shop = st.columns(2)
             with col_platform:
