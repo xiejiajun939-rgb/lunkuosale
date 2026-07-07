@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """
-订单业绩统计工具 - 最终完整版
+订单业绩统计工具 - 最终完整版（账号持久化）
 管理员账号：admin / 1234567890
-子账号示例：NC01 / 123456
+子账号存储在 Supabase 的 sub_accounts 表中
 """
 
 import streamlit as st
@@ -73,25 +73,84 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# ========== 子账号存储 ==========
-if "sub_users" not in st.session_state:
-    st.session_state.sub_users = {
-        "NC01": {
-            "password": "123456",
-            "role": "viewer",
-            "default_suffix": "_all",
-            "allowed_tabs": ["📊 商品分析", "🎤 销售对比", "📈 销售分布与品牌"]
-        }
-    }
+# ========== Supabase 连接 ==========
+@st.cache_resource
+def init_supabase():
+    try:
+        url = st.secrets["SUPABASE_URL"]
+        key = st.secrets["SUPABASE_KEY"]
+        return create_client(url, key)
+    except Exception as e:
+        st.error(f"Supabase 连接失败：{e}")
+        return None
 
+supabase = init_supabase()
+
+def get_table_name(base_name, suffix=None):
+    if suffix is None:
+        suffix = st.session_state.get("table_suffix", "")
+    return f"{base_name}{suffix}"
+
+# ========== 子账号数据库操作 ==========
+def load_sub_accounts_from_db():
+    """从 Supabase 加载所有子账号，返回字典（兼容 session_state 结构）"""
+    if supabase is None:
+        return {}
+    try:
+        resp = supabase.table("sub_accounts").select("*").execute()
+        if resp.data:
+            sub_users = {}
+            for row in resp.data:
+                sub_users[row["username"]] = {
+                    "password": row["password"],
+                    "role": row.get("role", "viewer"),
+                    "default_suffix": row.get("default_suffix", ""),
+                    "allowed_tabs": row.get("allowed_tabs", [])
+                }
+            return sub_users
+        else:
+            return {}
+    except Exception as e:
+        st.error(f"加载子账号失败：{e}")
+        return {}
+
+def save_sub_account_to_db(username, info):
+    """插入或更新子账号（密码、角色、后缀、权限）"""
+    if supabase is None:
+        return False, "Supabase 未连接"
+    try:
+        data = {
+            "username": username,
+            "password": info["password"],
+            "role": info["role"],
+            "default_suffix": info["default_suffix"],
+            "allowed_tabs": info.get("allowed_tabs", [])
+        }
+        resp = supabase.table("sub_accounts").upsert(data, on_conflict="username").execute()
+        return True, "保存成功"
+    except Exception as e:
+        return False, str(e)
+
+def delete_sub_account_from_db(username):
+    if supabase is None:
+        return False, "Supabase 未连接"
+    try:
+        resp = supabase.table("sub_accounts").delete().eq("username", username).execute()
+        return True, "删除成功"
+    except Exception as e:
+        return False, str(e)
+
+# ========== 用户验证 ==========
 def get_all_users():
+    """返回所有用户（硬编码 + 数据库子账号）"""
     users = {
         "admin": {"password": "1234567890", "role": "admin", "default_suffix": ""},
         "XDZ01": {"password": "94949468", "role": "user", "default_suffix": ""},
         "ZBZ01": {"password": "123456", "role": "user", "default_suffix": "_live"}
     }
-    for username, info in st.session_state.sub_users.items():
-        users[username] = info
+    if "sub_users" in st.session_state:
+        for username, info in st.session_state.sub_users.items():
+            users[username] = info
     return users
 
 def login():
@@ -123,25 +182,10 @@ st.markdown('<div class="custom-main-title">📊 抖音&视频号商品销售分
 st.markdown(f'<div class="welcome-text">欢迎，**{st.session_state.username}** ({"管理员" if st.session_state.role == "admin" else ("子账号" if st.session_state.role == "viewer" else "成员")})</div>', unsafe_allow_html=True)
 st.markdown("---")
 
-# ========== Supabase 连接 ==========
-@st.cache_resource
-def init_supabase():
-    try:
-        url = st.secrets["SUPABASE_URL"]
-        key = st.secrets["SUPABASE_KEY"]
-        return create_client(url, key)
-    except Exception as e:
-        st.error(f"Supabase 连接失败：{e}")
-        return None
+# ========== 初始化 session_state（包括从数据库加载子账号） ==========
+if "sub_users" not in st.session_state:
+    st.session_state.sub_users = load_sub_accounts_from_db()
 
-supabase = init_supabase()
-
-def get_table_name(base_name, suffix=None):
-    if suffix is None:
-        suffix = st.session_state.get("table_suffix", "")
-    return f"{base_name}{suffix}"
-
-# ========== 初始化 session_state ==========
 if "df_all_daily" not in st.session_state:
     st.session_state.df_all_daily = None
 if "target_dict" not in st.session_state:
@@ -418,7 +462,11 @@ def save_product_sales(df_orders, suffix=None):
     records = list(temp_records.values())
     if records:
         table_name = get_table_name("product_sales", suffix)
-        supabase.table(table_name).upsert(records, on_conflict="remark").execute()
+        # 分批插入，避免超时
+        batch_size = 500
+        for i in range(0, len(records), batch_size):
+            batch = records[i:i+batch_size]
+            supabase.table(table_name).upsert(batch, on_conflict="remark").execute()
 
 @st.cache_data(ttl=600)
 def load_product_sales(suffix=None):
@@ -748,7 +796,6 @@ with st.sidebar:
             else:
                 st.error(msg)
         st.markdown("---")
-        # 侧边栏不再显示子账号管理，已移至主界面"系统设置"
         with st.expander("🏷️ 单商品礼金标签管理"):
             manage_newbie_coupon()
         with st.expander("📦 批量礼金标签管理"):
@@ -764,7 +811,6 @@ with st.sidebar:
         st.rerun()
 
 # ========== 动态创建选项卡（按用户角色定制） ==========
-# 定义所有基本选项卡
 base_tabs = [
     "📅 最新日明细",
     "🏪 日期范围累计",
@@ -776,23 +822,18 @@ base_tabs = [
 ]
 admin_extra_tabs = ["🔧 调试", "📚 商品库导出", "🗄️ 历史业绩", "⚙️ 系统设置"]
 
-# 根据角色和用户名决定显示哪些选项卡
 if st.session_state.role == "admin":
     tab_labels = base_tabs + admin_extra_tabs
 else:
-    # 子账号：根据 allowed_tabs 决定
     user_info = st.session_state.sub_users.get(st.session_state.username)
     if user_info and user_info.get("allowed_tabs"):
-        # 确保只显示有效选项卡（过滤掉可能不在 base_tabs 中的项）
         valid_tabs = [tab for tab in user_info["allowed_tabs"] if tab in base_tabs or tab in admin_extra_tabs]
-        tab_labels = valid_tabs if valid_tabs else base_tabs  # 若配置无效则显示基础
+        tab_labels = valid_tabs if valid_tabs else base_tabs
     else:
-        # 默认显示基础选项卡
         tab_labels = base_tabs
 
 tabs = st.tabs(tab_labels)
 
-# 动态获取各选项卡索引，若不存在则为 None
 def get_tab_index(label):
     return tab_labels.index(label) if label in tab_labels else None
 
@@ -896,10 +937,8 @@ if idx_range is not None:
                 start = st.date_input("开始日期", value=date.today().replace(day=1), key="range_start_final")
             with col_date2:
                 end = st.date_input("结束日期", value=date.today(), key="range_end_final")
-            
             with st.spinner("加载数据..."):
                 prod_df = load_product_sales(st.session_state.table_suffix)
-            
             if prod_df.empty:
                 st.warning("无商品数据，无法计算发货/退货")
             else:
@@ -911,16 +950,13 @@ if idx_range is not None:
                 else:
                     group_col = "shop_name"
                     name_col = "店铺名称"
-                
                 all_values = prod_df[group_col].dropna().unique().tolist()
                 all_values = sorted([v for v in all_values if v != "" and v is not None])
-                
                 selected_values = st.multiselect(
                     f"筛选 {name_col}（不选则显示全部）",
                     options=all_values,
                     default=[]
                 )
-                
                 if st.button("计算累计", key="calc_range_final"):
                     if start > end:
                         st.error("开始日期不能晚于结束日期")
@@ -932,34 +968,34 @@ if idx_range is not None:
                         else:
                             if selected_values:
                                 range_data = range_data[range_data[group_col].isin(selected_values)]
-                                if range_data.empty:
-                                    st.warning("所选维度在日期范围内无数据")
-                                    summary = pd.DataFrame(columns=[name_col, "发货金额", "退货金额", "净销售金额"])
-                                    st.dataframe(summary, use_container_width=True, hide_index=True)
-                                else:
-                                    summary = range_data.groupby(group_col).agg(
-                                        发货金额=("ship_amount", "sum"),
-                                        退货金额=("return_amount", "sum"),
-                                        净销售金额=("net_amount", "sum")
-                                    ).reset_index().rename(columns={group_col: name_col})
-                                    summary["发货金额"] = summary["发货金额"].round(2)
-                                    summary["退货金额"] = summary["退货金额"].round(2)
-                                    summary["净销售金额"] = summary["净销售金额"].round(2)
-                                    st.dataframe(summary, use_container_width=True, hide_index=True)
-                                    total_ship = summary["发货金额"].sum()
-                                    total_return = summary["退货金额"].sum()
-                                    total_net = summary["净销售金额"].sum()
-                                    col1, col2, col3 = st.columns(3)
-                                    with col1:
-                                        st.metric("📦 总发货", f"{total_ship:,.2f}")
-                                    with col2:
-                                        st.metric("📦 总退货", f"{total_return:,.2f}")
-                                    with col3:
-                                        st.metric("📊 净销售额", f"{total_net:,.2f}")
-                                    output = io.BytesIO()
-                                    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                                        summary.to_excel(writer, index=False)
-                                    st.download_button("💾 导出", data=output.getvalue(), file_name=f"累计_{start}_{end}.xlsx")
+                            if range_data.empty:
+                                st.warning("所选维度在日期范围内无数据")
+                                summary = pd.DataFrame(columns=[name_col, "发货金额", "退货金额", "净销售金额"])
+                                st.dataframe(summary, use_container_width=True, hide_index=True)
+                            else:
+                                summary = range_data.groupby(group_col).agg(
+                                    发货金额=("ship_amount", "sum"),
+                                    退货金额=("return_amount", "sum"),
+                                    净销售金额=("net_amount", "sum")
+                                ).reset_index().rename(columns={group_col: name_col})
+                                summary["发货金额"] = summary["发货金额"].round(2)
+                                summary["退货金额"] = summary["退货金额"].round(2)
+                                summary["净销售金额"] = summary["净销售金额"].round(2)
+                                st.dataframe(summary, use_container_width=True, hide_index=True)
+                                total_ship = summary["发货金额"].sum()
+                                total_return = summary["退货金额"].sum()
+                                total_net = summary["净销售金额"].sum()
+                                col1, col2, col3 = st.columns(3)
+                                with col1:
+                                    st.metric("📦 总发货", f"{total_ship:,.2f}")
+                                with col2:
+                                    st.metric("📦 总退货", f"{total_return:,.2f}")
+                                with col3:
+                                    st.metric("📊 净销售额", f"{total_net:,.2f}")
+                                output = io.BytesIO()
+                                with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                                    summary.to_excel(writer, index=False)
+                                st.download_button("💾 导出", data=output.getvalue(), file_name=f"累计_{start}_{end}.xlsx")
         else:
             st.info("暂无数据，请先上传订单文件")
 
@@ -1629,13 +1665,12 @@ if idx_anchor_compare is not None:
                         if daily_agg.empty:
                             st.warning(f"所选{dimension_name}在日期范围内无销售数据")
                         else:
-                            # 调试信息
                             st.caption(f"当前选中的 {dimension_name}：{selected_dimensions}")
                             
                             for metric in selected_metrics:
                                 st.markdown(f"#### {metric} 趋势对比")
                                 pivot_df = daily_agg.pivot(index="sale_date", columns=dimension_col, values=metric)
-                                # 补全列
+                                # 补全所有选中维度列
                                 pivot_df = pivot_df.reindex(columns=selected_dimensions, fill_value=0)
                                 st.caption(f"补全后的列：{list(pivot_df.columns)}")
                                 
@@ -2130,20 +2165,21 @@ if idx_distribution is not None:
 # ========== 系统设置（仅管理员） ==========
 if idx_system is not None:
     with tabs[idx_system]:
-        st.subheader("👥 账号管理与权限设置")
-        st.info("在这里管理子账号及其可访问的选项卡权限。")
+        st.subheader("👥 账号管理与权限设置（数据持久化到数据库）")
+        st.info("在这里管理子账号及其可访问的选项卡权限。修改将立即保存到 Supabase。")
         
-        # 显示已有子账号
+        if st.button("🔄 重新从数据库加载账号"):
+            st.session_state.sub_users = load_sub_accounts_from_db()
+            st.success("已重新加载")
+            st.rerun()
+        
         if st.session_state.sub_users:
             for username, info in list(st.session_state.sub_users.items()):
                 with st.expander(f"账号：{username}"):
                     col1, col2 = st.columns([3, 1])
                     with col1:
-                        # 显示当前权限
                         current_allowed = info.get("allowed_tabs", base_tabs)
-                        # 所有可选项（基础 + 管理员额外？但子账号不应有管理员专用选项卡，所以只给基础）
-                        # 可根据需要调整
-                        all_options = base_tabs  # 基础选项卡
+                        all_options = base_tabs
                         new_allowed = st.multiselect(
                             f"允许 {username} 访问的选项卡",
                             options=all_options,
@@ -2152,17 +2188,24 @@ if idx_system is not None:
                         )
                         if st.button(f"保存权限", key=f"save_perm_{username}"):
                             st.session_state.sub_users[username]["allowed_tabs"] = new_allowed
-                            st.success(f"权限已更新，{username} 现在可访问：{', '.join(new_allowed)}")
-                            st.rerun()
+                            ok, msg = save_sub_account_to_db(username, st.session_state.sub_users[username])
+                            if ok:
+                                st.success(f"权限已保存到数据库")
+                                st.rerun()
+                            else:
+                                st.error(f"保存失败：{msg}")
                     with col2:
                         if st.button(f"删除账号", key=f"del_{username}"):
-                            del st.session_state.sub_users[username]
-                            st.success(f"账号 {username} 已删除")
-                            st.rerun()
+                            ok, msg = delete_sub_account_from_db(username)
+                            if ok:
+                                del st.session_state.sub_users[username]
+                                st.success(f"账号 {username} 已删除")
+                                st.rerun()
+                            else:
+                                st.error(f"删除失败：{msg}")
         else:
             st.info("暂无子账号")
         
-        # 创建新子账号
         with st.expander("➕ 创建新子账号"):
             col1, col2 = st.columns(2)
             with col1:
@@ -2171,21 +2214,25 @@ if idx_system is not None:
             with col2:
                 default_suffix = st.selectbox("默认数据源", ["非直播数据", "直播数据", "全部数据"], key="new_default_suffix_sys")
                 suffix_map = {"非直播数据": "", "直播数据": "_live", "全部数据": "_all"}
-                # 默认权限：允许所有基础选项卡
                 default_allowed = base_tabs
             if st.button("创建子账号", key="create_sys"):
                 if new_username and new_password:
                     if new_username in st.session_state.sub_users:
                         st.error("用户名已存在")
                     else:
-                        st.session_state.sub_users[new_username] = {
+                        new_info = {
                             "password": new_password,
                             "role": "viewer",
                             "default_suffix": suffix_map[default_suffix],
                             "allowed_tabs": default_allowed
                         }
-                        st.success(f"子账号 {new_username} 创建成功")
-                        st.rerun()
+                        ok, msg = save_sub_account_to_db(new_username, new_info)
+                        if ok:
+                            st.session_state.sub_users[new_username] = new_info
+                            st.success(f"子账号 {new_username} 创建成功（已保存到数据库）")
+                            st.rerun()
+                        else:
+                            st.error(f"创建失败：{msg}")
                 else:
                     st.error("请填写用户名和密码")
 
