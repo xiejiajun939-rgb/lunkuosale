@@ -194,6 +194,7 @@ def extract_anchor(remark):
     match = re.search(r'主播[：:]([^_]+)', remark)
     return match.group(1).strip() if match else None
 
+@st.cache_data(ttl=300)  # 缓存5分钟
 def load_daily_sales(suffix=None, apply_filter=True):
     if supabase is None:
         return pd.DataFrame()
@@ -202,8 +203,13 @@ def load_daily_sales(suffix=None, apply_filter=True):
         all_data = []
         page = 0
         page_size = 1000
+        # 只选择必要列，避免 select(*)
+        query_columns = "id, sale_date, shop_name, amount, cumulative_amount"
         while True:
-            resp = supabase.table(table_name).select("*").range(page*page_size, (page+1)*page_size-1).execute()
+            resp = supabase.table(table_name)\
+                           .select(query_columns)\
+                           .range(page * page_size, (page + 1) * page_size - 1)\
+                           .execute()
             if not resp.data:
                 break
             all_data.extend(resp.data)
@@ -455,6 +461,7 @@ def save_product_sales(df_orders, suffix=None):
             batch = records[i:i+batch_size]
             supabase.table(table_name).upsert(batch, on_conflict="remark").execute()
 
+@st.cache_data(ttl=300)  # 缓存5分钟
 def load_product_sales(suffix=None, apply_filter=True):
     if supabase is None:
         return pd.DataFrame()
@@ -463,8 +470,13 @@ def load_product_sales(suffix=None, apply_filter=True):
         all_data = []
         page = 0
         page_size = 1000
+        # 核心字段，不含 image_url 等大字段（后续可单独按需加载）
+        needed_cols = "sale_date, shop_name, product_code, style_code, brand, year, season, product_category, style, color_code, size_code, ship_amount, return_amount, net_amount, remark"
         while True:
-            resp = supabase.table(table_name).select("*").range(page*page_size, (page+1)*page_size-1).execute()
+            resp = supabase.table(table_name)\
+                           .select(needed_cols)\
+                           .range(page * page_size, (page + 1) * page_size - 1)\
+                           .execute()
             if not resp.data:
                 break
             all_data.extend(resp.data)
@@ -474,13 +486,16 @@ def load_product_sales(suffix=None, apply_filter=True):
         if all_data:
             df = pd.DataFrame(all_data)
             df["sale_date"] = pd.to_datetime(df["sale_date"])
+            # 补全可能缺失的 style_code
             if "style_code" not in df.columns or df["style_code"].isnull().all():
                 df["style_code"] = df["product_code"].str[:8]
             else:
                 df["style_code"] = df["style_code"].fillna(df["product_code"].str[:8])
+            # 金额字段转数值
             for col in ["ship_amount", "return_amount", "net_amount"]:
                 if col in df.columns:
                     df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+            # 主播信息（用于 _all 数据）
             if suffix in ["_live", "_all"] and "anchor" not in df.columns:
                 df["anchor"] = df["remark"].apply(extract_anchor)
             if apply_filter:
