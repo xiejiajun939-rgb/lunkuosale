@@ -2184,7 +2184,7 @@ if idx_distribution is not None:
                 else:
                     st.info("当前筛选条件下无首单礼金商品")
 
-# ========== 系统设置（仅管理员） ==========
+# ========== 系统设置（仅管理员）- 使用表单防止即时刷新 ==========
 if idx_system is not None:
     with tabs[idx_system]:
         st.subheader("👥 账号管理与权限设置（按数据源分别设置）")
@@ -2198,89 +2198,94 @@ if idx_system is not None:
         if st.session_state.sub_users:
             for username, info in list(st.session_state.sub_users.items()):
                 with st.expander(f"账号：{username}"):
-                    st.markdown(f"**{username}** 的权限配置")
-                    # 获取当前权限字典
-                    perms = info.get("permissions", {})
-                    # 确保三个数据源都有条目
-                    for suf in ["", "_live", "_all"]:
-                        if suf not in perms:
-                            perms[suf] = []
-                    # 显示三个数据源的选项卡多选
-                    suffix_display = {"": "非直播数据", "_live": "直播数据", "_all": "全部数据"}
-                    new_perms = {}
-                    for suf, display_name in suffix_display.items():
-                        current_allowed = perms.get(suf, [])
-                        # 确保只选 base_tabs 中的项
-                        all_options = base_tabs
-                        default = [tab for tab in current_allowed if tab in all_options]
-                        selected = st.multiselect(
-                            f"{display_name} 允许的选项卡",
-                            options=all_options,
-                            default=default,
-                            key=f"perm_{username}_{suf}"
+                    # 使用 st.form 包裹，避免即时刷新
+                    with st.form(key=f"form_{username}"):
+                        st.markdown(f"**{username}** 的权限配置")
+                        # 获取当前权限字典
+                        perms = info.get("permissions", {})
+                        for suf in ["", "_live", "_all"]:
+                            if suf not in perms:
+                                perms[suf] = []
+                        # 显示三个数据源的选项卡多选
+                        suffix_display = {"": "非直播数据", "_live": "直播数据", "_all": "全部数据"}
+                        new_perms = {}
+                        for suf, display_name in suffix_display.items():
+                            current_allowed = perms.get(suf, [])
+                            all_options = base_tabs
+                            default = [tab for tab in current_allowed if tab in all_options]
+                            # 使用唯一的 key
+                            selected = st.multiselect(
+                                f"{display_name} 允许的选项卡",
+                                options=all_options,
+                                default=default,
+                                key=f"perm_{username}_{suf}_form"
+                            )
+                            new_perms[suf] = selected
+                        
+                        # 默认数据源选择
+                        current_default = info.get("default_suffix", "")
+                        default_options = {"非直播数据": "", "直播数据": "_live", "全部数据": "_all"}
+                        default_display = [k for k, v in default_options.items() if v == current_default]
+                        default_display = default_display[0] if default_display else "非直播数据"
+                        new_default_display = st.selectbox(
+                            "默认数据源",
+                            options=list(default_options.keys()),
+                            index=list(default_options.keys()).index(default_display),
+                            key=f"default_suffix_{username}_form"
                         )
-                        new_perms[suf] = selected
-                    
-                    # 默认数据源选择
-                    current_default = info.get("default_suffix", "")
-                    default_options = {"非直播数据": "", "直播数据": "_live", "全部数据": "_all"}
-                    default_display = [k for k, v in default_options.items() if v == current_default]
-                    default_display = default_display[0] if default_display else "非直播数据"
-                    new_default_display = st.selectbox(
-                        "默认数据源",
-                        options=list(default_options.keys()),
-                        index=list(default_options.keys()).index(default_display),
-                        key=f"default_suffix_{username}"
-                    )
-                    new_default = default_options[new_default_display]
+                        new_default = default_options[new_default_display]
 
-                    # 数据过滤权限（平台和店铺）
-                    st.markdown("**数据过滤权限**")
-                    platform_options = ["all", "抖音", "视频号"]
-                    current_platform = info.get("filter_platform", "all")
-                    new_platform = st.selectbox(
-                        "限制平台（all=全部）",
-                        options=platform_options,
-                        index=platform_options.index(current_platform) if current_platform in platform_options else 0,
-                        key=f"platform_{username}"
-                    )
-                    @st.cache_data(ttl=600)
-                    def get_all_shop_names():
-                        df = load_product_sales(apply_filter=False)
-                        if df.empty:
-                            return []
-                        if st.session_state.table_suffix == "_all":
-                            if "anchor" in df.columns:
-                                return sorted(df["anchor"].dropna().unique().tolist())
-                            else:
+                        # 数据过滤权限
+                        st.markdown("**数据过滤权限**")
+                        platform_options = ["all", "抖音", "视频号"]
+                        current_platform = info.get("filter_platform", "all")
+                        new_platform = st.selectbox(
+                            "限制平台（all=全部）",
+                            options=platform_options,
+                            index=platform_options.index(current_platform) if current_platform in platform_options else 0,
+                            key=f"platform_{username}_form"
+                        )
+                        
+                        @st.cache_data(ttl=600)
+                        def get_all_shop_names():
+                            df = load_product_sales(apply_filter=False)
+                            if df.empty:
                                 return []
-                        else:
-                            if "shop_name" in df.columns:
-                                return sorted(df["shop_name"].dropna().unique().tolist())
+                            if st.session_state.table_suffix == "_all":
+                                if "anchor" in df.columns:
+                                    return sorted(df["anchor"].dropna().unique().tolist())
+                                else:
+                                    return []
                             else:
-                                return []
-                    all_shop_names = get_all_shop_names()
-                    current_shop_names = info.get("filter_shop_names", [])
-                    current_shop_names = [name for name in current_shop_names if name in all_shop_names]
-                    new_shop_names = st.multiselect(
-                        "限制店铺/主播（空表示全部）",
-                        options=all_shop_names,
-                        default=current_shop_names,
-                        key=f"shops_{username}"
-                    )
+                                if "shop_name" in df.columns:
+                                    return sorted(df["shop_name"].dropna().unique().tolist())
+                                else:
+                                    return []
+                        all_shop_names = get_all_shop_names()
+                        current_shop_names = info.get("filter_shop_names", [])
+                        current_shop_names = [name for name in current_shop_names if name in all_shop_names]
+                        new_shop_names = st.multiselect(
+                            "限制店铺/主播（空表示全部）",
+                            options=all_shop_names,
+                            default=current_shop_names,
+                            key=f"shops_{username}_form"
+                        )
 
-                    if st.button(f"保存全部权限", key=f"save_perm_{username}"):
-                        st.session_state.sub_users[username]["permissions"] = new_perms
-                        st.session_state.sub_users[username]["default_suffix"] = new_default
-                        st.session_state.sub_users[username]["filter_platform"] = new_platform
-                        st.session_state.sub_users[username]["filter_shop_names"] = new_shop_names
-                        ok, msg = save_sub_account_to_db(username, st.session_state.sub_users[username])
-                        if ok:
-                            st.success(f"权限已保存到数据库")
-                            st.rerun()
-                        else:
-                            st.error(f"保存失败：{msg}")
+                        # 提交按钮
+                        submitted = st.form_submit_button("保存全部权限")
+                        if submitted:
+                            st.session_state.sub_users[username]["permissions"] = new_perms
+                            st.session_state.sub_users[username]["default_suffix"] = new_default
+                            st.session_state.sub_users[username]["filter_platform"] = new_platform
+                            st.session_state.sub_users[username]["filter_shop_names"] = new_shop_names
+                            ok, msg = save_sub_account_to_db(username, st.session_state.sub_users[username])
+                            if ok:
+                                st.success(f"权限已保存到数据库")
+                                st.rerun()
+                            else:
+                                st.error(f"保存失败：{msg}")
                     
+                    # 删除按钮放在表单外部，避免意外提交
                     if st.button(f"删除账号", key=f"del_{username}"):
                         ok, msg = delete_sub_account_from_db(username)
                         if ok:
@@ -2293,38 +2298,39 @@ if idx_system is not None:
             st.info("暂无子账号")
         
         with st.expander("➕ 创建新子账号"):
-            col1, col2 = st.columns(2)
-            with col1:
-                new_username = st.text_input("用户名", key="new_username_sys")
-                new_password = st.text_input("密码", type="password", key="new_password_sys")
-            with col2:
-                default_suffix = st.selectbox("默认数据源", ["非直播数据", "直播数据", "全部数据"], key="new_default_suffix_sys")
-                suffix_map = {"非直播数据": "", "直播数据": "_live", "全部数据": "_all"}
-                # 默认权限：所有数据源均允许所有基础选项卡
-                default_perms = {suf: base_tabs for suf in ["", "_live", "_all"]}
-                default_platform = "all"
-            if st.button("创建子账号", key="create_sys"):
-                if new_username and new_password:
-                    if new_username in st.session_state.sub_users:
-                        st.error("用户名已存在")
-                    else:
-                        new_info = {
-                            "password": new_password,
-                            "role": "viewer",
-                            "default_suffix": suffix_map[default_suffix],
-                            "permissions": default_perms,
-                            "filter_platform": default_platform,
-                            "filter_shop_names": []
-                        }
-                        ok, msg = save_sub_account_to_db(new_username, new_info)
-                        if ok:
-                            st.session_state.sub_users[new_username] = new_info
-                            st.success(f"子账号 {new_username} 创建成功（已保存到数据库）")
-                            st.rerun()
+            with st.form(key="create_account_form"):
+                col1, col2 = st.columns(2)
+                with col1:
+                    new_username = st.text_input("用户名", key="new_username_sys_form")
+                    new_password = st.text_input("密码", type="password", key="new_password_sys_form")
+                with col2:
+                    default_suffix = st.selectbox("默认数据源", ["非直播数据", "直播数据", "全部数据"], key="new_default_suffix_sys_form")
+                    suffix_map = {"非直播数据": "", "直播数据": "_live", "全部数据": "_all"}
+                    default_perms = {suf: base_tabs for suf in ["", "_live", "_all"]}
+                    default_platform = "all"
+                submitted_create = st.form_submit_button("创建子账号")
+                if submitted_create:
+                    if new_username and new_password:
+                        if new_username in st.session_state.sub_users:
+                            st.error("用户名已存在")
                         else:
-                            st.error(f"创建失败：{msg}")
-                else:
-                    st.error("请填写用户名和密码")
+                            new_info = {
+                                "password": new_password,
+                                "role": "viewer",
+                                "default_suffix": suffix_map[default_suffix],
+                                "permissions": default_perms,
+                                "filter_platform": default_platform,
+                                "filter_shop_names": []
+                            }
+                            ok, msg = save_sub_account_to_db(new_username, new_info)
+                            if ok:
+                                st.session_state.sub_users[new_username] = new_info
+                                st.success(f"子账号 {new_username} 创建成功（已保存到数据库）")
+                                st.rerun()
+                            else:
+                                st.error(f"创建失败：{msg}")
+                    else:
+                        st.error("请填写用户名和密码")
 
 # ========== 调试 ==========
 if idx_debug is not None:
