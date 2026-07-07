@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-订单业绩统计工具 - 完整版（含数据权限控制）
+订单业绩统计工具 - 完整版（含数据源切换权限）
 管理员账号：admin / 1234567890
 子账号存储在 Supabase 的 sub_accounts 表中
+子账号可在侧边栏切换数据源（仅当被授权多个数据源时）
 """
 
 import streamlit as st
@@ -175,16 +176,12 @@ def apply_data_permission(df, username=None, role=None):
         return df
     filter_platform = user_info.get("filter_platform", "all")
     filter_shop_names = user_info.get("filter_shop_names", [])
-    # 平台过滤
     if filter_platform != "all":
         if "shop_name" in df.columns:
             if filter_platform == "抖音":
                 df = df[df["shop_name"].str.contains("抖音", case=False, na=False)]
             elif filter_platform == "视频号":
                 df = df[df["shop_name"].str.contains("视频号", case=False, na=False)]
-        elif "anchor" in df.columns:
-            pass  # 无法可靠按平台过滤
-    # 店铺/主播名称过滤
     if filter_shop_names:
         if "shop_name" in df.columns:
             df = df[df["shop_name"].isin(filter_shop_names)]
@@ -689,24 +686,41 @@ def batch_manage_newbie_coupon():
 rebuild_daily_data(st.session_state.table_suffix)
 if st.session_state.target_dict == {}:
     st.session_state.target_dict = load_targets(st.session_state.table_suffix)
+
 # ========== 侧边栏 ==========
 with st.sidebar:
     st.header("📂 数据加载")
+    st.subheader("🔄 数据源切换")
+    suffix_names = {"": "非直播数据", "_live": "直播数据", "_all": "全部数据"}
+    current_source_name = suffix_names.get(st.session_state.table_suffix, "未知")
+    st.info(f"📌 当前正在查看：**{current_source_name}**")
+
+    # 确定可用数据源选项
     if st.session_state.role == "admin":
-        st.subheader("🔄 数据源切换")
-        suffix_names = {"": "非直播数据", "_live": "直播数据", "_all": "全部数据"}
-        current_source_name = suffix_names.get(st.session_state.table_suffix, "未知")
-        st.info(f"📌 当前正在查看：**{current_source_name}**")
-        source_options = {"非直播数据": "", "直播数据": "_live", "全部数据": "_all"}
-        default_index = list(source_options.keys()).index(current_source_name) if current_source_name in source_options else 0
-        selected_source = st.selectbox("选择要切换到的数据源", options=list(source_options.keys()), index=default_index, key="source_selectbox_final")
-        if st.button("✅ 确认切换", key="confirm_switch_final"):
-            new_suffix = source_options[selected_source]
-            if new_suffix != st.session_state.table_suffix:
-                st.session_state.table_suffix = new_suffix
-                st.cache_data.clear()
-                st.rerun()
-        st.markdown("---")
+        available_suffixes = {"非直播数据": "", "直播数据": "_live", "全部数据": "_all"}
+    else:
+        user_info = st.session_state.sub_users.get(st.session_state.username, {})
+        default_suffix = user_info.get("default_suffix", "")
+        name_map = {"": "非直播数据", "_live": "直播数据", "_all": "全部数据"}
+        available_name = name_map.get(default_suffix, "非直播数据")
+        available_suffixes = {available_name: default_suffix}
+
+    options = list(available_suffixes.keys())
+    if current_source_name in options:
+        default_index = options.index(current_source_name)
+    else:
+        default_index = 0
+    selected_source = st.selectbox("选择数据源", options=options, index=default_index, key="source_selectbox_sidebar")
+    if st.button("✅ 确认切换", key="confirm_switch_sidebar"):
+        new_suffix = available_suffixes[selected_source]
+        if new_suffix != st.session_state.table_suffix:
+            st.session_state.table_suffix = new_suffix
+            st.cache_data.clear()
+            st.rerun()
+    st.markdown("---")
+
+    # ----- 上传和工具（仅管理员可见） -----
+    if st.session_state.role == "admin":
         current_display_suffix = st.session_state.table_suffix
         def handle_upload(uploaded_file, suffix, file_type="order"):
             if st.session_state.processing_upload:
@@ -738,6 +752,7 @@ with st.sidebar:
             else:
                 st.error(msg)
                 st.session_state.processing_upload = False
+
         if current_display_suffix == "":
             st.subheader("📁 非直播数据上传")
             uploaded_order = st.file_uploader("选择订单文件 (Excel)", type=["xlsx", "xls"], key="order_uploader_normal_final")
@@ -802,7 +817,7 @@ with st.sidebar:
                 del st.session_state[key]
         st.rerun()
 
-# ========== 动态创建选项卡（按用户角色定制） ==========
+# ========== 动态创建选项卡 ==========
 base_tabs = [
     "📅 最新日明细",
     "🏪 日期范围累计",
@@ -1096,28 +1111,1068 @@ if idx_history is not None:
 # ========== 商品分析 ==========
 if idx_product is not None:
     with tabs[idx_product]:
-        # [商品分析代码与之前完全相同，此处省略，但实际应保留]
-        # 由于商品分析代码很长且未修改，请保留原有完整代码
-        # 此部分已在之前版本中完整，此处仅作占位
-        st.info("商品分析模块（代码已完整，请确保已包含）")
+        if st.session_state.get("detail_clicked", False):
+            st.session_state.detail_clicked = False
+        else:
+            st.session_state.show_dialog = False
+            st.session_state.dialog_style_code = None
+            st.session_state.cached_detail_data = None
+        if st.session_state.get("trend_clicked", False):
+            st.session_state.trend_clicked = False
+        else:
+            st.session_state.show_trend_dialog = False
+            st.session_state.trend_style_code = None
+            st.session_state.trend_data = None
+
+        col_btn, _ = st.columns([1, 5])
+        with col_btn:
+            if st.button("🔄 刷新数据", key="refresh_analysis_final"):
+                st.session_state.show_dialog = False
+                st.session_state.dialog_style_code = None
+                st.session_state.cached_detail_data = None
+                st.session_state.detail_clicked = False
+                st.session_state.show_trend_dialog = False
+                st.session_state.trend_style_code = None
+                st.session_state.trend_data = None
+                st.session_state.trend_clicked = False
+                st.cache_data.clear()
+                st.rerun()
+        
+        if "dialog_style_code" not in st.session_state:
+            st.session_state.dialog_style_code = None
+        if "show_dialog" not in st.session_state:
+            st.session_state.show_dialog = False
+        if "cached_detail_data" not in st.session_state:
+            st.session_state.cached_detail_data = None
+        if "detail_clicked" not in st.session_state:
+            st.session_state.detail_clicked = False
+        if "trend_style_code" not in st.session_state:
+            st.session_state.trend_style_code = None
+        if "show_trend_dialog" not in st.session_state:
+            st.session_state.show_trend_dialog = False
+        if "trend_data" not in st.session_state:
+            st.session_state.trend_data = None
+        if "trend_clicked" not in st.session_state:
+            st.session_state.trend_clicked = False
+        if "product_page_num" not in st.session_state:
+            st.session_state.product_page_num = 1
+        if "product_page_size" not in st.session_state:
+            st.session_state.product_page_size = 10
+        if "sort_by" not in st.session_state:
+            st.session_state.sort_by = "净销售金额"
+        if "sort_ascending" not in st.session_state:
+            st.session_state.sort_ascending = False
+        
+        with st.spinner("正在加载商品销售数据，请稍候..."):
+            prod_df = load_product_sales(st.session_state.table_suffix)
+        
+        if prod_df.empty:
+            st.warning("暂无商品销售数据，请先上传订单文件。")
+        else:
+            if "style_code" in prod_df.columns:
+                prod_df["style_code"] = prod_df["style_code"].astype(str).str.strip().str.upper()
+            else:
+                prod_df["style_code"] = prod_df["product_code"].str[:8].str.strip().str.upper()
+            
+            if st.session_state.table_suffix in ["_live", "_all"]:
+                if "anchor" not in prod_df.columns:
+                    prod_df["anchor"] = prod_df["remark"].astype(str).apply(extract_anchor)
+            
+            min_date = prod_df["sale_date"].min().date()
+            max_date = prod_df["sale_date"].max().date()
+            
+            col_date1, col_date2 = st.columns(2)
+            with col_date1:
+                start_date = st.date_input("开始日期", value=min_date, key="prod_start_final", min_value=min_date, max_value=max_date)
+            with col_date2:
+                end_date = st.date_input("结束日期", value=max_date, key="prod_end_final", min_value=min_date, max_value=max_date)
+            
+            st.subheader("🔍 筛选条件")
+            col_platform, col_shop = st.columns(2)
+            with col_platform:
+                platform_options = ["全部", "抖音", "视频号"]
+                selected_platform = st.selectbox("平台", platform_options, key="platform_filter_final")
+            with col_shop:
+                all_shops_all = prod_df["shop_name"].unique()
+                if selected_platform == "抖音":
+                    shop_options = [shop for shop in all_shops_all if "抖音" in shop]
+                elif selected_platform == "视频号":
+                    shop_options = [shop for shop in all_shops_all if "视频号" in shop]
+                else:
+                    shop_options = list(all_shops_all)
+                selected_shops = st.multiselect("店铺（可多选）", options=sorted(shop_options), default=[], key="shop_filter_final")
+            
+            col_code, col_brand = st.columns(2)
+            with col_code:
+                style_codes_input = st.text_input("货号筛选（多个用英文逗号分隔）", placeholder="例如: L262Y050, G262Y030", key="style_code_filter_final")
+            with col_brand:
+                brands_all = ["全部"] + sorted(prod_df["brand"].dropna().unique())
+                selected_brand = st.selectbox("品牌", brands_all, key="brand_filter_final")
+            
+            coupon_filter_options = ["全部", "仅首单礼金", "非首单礼金"]
+            selected_coupon_filter = st.selectbox("是否首单礼金款式", coupon_filter_options, key="coupon_filter_final")
+            
+            selected_anchors = []
+            if st.session_state.table_suffix in ["_live", "_all"]:
+                if "anchor" not in prod_df.columns:
+                    prod_df["anchor"] = prod_df["remark"].astype(str).apply(extract_anchor)
+                all_anchors = prod_df["anchor"].dropna().unique().tolist()
+                if all_anchors:
+                    selected_anchors = st.multiselect("主播（可多选）", options=sorted(all_anchors), default=[], key="anchor_filter_final")
+                else:
+                    st.info("当前数据中未识别到任何主播信息，请检查备注字段是否包含“主播：xxx”格式。")
+            
+            mask_date = (prod_df["sale_date"] >= pd.to_datetime(start_date)) & (prod_df["sale_date"] <= pd.to_datetime(end_date))
+            filtered = prod_df[mask_date].copy()
+            
+            if selected_platform == "抖音":
+                filtered = filtered[filtered["shop_name"].str.contains("抖音", case=False, na=False)]
+            elif selected_platform == "视频号":
+                filtered = filtered[filtered["shop_name"].str.contains("视频号", case=False, na=False)]
+            if selected_shops:
+                filtered = filtered[filtered["shop_name"].isin(selected_shops)]
+            if style_codes_input.strip():
+                target_codes = [code.strip().upper() for code in style_codes_input.split(",") if code.strip()]
+                if target_codes:
+                    filtered = filtered[filtered["style_code"].isin(target_codes)]
+            if selected_brand != "全部":
+                filtered = filtered[filtered["brand"] == selected_brand]
+            if selected_anchors:
+                filtered = filtered[filtered["anchor"].isin(selected_anchors)]
+            
+            master_df = load_product_master()
+            coupon_map = {}
+            if not master_df.empty and "style_code" in master_df.columns:
+                master_df["style_code"] = master_df["style_code"].astype(str).str.strip().str.upper()
+                coupon_map = master_df.set_index("style_code")["has_newbie_coupon"].to_dict()
+            filtered["has_newbie_coupon"] = filtered["style_code"].map(coupon_map).fillna(False)
+            if selected_coupon_filter == "仅首单礼金":
+                filtered = filtered[filtered["has_newbie_coupon"] == True]
+            elif selected_coupon_filter == "非首单礼金":
+                filtered = filtered[filtered["has_newbie_coupon"] == False]
+            
+            if filtered.empty:
+                st.warning("所选条件下无销售数据")
+            else:
+                grouped = filtered.groupby("style_code").agg(
+                    发货金额=("ship_amount", "sum"),
+                    退货金额=("return_amount", "sum"),
+                    净销售金额=("net_amount", "sum")
+                ).reset_index().rename(columns={"style_code": "货号"})
+                
+                if not master_df.empty and "style_code" in master_df.columns:
+                    master_df = master_df.drop_duplicates(subset="style_code", keep="first")
+                    img_map = master_df.set_index("style_code")["image_url"].to_dict()
+                    cat_map = master_df.set_index("style_code")["category"].to_dict()
+                    coupon_map = master_df.set_index("style_code")["has_newbie_coupon"].to_dict()
+                    grouped["image_url"] = grouped["货号"].map(img_map).fillna(None)
+                    grouped["has_newbie_coupon"] = grouped["货号"].map(coupon_map).fillna(False)
+                    if "master_category" not in filtered.columns:
+                        filtered["master_category"] = None
+                    cat_series = filtered.groupby("style_code")["master_category"].first()
+                    grouped["master_category"] = grouped["货号"].map(cat_series).fillna(grouped["货号"].map(cat_map))
+                else:
+                    grouped["master_category"] = None
+                    grouped["image_url"] = None
+                    grouped["has_newbie_coupon"] = False
+                
+                grouped["退款率"] = np.where(
+                    grouped["发货金额"] != 0,
+                    ((grouped["退货金额"] / grouped["发货金额"].replace(0, np.nan)) * 100).map("{:.2f}%".format),
+                    "-"
+                )
+                
+                st.markdown("#### 货号汇总表")
+                
+                col_sort1, col_sort2, col_sort3 = st.columns([1, 1, 2])
+                with col_sort1:
+                    sort_options = ["货号", "发货金额", "退货金额", "净销售金额", "退款率"]
+                    selected_sort = st.selectbox("排序字段", sort_options, index=sort_options.index(st.session_state.sort_by) if st.session_state.sort_by in sort_options else 3, key="sort_by_selector")
+                with col_sort2:
+                    sort_order = st.radio("排序顺序", ["降序", "升序"], horizontal=True, index=0 if not st.session_state.sort_ascending else 1, key="sort_order_radio")
+                with col_sort3:
+                    page_size_options = [10, 20, 50, 100]
+                    selected_page_size = st.selectbox(
+                        "每页显示行数",
+                        options=page_size_options,
+                        index=page_size_options.index(st.session_state.product_page_size),
+                        key="page_size_selector"
+                    )
+                    if selected_page_size != st.session_state.product_page_size:
+                        st.session_state.product_page_size = selected_page_size
+                        st.session_state.product_page_num = 1
+                        st.rerun()
+                
+                if selected_sort != st.session_state.sort_by or (sort_order == "降序" and st.session_state.sort_ascending) or (sort_order == "升序" and not st.session_state.sort_ascending):
+                    st.session_state.show_dialog = False
+                    st.session_state.dialog_style_code = None
+                    st.session_state.cached_detail_data = None
+                    st.session_state.detail_clicked = False
+                    st.session_state.show_trend_dialog = False
+                    st.session_state.trend_style_code = None
+                    st.session_state.trend_data = None
+                    st.session_state.trend_clicked = False
+                    st.session_state.sort_by = selected_sort
+                    st.session_state.sort_ascending = (sort_order == "升序")
+                    st.session_state.product_page_num = 1
+                    st.rerun()
+                
+                if st.session_state.sort_by == "货号":
+                    grouped = grouped.sort_values("货号", ascending=st.session_state.sort_ascending)
+                elif st.session_state.sort_by == "发货金额":
+                    grouped = grouped.sort_values("发货金额", ascending=st.session_state.sort_ascending)
+                elif st.session_state.sort_by == "退货金额":
+                    grouped = grouped.sort_values("退货金额", ascending=st.session_state.sort_ascending)
+                elif st.session_state.sort_by == "净销售金额":
+                    grouped = grouped.sort_values("净销售金额", ascending=st.session_state.sort_ascending)
+                elif st.session_state.sort_by == "退款率":
+                    grouped["退款率_num"] = grouped["退款率"].str.rstrip("%").astype(float)
+                    grouped = grouped.sort_values("退款率_num", ascending=st.session_state.sort_ascending)
+                    grouped = grouped.drop(columns=["退款率_num"])
+                
+                page_size = st.session_state.product_page_size
+                total_rows = len(grouped)
+                total_pages = (total_rows + page_size - 1) // page_size if total_rows > 0 else 1
+                if st.session_state.product_page_num > total_pages:
+                    st.session_state.product_page_num = 1
+                
+                col_prev, col_page, col_next, col_export = st.columns([1, 2, 1, 1.5])
+                with col_prev:
+                    if st.button("◀ 上一页", key="product_prev_page"):
+                        st.session_state.show_dialog = False
+                        st.session_state.dialog_style_code = None
+                        st.session_state.cached_detail_data = None
+                        st.session_state.detail_clicked = False
+                        st.session_state.show_trend_dialog = False
+                        st.session_state.trend_style_code = None
+                        st.session_state.trend_data = None
+                        st.session_state.trend_clicked = False
+                        if st.session_state.product_page_num > 1:
+                            st.session_state.product_page_num -= 1
+                            st.rerun()
+                with col_page:
+                    st.write(f"第 {st.session_state.product_page_num} / {total_pages} 页")
+                with col_next:
+                    if st.button("下一页 ▶", key="product_next_page"):
+                        st.session_state.show_dialog = False
+                        st.session_state.dialog_style_code = None
+                        st.session_state.cached_detail_data = None
+                        st.session_state.detail_clicked = False
+                        st.session_state.show_trend_dialog = False
+                        st.session_state.trend_style_code = None
+                        st.session_state.trend_data = None
+                        st.session_state.trend_clicked = False
+                        if st.session_state.product_page_num < total_pages:
+                            st.session_state.product_page_num += 1
+                            st.rerun()
+                with col_export:
+                    is_live_or_all = st.session_state.table_suffix in ["_live", "_all"]
+                    if is_live_or_all:
+                        detail_type_name = "明细（货号+主播）"
+                    else:
+                        detail_type_name = "明细（货号+店铺）"
+                    
+                    export_type = st.radio(
+                        "导出类型",
+                        ["汇总（货号级别）", detail_type_name],
+                        horizontal=True,
+                        key="export_type_radio"
+                    )
+                    
+                    if st.button("📥 下载数据", key="export_filtered_data"):
+                        if export_type == "汇总（货号级别）":
+                            export_df = grouped.copy()
+                            if "image_url" in export_df.columns:
+                                export_df = export_df.drop(columns=["image_url"])
+                            cols_order = ["货号", "master_category", "发货金额", "退货金额", "净销售金额", "退款率", "has_newbie_coupon"]
+                            export_cols = [c for c in cols_order if c in export_df.columns]
+                            export_df = export_df[export_cols]
+                            export_df.rename(columns={
+                                "master_category": "商品分类",
+                                "has_newbie_coupon": "是否新人礼金"
+                            }, inplace=True)
+                            export_df["是否新人礼金"] = export_df["是否新人礼金"].map({True: "是", False: "否"})
+                            sheet_name = "货号汇总"
+                            file_suffix = "货号汇总"
+                        else:
+                            if is_live_or_all:
+                                group_col = "anchor"
+                                group_name = "主播"
+                            else:
+                                group_col = "shop_name"
+                                group_name = "店铺"
+                            
+                            if group_col not in filtered.columns:
+                                st.error(f"数据中缺少 {group_name} 信息，无法导出明细。")
+                                st.stop()
+                            
+                            detail_agg = filtered.groupby(["style_code", group_col]).agg(
+                                明细发货金额=("ship_amount", "sum"),
+                                明细退货金额=("return_amount", "sum"),
+                                明细净销售金额=("net_amount", "sum")
+                            ).reset_index()
+                            
+                            detail_agg["明细退款率"] = np.where(
+                                detail_agg["明细发货金额"] != 0,
+                                (detail_agg["明细退货金额"] / detail_agg["明细发货金额"] * 100).map("{:.2f}%".format),
+                                "-"
+                            )
+                            
+                            master_cols = grouped[["货号", "master_category", "发货金额", "退货金额", "净销售金额", "退款率", "has_newbie_coupon"]].copy()
+                            export_df = pd.merge(
+                                detail_agg,
+                                master_cols,
+                                left_on="style_code",
+                                right_on="货号",
+                                how="left"
+                            )
+                            export_df.drop(columns=["style_code"], inplace=True)
+                            export_df.rename(columns={
+                                group_col: group_name,
+                                "master_category": "商品分类",
+                                "has_newbie_coupon": "是否新人礼金"
+                            }, inplace=True)
+                            export_df["是否新人礼金"] = export_df["是否新人礼金"].map({True: "是", False: "否"})
+                            
+                            final_cols = [
+                                "货号", "商品分类", "发货金额", "退货金额", "净销售金额", "退款率", "是否新人礼金",
+                                group_name, "明细发货金额", "明细退货金额", "明细净销售金额", "明细退款率"
+                            ]
+                            export_df = export_df[final_cols]
+                            sheet_name = f"货号{group_name}明细"
+                            file_suffix = f"货号{group_name}明细"
+                        
+                        output = io.BytesIO()
+                        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                            export_df.to_excel(writer, index=False, sheet_name=sheet_name)
+                        st.success("导出成功！点击下方按钮下载")
+                        st.download_button(
+                            label="💾 点击下载 Excel",
+                            data=output.getvalue(),
+                            file_name=f"{file_suffix}_{start_date.strftime('%Y%m%d')}_{end_date.strftime('%Y%m%d')}.xlsx",
+                            key="download_export",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        )
+                
+                start_idx = (st.session_state.product_page_num - 1) * page_size
+                end_idx = min(start_idx + page_size, total_rows)
+                page_df = grouped.iloc[start_idx:end_idx]
+                
+                cols = st.columns([2, 0.5, 1.5, 1.2, 1.2, 1.2, 1, 0.8, 0.8, 0.8])
+                headers = ["货号", "图片", "商品分类", "发货金额(¥)", "退货金额(¥)", "净销售金额(¥)", "退款率", "新人礼金", "详情", "趋势"]
+                for col, header in zip(cols, headers):
+                    col.markdown(f"**{header}**")
+                
+                for idx, row in page_df.iterrows():
+                    col1, col2, col3, col4, col5, col6, col7, col8, col9, col10 = st.columns([2, 0.5, 1.5, 1.2, 1.2, 1.2, 1, 0.8, 0.8, 0.8])
+                    col1.write(row["货号"])
+                    if row.get("image_url") and pd.notna(row["image_url"]):
+                        col2.image(row["image_url"], width=50)
+                    else:
+                        col2.write("-")
+                    col3.write(row["master_category"] if pd.notna(row["master_category"]) else "-")
+                    col4.write(f"{row['发货金额']:,.2f}")
+                    col5.write(f"{row['退货金额']:,.2f}")
+                    col6.write(f"{row['净销售金额']:,.2f}")
+                    col7.write(row["退款率"])
+                    col8.write("✅" if row.get("has_newbie_coupon") else "❌")
+                    if col9.button("📊", key=f"detail_btn_{row['货号']}_{idx}"):
+                        style_code = row["货号"]
+                        detail_df = filtered[filtered["style_code"] == style_code].copy()
+                        if not detail_df.empty:
+                            suffix = st.session_state.table_suffix
+                            def extract_anchor_fn(remark):
+                                match = re.search(r'主播[：:]([^_]+)', remark)
+                                return match.group(1).strip() if match else None
+                            if suffix in ["_live", "_all"]:
+                                detail_df["anchor"] = detail_df["remark"].apply(extract_anchor_fn)
+                                detail_df = detail_df[detail_df["anchor"].notna()]
+                                if not detail_df.empty:
+                                    shop_detail = detail_df.groupby("anchor").agg(
+                                        发货金额=("ship_amount", "sum"),
+                                        退货金额=("return_amount", "sum"),
+                                        净销售金额=("net_amount", "sum")
+                                    ).reset_index().rename(columns={"anchor": "主播"})
+                                    shop_detail["退款率"] = shop_detail.apply(
+                                        lambda r: f"{(r['退货金额']/r['发货金额']*100):.2f}%" if r['发货金额']!=0 else "-", axis=1
+                                    )
+                                    detail_type = "anchor"
+                                else:
+                                    shop_detail = pd.DataFrame()
+                                    detail_type = "anchor"
+                            else:
+                                shop_detail = detail_df.groupby("shop_name").agg(
+                                    发货金额=("ship_amount", "sum"),
+                                    退货金额=("return_amount", "sum"),
+                                    净销售金额=("net_amount", "sum")
+                                ).reset_index()
+                                shop_detail["退款率"] = shop_detail.apply(
+                                    lambda r: f"{(r['退货金额']/r['发货金额']*100):.2f}%" if r['发货金额']!=0 else "-", axis=1
+                                )
+                                detail_type = "shop"
+                            st.session_state.cached_detail_data = {"style_code": style_code, "shop_detail": shop_detail, "type": detail_type}
+                        else:
+                            st.session_state.cached_detail_data = None
+                        st.session_state.show_trend_dialog = False
+                        st.session_state.trend_style_code = None
+                        st.session_state.trend_data = None
+                        st.session_state.trend_clicked = False
+                        st.session_state.dialog_style_code = style_code
+                        st.session_state.show_dialog = True
+                        st.session_state.detail_clicked = True
+                        st.rerun()
+                    if col10.button("📈", key=f"trend_btn_{row['货号']}_{idx}"):
+                        style_code = row["货号"]
+                        trend_data = filtered[filtered["style_code"] == style_code].copy()
+                        if not trend_data.empty:
+                            daily = trend_data.groupby("sale_date").agg(
+                                ship_amount=("ship_amount", "sum"),
+                                return_amount=("return_amount", "sum"),
+                                net_amount=("net_amount", "sum")
+                            ).reset_index().sort_values("sale_date")
+                            st.session_state.trend_data = daily
+                        else:
+                            st.session_state.trend_data = None
+                        st.session_state.show_dialog = False
+                        st.session_state.dialog_style_code = None
+                        st.session_state.cached_detail_data = None
+                        st.session_state.detail_clicked = False
+                        st.session_state.trend_style_code = style_code
+                        st.session_state.show_trend_dialog = True
+                        st.session_state.trend_clicked = True
+                        st.rerun()
+        
+        if st.session_state.show_dialog and st.session_state.dialog_style_code:
+            style_code = st.session_state.dialog_style_code
+            cached = st.session_state.cached_detail_data
+            @st.dialog(f"📋 货号 {style_code} 销售明细", width="large")
+            def show_style_detail():
+                if cached and cached.get("style_code") == style_code:
+                    shop_detail = cached["shop_detail"]
+                    if cached.get("type") == "anchor":
+                        st.markdown("#### 主播销售汇总")
+                    else:
+                        st.markdown("#### 店铺销售汇总")
+                    if not shop_detail.empty:
+                        st.dataframe(shop_detail, column_config={
+                            "主播" if cached.get("type") == "anchor" else "shop_name": st.column_config.TextColumn("主播" if cached.get("type") == "anchor" else "店铺"),
+                            "发货金额": st.column_config.NumberColumn("发货金额(¥)", format="%.2f"),
+                            "退货金额": st.column_config.NumberColumn("退货金额(¥)", format="%.2f"),
+                            "净销售金额": st.column_config.NumberColumn("净销售金额(¥)", format="%.2f"),
+                            "退款率": st.column_config.TextColumn("退款率")
+                        }, hide_index=True, use_container_width=True)
+                    else:
+                        st.info("无有效数据")
+                else:
+                    st.info("该货号无销售数据")
+                if st.button("关闭", key="close_dialog"):
+                    st.session_state.show_dialog = False
+                    st.session_state.dialog_style_code = None
+                    st.session_state.cached_detail_data = None
+                    st.session_state.detail_clicked = False
+                    st.rerun()
+            show_style_detail()
+        
+        if st.session_state.show_trend_dialog and st.session_state.trend_style_code:
+            style_code = st.session_state.trend_style_code
+            @st.dialog(f"📈 货号 {style_code} 销售趋势", width="large")
+            def show_trend():
+                st.subheader(f"货号：{style_code}")
+                daily = st.session_state.trend_data
+                if daily is None or daily.empty:
+                    st.info("当前筛选条件下该货号无销售数据")
+                else:
+                    show_ship = st.checkbox("显示发货金额", value=True, key="trend_ship")
+                    show_return = st.checkbox("显示退货金额", value=True, key="trend_return")
+                    show_net = st.checkbox("显示净销售金额", value=True, key="trend_net")
+                    lines = []
+                    if show_ship and "ship_amount" in daily.columns:
+                        lines.append(go.Scatter(x=daily["sale_date"], y=daily["ship_amount"], name="发货金额", mode="lines+markers"))
+                    if show_return and "return_amount" in daily.columns:
+                        lines.append(go.Scatter(x=daily["sale_date"], y=daily["return_amount"], name="退货金额", mode="lines+markers"))
+                    if show_net and "net_amount" in daily.columns:
+                        lines.append(go.Scatter(x=daily["sale_date"], y=daily["net_amount"], name="净销售金额", mode="lines+markers"))
+                    if not lines:
+                        st.info("请至少勾选一项")
+                    else:
+                        fig = go.Figure(data=lines)
+                        fig.update_layout(title="每日销售趋势", xaxis_title="日期", yaxis_title="金额(¥)", legend_title="指标", hovermode="x unified")
+                        st.plotly_chart(fig, use_container_width=True)
+                if st.button("关闭", key="close_trend"):
+                    st.session_state.show_trend_dialog = False
+                    st.session_state.trend_style_code = None
+                    st.session_state.trend_data = None
+                    st.session_state.trend_clicked = False
+                    st.rerun()
+            show_trend()
 
 # ========== 销售对比（主播/店铺维度） ==========
 if idx_anchor_compare is not None:
     with tabs[idx_anchor_compare]:
-        # [销售对比代码与之前完全相同，此处省略]
-        st.info("销售对比模块（代码已完整，请确保已包含）")
+        use_anchor = st.session_state.table_suffix in ["_live", "_all"]
+        dimension_name = "主播" if use_anchor else "店铺"
+        dimension_col = "anchor" if use_anchor else "shop_name"
+        
+        with st.spinner("正在加载数据..."):
+            prod_df = load_product_sales(st.session_state.table_suffix)
+        if prod_df.empty:
+            st.info("暂无商品销售数据，请先上传订单文件。")
+        else:
+            if dimension_col not in prod_df.columns:
+                if use_anchor:
+                    prod_df["anchor"] = prod_df["remark"].astype(str).apply(extract_anchor)
+                else:
+                    if "shop_name" not in prod_df.columns:
+                        st.error("数据中缺少店铺名称信息，无法进行店铺对比。")
+                        st.stop()
+            prod_df = prod_df[prod_df[dimension_col].notna()].copy()
+            if prod_df.empty:
+                st.info(f"当前数据中未识别到任何{dimension_name}信息，请检查数据。")
+            else:
+                all_dimensions = sorted(prod_df[dimension_col].unique())
+                col_select1, col_select2, col_select3 = st.columns(3)
+                with col_select1:
+                    selected_dimensions = st.multiselect(
+                        f"选择对比的{dimension_name}（最多3个）",
+                        options=all_dimensions,
+                        default=[],
+                        key="dimension_multiselect"
+                    )
+                    if len(selected_dimensions) > 3:
+                        st.warning("最多只能选择3个，请取消多余的选项。")
+                        selected_dimensions = selected_dimensions[:3]
+                with col_select2:
+                    metric_options = ["净销售金额", "发货金额", "退货金额"]
+                    selected_metrics = st.multiselect("选择要对比的指标", options=metric_options, default=["净销售金额"])
+                with col_select3:
+                    chart_type = st.radio("图表类型", ["折线图", "柱状图"], horizontal=True, key="compare_chart_type")
+                
+                min_date = prod_df["sale_date"].min().date()
+                max_date = prod_df["sale_date"].max().date()
+                col_date1, col_date2 = st.columns(2)
+                with col_date1:
+                    start_date = st.date_input("开始日期", value=min_date, key="compare_start", min_value=min_date, max_value=max_date)
+                with col_date2:
+                    end_date = st.date_input("结束日期", value=max_date, key="compare_end", min_value=min_date, max_value=max_date)
+                
+                if not selected_dimensions:
+                    st.info(f"请至少选择一个{dimension_name}")
+                else:
+                    mask_date = (prod_df["sale_date"] >= pd.to_datetime(start_date)) & (prod_df["sale_date"] <= pd.to_datetime(end_date))
+                    filtered = prod_df[mask_date].copy()
+                    if filtered.empty:
+                        st.warning("所选日期范围内无销售数据")
+                    else:
+                        daily_agg = filtered.groupby(["sale_date", dimension_col]).agg(
+                            净销售金额=("net_amount", "sum"),
+                            发货金额=("ship_amount", "sum"),
+                            退货金额=("return_amount", "sum")
+                        ).reset_index()
+                        daily_agg = daily_agg[daily_agg[dimension_col].isin(selected_dimensions)]
+                        if daily_agg.empty:
+                            st.warning(f"所选{dimension_name}在日期范围内无销售数据")
+                        else:
+                            st.caption(f"当前选中的 {dimension_name}：{selected_dimensions}")
+                            
+                            for metric in selected_metrics:
+                                st.markdown(f"#### {metric} 趋势对比")
+                                pivot_df = daily_agg.pivot(index="sale_date", columns=dimension_col, values=metric)
+                                pivot_df = pivot_df.reindex(columns=selected_dimensions, fill_value=0)
+                                st.caption(f"补全后的列：{list(pivot_df.columns)}")
+                                
+                                if chart_type == "折线图":
+                                    fig = go.Figure()
+                                    for dim in pivot_df.columns:
+                                        fig.add_trace(go.Scatter(
+                                            x=pivot_df.index,
+                                            y=pivot_df[dim],
+                                            mode="lines+markers",
+                                            name=dim,
+                                            hovertemplate=f"{dim}<br>日期: %{{x|%Y-%m-%d}}<br>{metric}: %{{y:,.2f}}<extra></extra>"
+                                        ))
+                                    fig.update_layout(
+                                        title=f"{metric} 按日对比（折线图）",
+                                        xaxis_title="日期",
+                                        yaxis_title=f"{metric} (¥)",
+                                        legend_title=dimension_name,
+                                        hovermode="x unified"
+                                    )
+                                else:
+                                    fig = go.Figure()
+                                    for dim in pivot_df.columns:
+                                        fig.add_trace(go.Bar(
+                                            x=pivot_df.index,
+                                            y=pivot_df[dim],
+                                            name=dim,
+                                            hovertemplate=f"{dim}<br>日期: %{{x|%Y-%m-%d}}<br>{metric}: %{{y:,.2f}}<extra></extra>"
+                                        ))
+                                    fig.update_layout(
+                                        title=f"{metric} 按日对比（柱状图）",
+                                        xaxis_title="日期",
+                                        yaxis_title=f"{metric} (¥)",
+                                        legend_title=dimension_name,
+                                        barmode='group',
+                                        hovermode="x unified"
+                                    )
+                                st.plotly_chart(fig, use_container_width=True, key=f"compare_{metric}_{chart_type}")
+                            
+                            # 品类分析
+                            st.markdown(f"#### {dimension_name}品类销售分析")
+                            col_cat1, col_cat2 = st.columns([1, 2])
+                            with col_cat1:
+                                cat_chart_type = st.radio("品类图表类型", ["柱状图（对比品类）", "饼图（各维度品类分布）"], horizontal=False, key="cat_chart_type")
+                            with col_cat2:
+                                cat_metric = st.selectbox("品类金额指标", ["净销售金额", "发货金额", "退货金额"], key="cat_metric")
+                            cat_metric_col = {"净销售金额": "net_amount", "发货金额": "ship_amount", "退货金额": "return_amount"}[cat_metric]
+                            cat_metric_name = cat_metric
+                            
+                            if "master_category" not in filtered.columns:
+                                master_df = load_product_master()
+                                if not master_df.empty and "style_code" in master_df.columns:
+                                    master_df["style_code"] = master_df["style_code"].astype(str).str.strip().str.upper()
+                                    cat_map = master_df.set_index("style_code")["category"].to_dict()
+                                    filtered["master_category"] = filtered["style_code"].map(cat_map).fillna("未分类")
+                                else:
+                                    filtered["master_category"] = "未分类"
+                            else:
+                                filtered["master_category"] = filtered["master_category"].fillna("未分类")
+                            
+                            if cat_chart_type == "柱状图（对比品类）":
+                                cat_agg = filtered.groupby([dimension_col, "master_category"])[cat_metric_col].sum().reset_index()
+                                cat_agg.rename(columns={cat_metric_col: "金额"}, inplace=True)
+                                top_cats_per_dim = {}
+                                for dim in selected_dimensions:
+                                    dim_data = cat_agg[cat_agg[dimension_col] == dim].copy()
+                                    if not dim_data.empty:
+                                        dim_data = dim_data.sort_values("金额", ascending=False)
+                                        top5 = dim_data.head(5)
+                                        top_cats_per_dim[dim] = top5
+                                all_top_cats = set()
+                                for dim, df_top in top_cats_per_dim.items():
+                                    all_top_cats.update(df_top["master_category"].tolist())
+                                all_top_cats = sorted(list(all_top_cats))
+                                if all_top_cats:
+                                    compare_df = pd.DataFrame(index=all_top_cats)
+                                    for dim in selected_dimensions:
+                                        dim_sales = {}
+                                        if dim in top_cats_per_dim:
+                                            for _, row in top_cats_per_dim[dim].iterrows():
+                                                dim_sales[row["master_category"]] = row["金额"]
+                                        compare_df[dim] = [dim_sales.get(cat, 0) for cat in all_top_cats]
+                                    compare_df = compare_df.reindex(columns=selected_dimensions, fill_value=0)
+                                    fig_cat = px.bar(
+                                        compare_df,
+                                        x=compare_df.index,
+                                        y=selected_dimensions,
+                                        barmode='group',
+                                        title=f"{dimension_name}Top5品类{cat_metric_name}对比",
+                                        labels={"value": f"{cat_metric_name}(¥)", "index": "商品品类"},
+                                        color_discrete_sequence=px.colors.qualitative.Set2
+                                    )
+                                    fig_cat.update_layout(xaxis_title="商品品类", yaxis_title=f"{cat_metric_name}(¥)", legend_title=dimension_name)
+                                    st.plotly_chart(fig_cat, use_container_width=True)
+                                else:
+                                    st.info("无法获取品类数据，无法生成对比图。")
+                            else:
+                                cat_agg = filtered.groupby([dimension_col, "master_category"])[cat_metric_col].sum().reset_index()
+                                cat_agg.rename(columns={cat_metric_col: "金额"}, inplace=True)
+                                dim_pie_data = {}
+                                for dim in selected_dimensions:
+                                    dim_data = cat_agg[cat_agg[dimension_col] == dim].copy()
+                                    if dim_data.empty:
+                                        continue
+                                    dim_data = dim_data.sort_values("金额", ascending=False)
+                                    top5 = dim_data.head(5)
+                                    other_sum = dim_data.iloc[5:]["金额"].sum() if len(dim_data) > 5 else 0
+                                    if other_sum > 0:
+                                        other_row = pd.DataFrame({"master_category": ["其他"], "金额": [other_sum]})
+                                        top5 = pd.concat([top5, other_row], ignore_index=True)
+                                    dim_pie_data[dim] = top5
+                                if dim_pie_data:
+                                    cols = st.columns(len(dim_pie_data))
+                                    for idx, (dim, data) in enumerate(dim_pie_data.items()):
+                                        with cols[idx]:
+                                            fig_pie = px.pie(
+                                                data,
+                                                names="master_category",
+                                                values="金额",
+                                                title=f"{dim} - 品类分布 ({cat_metric_name})",
+                                                hole=0.3,
+                                                color_discrete_sequence=px.colors.qualitative.Pastel
+                                            )
+                                            fig_pie.update_traces(textposition='inside', textinfo='percent+label')
+                                            st.plotly_chart(fig_pie, use_container_width=True)
+                                else:
+                                    st.info("无有效数据")
+                            
+                            # 季节分析
+                            st.markdown(f"#### {dimension_name}季节销售分析")
+                            col_season1, col_season2 = st.columns([1, 2])
+                            with col_season1:
+                                season_chart_type = st.radio("季节图表类型", ["柱状图（对比季节）", "饼图（各维度季节分布）"], horizontal=False, key="season_chart_type")
+                            with col_season2:
+                                season_metric = st.selectbox("季节金额指标", ["净销售金额", "发货金额", "退货金额"], key="season_metric")
+                            season_metric_col = {"净销售金额": "net_amount", "发货金额": "ship_amount", "退货金额": "return_amount"}[season_metric]
+                            season_metric_name = season_metric
+                            
+                            if "season" not in filtered.columns:
+                                st.info("数据中缺少季节信息，无法生成季节对比图。")
+                            else:
+                                season_data = filtered[filtered["season"].notna()].copy()
+                                if season_data.empty:
+                                    st.info("所选范围内无季节数据")
+                                else:
+                                    if season_chart_type == "柱状图（对比季节）":
+                                        season_agg = season_data.groupby([dimension_col, "season"])[season_metric_col].sum().reset_index()
+                                        season_agg.rename(columns={season_metric_col: "金额"}, inplace=True)
+                                        season_agg = season_agg[season_agg[dimension_col].isin(selected_dimensions)]
+                                        if not season_agg.empty:
+                                            pivot_season = season_agg.pivot(index="season", columns=dimension_col, values="金额").fillna(0)
+                                            pivot_season = pivot_season.reindex(columns=selected_dimensions, fill_value=0)
+                                            season_order = ["春", "夏", "秋", "冬"]
+                                            pivot_season = pivot_season.reindex([s for s in season_order if s in pivot_season.index])
+                                            if not pivot_season.empty:
+                                                fig_season = px.bar(
+                                                    pivot_season,
+                                                    x=pivot_season.index,
+                                                    y=selected_dimensions,
+                                                    barmode='group',
+                                                    title=f"{dimension_name}季节{season_metric_name}对比",
+                                                    labels={"value": f"{season_metric_name}(¥)", "index": "季节"},
+                                                    color_discrete_sequence=px.colors.qualitative.Set1
+                                                )
+                                                fig_season.update_layout(xaxis_title="季节", yaxis_title=f"{season_metric_name}(¥)", legend_title=dimension_name)
+                                                st.plotly_chart(fig_season, use_container_width=True)
+                                            else:
+                                                st.info("无有效季节数据")
+                                        else:
+                                            st.info(f"所选{dimension_name}无季节数据")
+                                    else:
+                                        season_agg = season_data.groupby([dimension_col, "season"])[season_metric_col].sum().reset_index()
+                                        season_agg.rename(columns={season_metric_col: "金额"}, inplace=True)
+                                        dim_season_data = {}
+                                        for dim in selected_dimensions:
+                                            dim_season = season_agg[season_agg[dimension_col] == dim].copy()
+                                            if not dim_season.empty:
+                                                dim_season_data[dim] = dim_season
+                                        if dim_season_data:
+                                            cols = st.columns(len(dim_season_data))
+                                            for idx, (dim, data) in enumerate(dim_season_data.items()):
+                                                with cols[idx]:
+                                                    fig_pie_season = px.pie(
+                                                        data,
+                                                        names="season",
+                                                        values="金额",
+                                                        title=f"{dim} - 季节分布 ({season_metric_name})",
+                                                        hole=0.3,
+                                                        color_discrete_sequence=px.colors.qualitative.Set2
+                                                    )
+                                                    fig_pie_season.update_traces(textposition='inside', textinfo='percent+label')
+                                                    st.plotly_chart(fig_pie_season, use_container_width=True)
+                                        else:
+                                            st.info("无有效数据")
+                            
+                            # 年份分析
+                            st.markdown(f"#### {dimension_name}年份销售分析")
+                            col_year1, col_year2 = st.columns([1, 2])
+                            with col_year1:
+                                year_chart_type = st.radio("年份图表类型", ["柱状图（对比年份）", "饼图（各维度年份分布）"], horizontal=False, key="year_chart_type")
+                            with col_year2:
+                                year_metric = st.selectbox("年份金额指标", ["净销售金额", "发货金额", "退货金额"], key="year_metric")
+                            year_metric_col = {"净销售金额": "net_amount", "发货金额": "ship_amount", "退货金额": "return_amount"}[year_metric]
+                            year_metric_name = year_metric
+                            
+                            if "year" not in filtered.columns:
+                                st.info("数据中缺少年份信息，无法生成年份对比图。")
+                            else:
+                                year_data = filtered[filtered["year"].notna()].copy()
+                                if year_data.empty:
+                                    st.info("所选范围内无年份数据")
+                                else:
+                                    if year_chart_type == "柱状图（对比年份）":
+                                        year_agg = year_data.groupby([dimension_col, "year"])[year_metric_col].sum().reset_index()
+                                        year_agg.rename(columns={year_metric_col: "金额"}, inplace=True)
+                                        year_agg = year_agg[year_agg[dimension_col].isin(selected_dimensions)]
+                                        if not year_agg.empty:
+                                            pivot_year = year_agg.pivot(index="year", columns=dimension_col, values="金额").fillna(0)
+                                            pivot_year = pivot_year.reindex(columns=selected_dimensions, fill_value=0)
+                                            pivot_year = pivot_year.sort_index()
+                                            if not pivot_year.empty:
+                                                fig_year = px.bar(
+                                                    pivot_year,
+                                                    x=pivot_year.index,
+                                                    y=selected_dimensions,
+                                                    barmode='group',
+                                                    title=f"{dimension_name}年份{year_metric_name}对比",
+                                                    labels={"value": f"{year_metric_name}(¥)", "index": "年份"},
+                                                    color_discrete_sequence=px.colors.qualitative.Pastel
+                                                )
+                                                fig_year.update_layout(xaxis_title="年份", yaxis_title=f"{year_metric_name}(¥)", legend_title=dimension_name)
+                                                st.plotly_chart(fig_year, use_container_width=True)
+                                            else:
+                                                st.info("无有效年份数据")
+                                        else:
+                                            st.info(f"所选{dimension_name}无年份数据")
+                                    else:
+                                        year_agg = year_data.groupby([dimension_col, "year"])[year_metric_col].sum().reset_index()
+                                        year_agg.rename(columns={year_metric_col: "金额"}, inplace=True)
+                                        dim_year_data = {}
+                                        for dim in selected_dimensions:
+                                            dim_year = year_agg[year_agg[dimension_col] == dim].copy()
+                                            if not dim_year.empty:
+                                                dim_year = dim_year.sort_values("year")
+                                                dim_year_data[dim] = dim_year
+                                        if dim_year_data:
+                                            cols = st.columns(len(dim_year_data))
+                                            for idx, (dim, data) in enumerate(dim_year_data.items()):
+                                                with cols[idx]:
+                                                    fig_pie_year = px.pie(
+                                                        data,
+                                                        names="year",
+                                                        values="金额",
+                                                        title=f"{dim} - 年份分布 ({year_metric_name})",
+                                                        hole=0.3,
+                                                        color_discrete_sequence=px.colors.qualitative.Set3
+                                                    )
+                                                    fig_pie_year.update_traces(textposition='inside', textinfo='percent+label')
+                                                    st.plotly_chart(fig_pie_year, use_container_width=True)
+                                        else:
+                                            st.info("无有效数据")
 
 # ========== 销售分布与品牌 ==========
 if idx_distribution is not None:
     with tabs[idx_distribution]:
-        # [销售分布与品牌代码与之前完全相同，此处省略]
-        st.info("销售分布与品牌模块（代码已完整，请确保已包含）")
+        with st.spinner("正在加载数据，请稍候..."):
+            prod_df = load_product_sales(st.session_state.table_suffix)
+        if prod_df.empty:
+            st.warning("暂无商品销售数据，请先上传订单文件。")
+        else:
+            if "style_code" in prod_df.columns:
+                prod_df["style_code"] = prod_df["style_code"].astype(str).str.strip().str.upper()
+            else:
+                prod_df["style_code"] = prod_df["product_code"].str[:8].str.strip().str.upper()
+            if st.session_state.table_suffix in ["_live", "_all"]:
+                if "anchor" not in prod_df.columns:
+                    prod_df["anchor"] = prod_df["remark"].astype(str).apply(extract_anchor)
+            
+            st.markdown("#### 筛选条件")
+            col_date1, col_date2 = st.columns(2)
+            min_date = prod_df["sale_date"].min().date()
+            max_date = prod_df["sale_date"].max().date()
+            with col_date1:
+                start_date = st.date_input("开始日期", value=min_date, key="dist_start_v2", min_value=min_date, max_value=max_date)
+            with col_date2:
+                end_date = st.date_input("结束日期", value=max_date, key="dist_end_v2", min_value=min_date, max_value=max_date)
+            
+            col_platform, col_shop = st.columns(2)
+            with col_platform:
+                platform_options = ["全部", "抖音", "视频号"]
+                selected_platform = st.selectbox("平台", platform_options, key="dist_platform_v2")
+            with col_shop:
+                all_shops_all = prod_df["shop_name"].unique()
+                if selected_platform == "抖音":
+                    shop_options = [shop for shop in all_shops_all if "抖音" in shop]
+                elif selected_platform == "视频号":
+                    shop_options = [shop for shop in all_shops_all if "视频号" in shop]
+                else:
+                    shop_options = list(all_shops_all)
+                selected_shops = st.multiselect("店铺（可多选）", options=sorted(shop_options), default=[], key="dist_shop_v2")
+            
+            col_brand, col_anchor = st.columns(2)
+            with col_brand:
+                brands_all = ["全部"] + sorted(prod_df["brand"].dropna().unique())
+                selected_brand = st.selectbox("品牌", brands_all, key="dist_brand_v2")
+            with col_anchor:
+                selected_anchors = []
+                if st.session_state.table_suffix in ["_live", "_all"]:
+                    if "anchor" not in prod_df.columns:
+                        prod_df["anchor"] = prod_df["remark"].astype(str).apply(extract_anchor)
+                    all_anchors = prod_df["anchor"].dropna().unique().tolist()
+                    if all_anchors:
+                        selected_anchors = st.multiselect("主播（可多选）", options=sorted(all_anchors), default=[], key="dist_anchor_v2")
+                    else:
+                        st.info("当前数据中未识别到任何主播信息，请检查备注字段是否包含“主播：xxx”格式。")
+            
+            mask_date = (prod_df["sale_date"] >= pd.to_datetime(start_date)) & (prod_df["sale_date"] <= pd.to_datetime(end_date))
+            filtered = prod_df[mask_date].copy()
+            if selected_platform == "抖音":
+                filtered = filtered[filtered["shop_name"].str.contains("抖音", case=False, na=False)]
+            elif selected_platform == "视频号":
+                filtered = filtered[filtered["shop_name"].str.contains("视频号", case=False, na=False)]
+            if selected_shops:
+                filtered = filtered[filtered["shop_name"].isin(selected_shops)]
+            if selected_brand != "全部":
+                filtered = filtered[filtered["brand"] == selected_brand]
+            if selected_anchors:
+                filtered = filtered[filtered["anchor"].isin(selected_anchors)]
+            
+            if filtered.empty:
+                st.warning("所选条件下无销售数据")
+            else:
+                metric_options = ["净销售金额", "发货金额", "退货金额"]
+                selected_metric = st.radio("金额指标", metric_options, horizontal=True, key="dist_metric_v2")
+                metric_col = {"净销售金额": "net_amount", "发货金额": "ship_amount", "退货金额": "return_amount"}[selected_metric]
+                metric_name = selected_metric
+                
+                if "master_category" not in filtered.columns:
+                    master_df = load_product_master()
+                    if not master_df.empty and "style_code" in master_df.columns:
+                        master_df["style_code"] = master_df["style_code"].astype(str).str.strip().str.upper()
+                        cat_map = master_df.set_index("style_code")["category"].to_dict()
+                        filtered["master_category"] = filtered["style_code"].map(cat_map).fillna("未分类")
+                    else:
+                        filtered["master_category"] = "未分类"
+                else:
+                    filtered["master_category"] = filtered["master_category"].fillna("未分类")
+                cat_data = filtered.groupby("master_category")[metric_col].sum().reset_index()
+                
+                if "year" in filtered.columns and not filtered["year"].isnull().all():
+                    year_data = filtered.groupby("year")[metric_col].sum().reset_index()
+                    year_data = year_data[year_data["year"].notna()]
+                else:
+                    total_val = filtered[metric_col].sum()
+                    year_data = pd.DataFrame({"year": ["无年份信息"], metric_col: [total_val]}) if total_val > 0 else None
+                
+                if "season" in filtered.columns and not filtered["season"].isnull().all():
+                    season_data = filtered.groupby("season")[metric_col].sum().reset_index()
+                    season_data = season_data[season_data["season"].notna()]
+                else:
+                    total_val = filtered[metric_col].sum()
+                    season_data = pd.DataFrame({"season": ["无季节信息"], metric_col: [total_val]}) if total_val > 0 else None
+                
+                def create_pie_chart(data, name_col, value_col, title, key):
+                    if data is None:
+                        return None
+                    total = data[value_col].sum()
+                    if total == 0 or total < 0 and metric_col == "net_amount":
+                        return None
+                    chart_data = data[data[value_col] != 0].copy()
+                    if chart_data.empty:
+                        return None
+                    fig = px.pie(chart_data, names=name_col, values=value_col, title=title, hole=0.3, color_discrete_sequence=px.colors.qualitative.Pastel)
+                    fig.update_traces(textposition='inside', textinfo='percent+label')
+                    st.plotly_chart(fig, use_container_width=True, key=key)
+                
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    if cat_data is not None and not cat_data.empty:
+                        create_pie_chart(cat_data, "master_category", metric_col, f"分类{metric_name}占比", "pie_category_v2")
+                    else:
+                        st.info("无分类数据")
+                with col2:
+                    if year_data is not None and not year_data.empty:
+                        create_pie_chart(year_data, "year", metric_col, f"年份{metric_name}占比", "pie_year_v2")
+                    else:
+                        st.info("无年份数据")
+                with col3:
+                    if season_data is not None and not season_data.empty:
+                        create_pie_chart(season_data, "season", metric_col, f"季节{metric_name}占比", "pie_season_v2")
+                    else:
+                        st.info("无季节数据")
+                
+                master_df = load_product_master()
+                if "has_newbie_coupon" not in filtered.columns:
+                    if not master_df.empty and "style_code" in master_df.columns:
+                        master_df["style_code"] = master_df["style_code"].astype(str).str.strip().str.upper()
+                        coupon_map = master_df.set_index("style_code")["has_newbie_coupon"].to_dict()
+                        filtered["has_newbie_coupon"] = filtered["style_code"].map(coupon_map).fillna(False)
+                    else:
+                        filtered["has_newbie_coupon"] = False
+                else:
+                    filtered["has_newbie_coupon"] = filtered["has_newbie_coupon"].fillna(False)
+                
+                coupon_filtered = filtered[filtered["has_newbie_coupon"] == True].copy()
+                non_coupon_filtered = filtered[filtered["has_newbie_coupon"] == False].copy()
+                
+                st.markdown(f"#### 首单礼金销售分析")
+                col_left, col_right = st.columns(2)
+                with col_left:
+                    coupon_total = coupon_filtered[metric_col].sum()
+                    non_coupon_total = non_coupon_filtered[metric_col].sum()
+                    if coupon_total > 0 or non_coupon_total > 0:
+                        coupon_pie_data = pd.DataFrame({
+                            "类型": ["参与首单礼金", "未参与首单礼金"],
+                            metric_name: [coupon_total, non_coupon_total]
+                        })
+                        coupon_pie_data = coupon_pie_data[coupon_pie_data[metric_name] > 0]
+                        fig_coupon_total = px.pie(coupon_pie_data, names="类型", values=metric_name,
+                                                  title=f"首单礼金商品{metric_name}占比", hole=0.3,
+                                                  color_discrete_sequence=["#FF6B6B", "#4ECDC4"])
+                        fig_coupon_total.update_traces(textposition='inside', textinfo='percent+label')
+                        st.plotly_chart(fig_coupon_total, use_container_width=True, key="pie_coupon_total_v2")
+                    else:
+                        st.info("无首单礼金数据")
+                with col_right:
+                    if not coupon_filtered.empty:
+                        coupon_brand_data = coupon_filtered.groupby("brand")[metric_col].sum().reset_index()
+                        coupon_brand_data = coupon_brand_data[coupon_brand_data[metric_col] != 0]
+                        if not coupon_brand_data.empty:
+                            if len(coupon_brand_data) > 8:
+                                top8 = coupon_brand_data.nlargest(8, metric_col)
+                                other_sum = coupon_brand_data[~coupon_brand_data["brand"].isin(top8["brand"])][metric_col].sum()
+                                other_row = pd.DataFrame({"brand": ["其他"], metric_col: [other_sum]})
+                                coupon_brand_data = pd.concat([top8, other_row], ignore_index=True)
+                            fig_coupon_brand = px.pie(coupon_brand_data, names="brand", values=metric_col,
+                                                      title=f"首单礼金商品{metric_name}品牌占比", hole=0.3,
+                                                      color_discrete_sequence=px.colors.qualitative.Set2)
+                            fig_coupon_brand.update_traces(textposition='inside', textinfo='percent+label')
+                            st.plotly_chart(fig_coupon_brand, use_container_width=True, key="pie_coupon_brand_v2")
+                        else:
+                            st.info("无礼金品牌数据")
+                    else:
+                        st.info("无礼金商品数据")
+                
+                if not coupon_filtered.empty:
+                    st.markdown(f"#### 首单礼金商品销售明细（按货号汇总）")
+                    coupon_detail = coupon_filtered.groupby("style_code").agg(
+                        发货金额=("ship_amount", "sum"),
+                        退货金额=("return_amount", "sum"),
+                        净销售金额=("net_amount", "sum")
+                    ).reset_index()
+                    coupon_detail.rename(columns={"style_code": "货号"}, inplace=True)
+                    master_df = load_product_master()
+                    if not master_df.empty and "style_code" in master_df.columns:
+                        master_df["style_code"] = master_df["style_code"].astype(str).str.strip().str.upper()
+                        img_map = master_df.set_index("style_code")["image_url"].to_dict()
+                        coupon_detail["图片"] = coupon_detail["货号"].map(img_map).fillna(None)
+                    else:
+                        coupon_detail["图片"] = None
+                    coupon_detail["退款率"] = coupon_detail.apply(
+                        lambda r: f"{(r['退货金额']/r['发货金额']*100):.2f}%" if r['发货金额'] != 0 else "-", axis=1
+                    )
+                    col_order = ["货号", "图片", "发货金额", "退货金额", "净销售金额", "退款率"]
+                    coupon_detail = coupon_detail[col_order]
+                    st.dataframe(
+                        coupon_detail,
+                        column_config={
+                            "货号": st.column_config.TextColumn("货号"),
+                            "图片": st.column_config.ImageColumn("商品图片", help="点击放大"),
+                            "发货金额": st.column_config.NumberColumn("发货金额(¥)", format="%.2f"),
+                            "退货金额": st.column_config.NumberColumn("退货金额(¥)", format="%.2f"),
+                            "净销售金额": st.column_config.NumberColumn("净销售金额(¥)", format="%.2f"),
+                            "退款率": st.column_config.TextColumn("退款率")
+                        },
+                        hide_index=True,
+                        use_container_width=True
+                    )
+                    output = io.BytesIO()
+                    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                        export_df = coupon_detail.drop(columns=["图片"], errors='ignore')
+                        export_df.to_excel(writer, index=False)
+                    st.download_button(
+                        "💾 导出首单礼金商品明细",
+                        data=output.getvalue(),
+                        file_name=f"首单礼金明细_{start_date}_{end_date}.xlsx",
+                        key="export_coupon_detail_v2"
+                    )
+                else:
+                    st.info("当前筛选条件下无首单礼金商品")
 
 # ========== 系统设置（仅管理员） ==========
 if idx_system is not None:
     with tabs[idx_system]:
         st.subheader("👥 账号管理与权限设置（含数据源及数据权限）")
-        st.info("在此配置子账号的访问权限，包括可查看的选项卡、数据源（非直播/直播/全部）以及数据过滤（平台和具体店铺/主播）。")
+        st.info("在此配置子账号的访问权限，包括可查看的选项卡、默认数据源以及数据过滤（平台和具体店铺/主播）。")
         
         if st.button("🔄 重新从数据库加载账号"):
             st.session_state.sub_users = load_sub_accounts_from_db()
@@ -1127,25 +2182,21 @@ if idx_system is not None:
         if st.session_state.sub_users:
             for username, info in list(st.session_state.sub_users.items()):
                 with st.expander(f"账号：{username}"):
-                    # ----- 选项卡权限（原有） -----
+                    # 选项卡权限
                     st.markdown("**① 选项卡权限**")
-                    col_tab1, _ = st.columns([3, 1])
-                    with col_tab1:
-                        current_allowed = info.get("allowed_tabs", base_tabs)
-                        all_options = base_tabs
-                        new_allowed = st.multiselect(
-                            f"允许 {username} 访问的选项卡",
-                            options=all_options,
-                            default=[tab for tab in current_allowed if tab in all_options],
-                            key=f"perm_{username}"
-                        )
+                    current_allowed = info.get("allowed_tabs", base_tabs)
+                    all_options = base_tabs
+                    new_allowed = st.multiselect(
+                        f"允许 {username} 访问的选项卡",
+                        options=all_options,
+                        default=[tab for tab in current_allowed if tab in all_options],
+                        key=f"perm_{username}"
+                    )
                     
-                    # ----- 数据源权限（新增） -----
-                    st.markdown("**② 数据源权限（默认数据源）**")
-                    # 该权限决定子账号登录后默认查看哪个数据源，但子账号自身无法切换，由管理员设定
+                    # 默认数据源权限
+                    st.markdown("**② 默认数据源（登录后默认查看）**")
                     suffix_options = {"非直播数据": "", "直播数据": "_live", "全部数据": "_all"}
                     current_suffix = info.get("default_suffix", "")
-                    # 反向查找显示名
                     current_suffix_display = [k for k, v in suffix_options.items() if v == current_suffix]
                     current_suffix_display = current_suffix_display[0] if current_suffix_display else "非直播数据"
                     new_suffix_display = st.selectbox(
@@ -1156,9 +2207,8 @@ if idx_system is not None:
                     )
                     new_suffix = suffix_options[new_suffix_display]
                     
-                    # ----- 数据过滤权限（新增） -----
+                    # 数据过滤权限
                     st.markdown("**③ 数据过滤权限（限制可见数据范围）**")
-                    # 平台筛选
                     platform_options = ["all", "抖音", "视频号"]
                     current_platform = info.get("filter_platform", "all")
                     new_platform = st.selectbox(
@@ -1167,13 +2217,8 @@ if idx_system is not None:
                         index=platform_options.index(current_platform) if current_platform in platform_options else 0,
                         key=f"platform_{username}"
                     )
-                    # 店铺/主播筛选
-                    # 从所有数据（不过滤）获取可选列表
                     @st.cache_data(ttl=600)
                     def get_all_shop_names():
-                        # 注意：这里需要传递当前数据源后缀，但不同子账号可能有不同后缀，所以我们只取当前管理员查看的后缀
-                        # 但为了简单，我们取所有数据源的全集，或者只取当前后缀
-                        # 此处取当前管理员查看的后缀，但管理员可以切换，所以每次取当前后缀
                         df = load_product_sales(apply_filter=False)
                         if df.empty:
                             return []
@@ -1189,7 +2234,6 @@ if idx_system is not None:
                                 return []
                     all_shop_names = get_all_shop_names()
                     current_shop_names = info.get("filter_shop_names", [])
-                    # 过滤掉不在 all_shop_names 中的值
                     current_shop_names = [name for name in current_shop_names if name in all_shop_names]
                     new_shop_names = st.multiselect(
                         f"限制店铺/主播（空表示全部）",
@@ -1198,14 +2242,11 @@ if idx_system is not None:
                         key=f"shops_{username}"
                     )
                     
-                    # ----- 保存按钮 -----
                     if st.button(f"保存全部权限", key=f"save_perm_{username}"):
-                        # 更新内存
                         st.session_state.sub_users[username]["allowed_tabs"] = new_allowed
                         st.session_state.sub_users[username]["default_suffix"] = new_suffix
                         st.session_state.sub_users[username]["filter_platform"] = new_platform
                         st.session_state.sub_users[username]["filter_shop_names"] = new_shop_names
-                        # 同步到数据库
                         ok, msg = save_sub_account_to_db(username, st.session_state.sub_users[username])
                         if ok:
                             st.success(f"权限已保存到数据库")
@@ -1213,7 +2254,6 @@ if idx_system is not None:
                         else:
                             st.error(f"保存失败：{msg}")
                     
-                    # ----- 删除按钮 -----
                     if st.button(f"删除账号", key=f"del_{username}"):
                         ok, msg = delete_sub_account_from_db(username)
                         if ok:
