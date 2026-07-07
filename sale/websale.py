@@ -851,10 +851,17 @@ idx_ship_return = get_tab_index("📦 发货退货明细")
 idx_product = get_tab_index("📊 商品分析")
 idx_anchor_compare = get_tab_index("🎤 销售对比")
 idx_distribution = get_tab_index("📈 销售分布与品牌")
-idx_debug = get_tab_index("🔧 调试")
-idx_export = get_tab_index("📚 商品库导出")
-idx_history = get_tab_index("🗄️ 历史业绩")
-idx_system = get_tab_index("⚙️ 系统设置")
+if st.session_state.role == "admin":
+    # 管理员角色下这些选项卡一定存在，直接获取索引
+    idx_system = tab_labels.index("⚙️ 系统设置")
+    idx_debug = tab_labels.index("🔧 调试")
+    idx_export = tab_labels.index("📚 商品库导出")
+    idx_history = tab_labels.index("🗄️ 历史业绩")
+else:
+    idx_system = None
+    idx_debug = None
+    idx_export = None
+    idx_history = None
 
 # ========== 最新日明细 ==========
 if idx_latest is not None:
