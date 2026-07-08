@@ -1481,40 +1481,39 @@ if idx_dashboard is not None:
         st.markdown("---")
 
         # ---------- AI 智能总结 ----------
-        # ---------- AI 智能总结 ----------
-st.markdown('<div class="section-title">🤖 智能总结</div>', unsafe_allow_html=True)
+            st.markdown('<div class="section-title">🤖 智能总结</div>', unsafe_allow_html=True)
 
-# 构建上下文数据（这些变量已在驾驶舱中定义）
-shop_rank_items = list(shop_rank.items()) if not shop_rank.empty else []
-rank_text = "\n".join([f"{i+1}. {shop}: ¥{amt:,.0f}" for i, (shop, amt) in enumerate(shop_rank_items[:3])]) if shop_rank_items else "暂无"
-
-context = f"""
-昨日销售：¥{latest_sales:,.0f}
-前日销售：¥{prev_sales:,.0f}
-环比变化：{change:+.1f}%
-月目标完成率：{target_rate:.0f}%
-退货率：{return_rate:.1f}%
-店铺排行 TOP3：{rank_text}
-异常提醒数：{len(alerts)}条
-"""
-
-prompt = """
-你是一位资深的电商数据分析师。请根据提供的经营数据，用一段专业、简洁的中文总结昨日的经营状况。
-要求：
-1. 指出亮点（如增长明显的店铺或指标）。
-2. 发现风险（如下滑、高退货率等）。
-3. 给出1-2条可操作的建议。
-"""
-
-with st.spinner("🤖 AI 正在分析..."):
-    ai_summary = get_ai_summary(prompt, context)
-
-# 展示 AI 返回的内容（保留现有样式，但将文字颜色改为深色以适应浅色主题）
-st.markdown(f"""
-<div style="background:rgba(34,197,94,0.08);border:1px solid rgba(34,197,94,0.2);border-radius:12px;padding:16px 20px;">
-    <div style="color:#1e293b;font-size:14px;line-height:1.7;">{ai_summary}</div>
-</div>
-""", unsafe_allow_html=True)
+                # 构建上下文数据（这些变量已在驾驶舱中定义）
+                shop_rank_items = list(shop_rank.items()) if not shop_rank.empty else []
+                rank_text = "\n".join([f"{i+1}. {shop}: ¥{amt:,.0f}" for i, (shop, amt) in enumerate(shop_rank_items[:3])]) if shop_rank_items else "暂无"
+                
+                context = f"""
+                昨日销售：¥{latest_sales:,.0f}
+                前日销售：¥{prev_sales:,.0f}
+                环比变化：{change:+.1f}%
+                月目标完成率：{target_rate:.0f}%
+                退货率：{return_rate:.1f}%
+                店铺排行 TOP3：{rank_text}
+                异常提醒数：{len(alerts)}条
+                """
+                
+                prompt = """
+                你是一位资深的电商数据分析师。请根据提供的经营数据，用一段专业、简洁的中文总结昨日的经营状况。
+                要求：
+                1. 指出亮点（如增长明显的店铺或指标）。
+                2. 发现风险（如下滑、高退货率等）。
+                3. 给出1-2条可操作的建议。
+                """
+                
+                with st.spinner("🤖 AI 正在分析..."):
+                    ai_summary = get_ai_summary(prompt, context)
+                
+                # 展示 AI 返回的内容（保留现有样式，但将文字颜色改为深色以适应浅色主题）
+                st.markdown(f"""
+                <div style="background:rgba(34,197,94,0.08);border:1px solid rgba(34,197,94,0.2);border-radius:12px;padding:16px 20px;">
+                    <div style="color:#1e293b;font-size:14px;line-height:1.7;">{ai_summary}</div>
+                </div>
+                """, unsafe_allow_html=True)
 # ========== 最新日明细 ==========
 if idx_latest is not None:
     with tabs[idx_latest]:
