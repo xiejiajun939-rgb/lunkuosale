@@ -16,6 +16,8 @@ import numpy as np
 from supabase import create_client
 import plotly.express as px
 import plotly.graph_objects as go
+import time
+from openai import OpenAI
 
 st.set_page_config(page_title="业绩统计工具", layout="wide", page_icon="📊")
 
@@ -173,6 +175,48 @@ def login():
                 st.rerun()
             else:
                 st.error("用户名或密码错误")
+# ========== 硅基流动 AI 调用 ==========
+@st.cache_resource
+def get_siliconflow_client():
+    """初始化硅基流动客户端（单例）"""
+    try:
+        api_key = st.secrets["SILICONFLOW_API_KEY"]
+        client = OpenAI(
+            api_key=api_key,
+            base_url="https://api.siliconflow.cn/v1"
+        )
+        return client
+    except Exception as e:
+        st.error(f"硅基流动客户端初始化失败: {e}")
+        return None
+
+@st.cache_data(ttl=3600)  # 缓存结果1小时，节省费用
+def get_ai_summary(prompt: str, context: str) -> str:
+    """调用硅基流动 API 生成总结"""
+    client = get_siliconflow_client()
+    if not client:
+        return "⚠️ AI 服务暂不可用，请稍后再试。"
+
+    messages = [
+        {"role": "system", "content": prompt},
+        {"role": "user", "content": context}
+    ]
+
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            response = client.chat.completions.create(
+                model="deepseek-ai/DeepSeek-V3",  # 也可换成 Qwen/Qwen2.5-72B-Instruct 等
+                messages=messages,
+                stream=False,
+            )
+            return response.choices[0].message.content
+        except Exception as e:
+            if attempt == max_retries - 1:
+                return f"❌ AI 总结失败，请稍后再试。错误: {str(e)}"
+            time.sleep(1 * (2 ** attempt))  # 指数退避
+    return "⚠️ AI 服务暂时无法响应。"
+
 # ========== 初始化 session_state ==========
 if "sub_users" not in st.session_state:
     st.session_state.sub_users = load_sub_accounts_from_db()
@@ -1437,47 +1481,40 @@ if idx_dashboard is not None:
         st.markdown("---")
 
         # ---------- AI 智能总结 ----------
-        st.markdown('<div class="section-title">🤖 智能总结</div>', unsafe_allow_html=True)
+        # ---------- AI 智能总结 ----------
+st.markdown('<div class="section-title">🤖 智能总结</div>', unsafe_allow_html=True)
 
-        # 构建上下文（用于AI）
-        shop_rank_items = list(shop_rank.items()) if not shop_rank.empty else []
-        rank_text = "\n".join([f"{i+1}. {shop}: ¥{amt:,.0f}" for i, (shop, amt) in enumerate(shop_rank_items[:3])]) if shop_rank_items else "暂无"
+# 构建上下文数据（这些变量已在驾驶舱中定义）
+shop_rank_items = list(shop_rank.items()) if not shop_rank.empty else []
+rank_text = "\n".join([f"{i+1}. {shop}: ¥{amt:,.0f}" for i, (shop, amt) in enumerate(shop_rank_items[:3])]) if shop_rank_items else "暂无"
 
-        context = f"""
-        昨日销售：¥{latest_sales:,.0f}
-        前日销售：¥{prev_sales:,.0f}
-        环比变化：{change:+.1f}%
-        月目标完成率：{target_rate:.0f}%
-        退货率：{return_rate:.1f}%
-        店铺排行 TOP3：{rank_text}
-        异常：{len(alerts)}条
-        """
+context = f"""
+昨日销售：¥{latest_sales:,.0f}
+前日销售：¥{prev_sales:,.0f}
+环比变化：{change:+.1f}%
+月目标完成率：{target_rate:.0f}%
+退货率：{return_rate:.1f}%
+店铺排行 TOP3：{rank_text}
+异常提醒数：{len(alerts)}条
+"""
 
-        with st.spinner("🤖 AI 正在分析..."):
-            try:
-                # 尝试调用本地DeepSeek，如果不可用则使用模板
-                ai_summary = get_ai_summary(
-                    prompt="请用一段话总结昨日经营状况，指出亮点和问题，给出1-2条建议",
-                    context=context
-                )
-                st.markdown(f"""
-                <div style="background:rgba(74,222,128,0.05);border:1px solid rgba(74,222,128,0.15);border-radius:12px;padding:16px 20px;">
-                    <div style="color:#e2e8f0;font-size:14px;line-height:1.7;">{ai_summary}</div>
-                </div>
-                """, unsafe_allow_html=True)
-            except:
-                # 降级模板
-                if change < -5:
-                    summary = f"📉 昨日销售较前日下降 {abs(change):.1f}%，需关注主要下降来源。建议查看上方异常提醒。"
-                elif change > 5:
-                    summary = f"📈 昨日销售较前日增长 {change:.1f}%，表现良好，继续保持！"
-                elif target_rate < 30:
-                    summary = f"⚠️ 月目标完成率仅 {target_rate:.0f}%，本月进度偏慢，建议加大推广力度。"
-                elif return_rate > 15:
-                    summary = f"⚠️ 昨日退货率 {return_rate:.1f}% 偏高，建议检查商品质量或物流问题。"
-                else:
-                    summary = f"📊 昨日销售 ¥{latest_sales:,.0f}，较前日变化 {change:+.1f}%，月目标完成 {target_rate:.0f}%，整体平稳。"
-                st.info(f"📌 {summary}")
+prompt = """
+你是一位资深的电商数据分析师。请根据提供的经营数据，用一段专业、简洁的中文总结昨日的经营状况。
+要求：
+1. 指出亮点（如增长明显的店铺或指标）。
+2. 发现风险（如下滑、高退货率等）。
+3. 给出1-2条可操作的建议。
+"""
+
+with st.spinner("🤖 AI 正在分析..."):
+    ai_summary = get_ai_summary(prompt, context)
+
+# 展示 AI 返回的内容（保留现有样式，但将文字颜色改为深色以适应浅色主题）
+st.markdown(f"""
+<div style="background:rgba(34,197,94,0.08);border:1px solid rgba(34,197,94,0.2);border-radius:12px;padding:16px 20px;">
+    <div style="color:#1e293b;font-size:14px;line-height:1.7;">{ai_summary}</div>
+</div>
+""", unsafe_allow_html=True)
 # ========== 最新日明细 ==========
 if idx_latest is not None:
     with tabs[idx_latest]:
