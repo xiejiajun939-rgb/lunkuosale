@@ -1476,14 +1476,17 @@ if idx_dashboard is not None:
         3. 给出1-2条可操作的建议。
         """
 
-                with st.spinner("🤖 AI 正在分析..."):
-                    ai_summary = get_ai_summary(prompt, context, selected_model)
-        
-                st.markdown(f"""
-                    <div style="background:rgba(34,197,94,0.08);border:1px solid rgba(34,197,94,0.2);border-radius:12px;padding:16px 20px;">
-                        <div style="color:#1e293b;font-size:14px;line-height:1.7;">{ai_summary}</div>
-                    </div>
-                    """, unsafe_allow_html=True)
+# ==================== 📢 检查并替换此段 ====================
+        # 下面这几行原本由于少缩进了4个空格，跑到了 with 容器外面
+        # 现已精准缩进 8 个空格（或与上方的 st.markdown 对齐），完美融入驾驶舱 Tab
+        with st.spinner("🤖 AI 正在分析..."):
+            ai_summary = get_ai_summary(prompt, context, selected_model)
+            
+        st.markdown(f"""
+            <div style="background:rgba(34,197,94,0.08);border:1px solid rgba(34,197,94,0.2);border-radius:12px;padding:16px 20px;">
+                <div style="color:#1e293b;font-size:14px;line-height:1.7;">{ai_summary}</div>
+            </div>
+        """, unsafe_allow_html=True)
 
 # ========== 最新日明细 ==========
 if idx_latest is not None:
