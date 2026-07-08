@@ -1437,7 +1437,7 @@ if idx_dashboard is not None:
 
         st.markdown("---")
 
-        # ---------- AI 智能总结 ----------
+# ---------- AI 智能总结 ----------
             st.markdown('<div class="section-title">🤖 智能总结</div>', unsafe_allow_html=True)
     
             model_options = {
@@ -1474,9 +1474,9 @@ if idx_dashboard is not None:
             1. 指出亮点（如增长明显的店铺或指标）。
             2. 发现风险（如下滑、高退货率等）。
             3. 给出1-2条可操作的建议。
-            """
+            """        
     
-    # 下面这几行已精准缩进 8 个空格，完美融入驾驶舱 Tab 内
+# 下面这几行已精准缩进 8 个空格，完美融入驾驶舱 Tab 内
             with st.spinner("🤖 AI 正在分析..."):
                 ai_summary = get_ai_summary(prompt, context, selected_model)
                 
@@ -1484,7 +1484,7 @@ if idx_dashboard is not None:
                 <div style="background:rgba(34,197,94,0.08);border:1px solid rgba(34,197,94,0.2);border-radius:12px;padding:16px 20px;">
                     <div style="color:#1e293b;font-size:14px;line-height:1.7;">{ai_summary}</div>
                 </div>
-            """, unsafe_allow_html=True)    
+            """, unsafe_allow_html=True)        
 
 
 
