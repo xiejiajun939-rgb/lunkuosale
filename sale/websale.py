@@ -1388,8 +1388,9 @@ if idx_dashboard is not None:
                             rate = 0.0
                         color = "#f87171" if rate > 10 else "#fbbf24" if rate > 5 else "#4ade80"
                         st.markdown(f"""
-                        <div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid rgba(255,255,255,0.04);">
-                            <span style="color:#e2e8f0;">{shop}</span>
+                        <div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid rgba(0,0,0,0.06);">
+                            <!-- 店铺名改为深色 -->
+                            <span style="color:#1e293b;">{shop}</span>
                             <span style="color:{color};font-weight:600;">{rate:.1f}%</span>
                         </div>
                         """, unsafe_allow_html=True)
