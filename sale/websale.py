@@ -22,27 +22,27 @@ st.set_page_config(page_title="业绩统计工具", layout="wide", page_icon="�
 # ========== 自定义CSS ==========
 st.markdown("""
 <style>
-    .custom-main-title { font-size: 28px !important; font-weight: 600 !important; margin-top: -0.5rem !important; margin-bottom: 0.25rem !important; padding-bottom: 0 !important; }
-    .welcome-text { font-size: 14px !important; color: #555 !important; margin-top: 0 !important; margin-bottom: 0.5rem !important; }
-    h1 { font-size: 28px !important; margin-top: -0.5rem !important; margin-bottom: 0.25rem !important; }
-    h2 { font-size: 24px !important; margin-top: 0.5rem !important; margin-bottom: 0.25rem !important; font-weight: 500 !important; }
-    h3 { font-size: 20px !important; margin-top: 0.5rem !important; margin-bottom: 0.25rem !important; font-weight: 500 !important; }
-    h4 { font-size: 18px !important; margin-top: 0.5rem !important; margin-bottom: 0.25rem !important; font-weight: 500 !important; }
-    h5, h6 { font-size: 16px !important; margin-top: 0.25rem !important; margin-bottom: 0.25rem !important; }
-    hr { margin-top: 0.5rem !important; margin-bottom: 0.5rem !important; }
+    .custom-main-title { font-size: 28px !important; font-weight: 600 !important; margin-top: -0.5rem !important; margin-bottom: 0.25rem !important; padding-bottom: 0 !important; color: #1e293b !important; }
+    .welcome-text { font-size: 14px !important; color: #475569 !important; margin-top: 0 !important; margin-bottom: 0.5rem !important; }
+    h1 { font-size: 28px !important; margin-top: -0.5rem !important; margin-bottom: 0.25rem !important; color: #1e293b !important; }
+    h2 { font-size: 24px !important; margin-top: 0.5rem !important; margin-bottom: 0.25rem !important; font-weight: 500 !important; color: #1e293b !important; }
+    h3 { font-size: 20px !important; margin-top: 0.5rem !important; margin-bottom: 0.25rem !important; font-weight: 500 !important; color: #1e293b !important; }
+    h4 { font-size: 18px !important; margin-top: 0.5rem !important; margin-bottom: 0.25rem !important; font-weight: 500 !important; color: #1e293b !important; }
+    h5, h6 { font-size: 16px !important; margin-top: 0.25rem !important; margin-bottom: 0.25rem !important; color: #1e293b !important; }
+    hr { margin-top: 0.5rem !important; margin-bottom: 0.5rem !important; border-color: #e2e8f0 !important; }
     .css-1d391kg h1, .css-1d391kg h2, .css-1d391kg h3 { font-size: 1.2rem !important; }
-    /* 新日期按钮样式 */
+    /* 新日期按钮样式 - 浅色适配 */
     div[data-testid="stButton"] button {
         padding: 4px 12px !important;
         font-size: 13px !important;
         border-radius: 6px !important;
-        background-color: #f0f2f6 !important;
+        background-color: #f8fafc !important;
         border: 1px solid #d1d5db !important;
         color: #1f2937 !important;
         white-space: nowrap !important;
     }
     div[data-testid="stButton"] button:hover {
-        background-color: #e5e7eb !important;
+        background-color: #e2e8f0 !important;
     }
     div[data-testid="stDateInput"] label {
         display: none !important;
@@ -58,6 +58,17 @@ st.markdown("""
         align-items: center;
         gap: 6px;
         flex-wrap: wrap;
+    }
+    /* 侧边栏背景浅色 */
+    .css-1d391kg, .css-1d391kg .st-emotion-cache-1v0mbdj {
+        background: #f1f5f9 !important;
+    }
+    /* 表格文字颜色 */
+    .stDataFrame, .stTable, .stMarkdown table {
+        color: #1e293b !important;
+    }
+    .stMarkdown td, .stMarkdown th {
+        color: #1e293b !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -1039,53 +1050,53 @@ if idx_dashboard is not None:
         # 注入自定义样式
         st.markdown("""
         <style>
-        /* 页面背景 */
+        /* 页面背景 - 浅色 */
         .stApp {
-            background: #0a0e17;
+            background: #f5f7fa;
         }
         .main > div {
             background: transparent;
         }
-        /* 数据卡片 - 毛玻璃效果 */
+        /* 数据卡片 - 浅色毛玻璃 */
         .glass-card {
-            background: linear-gradient(135deg, rgba(26, 35, 53, 0.95), rgba(15, 20, 35, 0.95));
+            background: linear-gradient(135deg, rgba(255, 255, 255, 0.9), rgba(245, 247, 250, 0.9));
             border-radius: 16px;
             padding: 22px 24px;
-            border: 1px solid rgba(255, 255, 255, 0.06);
+            border: 1px solid rgba(0, 0, 0, 0.06);
             backdrop-filter: blur(10px);
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.08);
             transition: transform 0.2s ease, box-shadow 0.2s ease;
             margin-bottom: 8px;
         }
         .glass-card:hover {
             transform: translateY(-2px);
-            box-shadow: 0 12px 48px rgba(0, 0, 0, 0.6);
+            box-shadow: 0 12px 48px rgba(0, 0, 0, 0.12);
         }
-        /* KPI 数字 */
+        /* KPI 数字 - 深色文字 */
         .kpi-number {
             font-size: 38px;
             font-weight: 700;
             letter-spacing: -0.5px;
-            background: linear-gradient(135deg, #ffffff 60%, #94a3b8);
+            background: linear-gradient(135deg, #0f172a 60%, #475569);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
         }
         .kpi-label {
-            color: #8892b0;
+            color: #475569;
             font-size: 13px;
             font-weight: 500;
             letter-spacing: 0.3px;
             text-transform: uppercase;
         }
         /* 变化标签 */
-        .change-up { color: #4ade80; font-weight: 600; }
-        .change-down { color: #f87171; font-weight: 600; }
-        .change-neutral { color: #94a3b8; }
-        /* 进度条 */
+        .change-up { color: #16a34a; font-weight: 600; }
+        .change-down { color: #dc2626; font-weight: 600; }
+        .change-neutral { color: #64748b; }
+        /* 进度条 - 浅色 */
         .progress-track {
             width: 100%;
             height: 6px;
-            background: #1e293b;
+            background: #e2e8f0;
             border-radius: 3px;
             overflow: hidden;
             margin: 8px 0 4px 0;
@@ -1095,22 +1106,22 @@ if idx_dashboard is not None:
             border-radius: 3px;
             transition: width 0.8s ease;
         }
-        /* 排行条目 */
+        /* 排行条目 - 浅色 */
         .rank-item {
             display: flex;
             align-items: center;
             padding: 6px 0;
-            border-bottom: 1px solid rgba(255,255,255,0.04);
+            border-bottom: 1px solid rgba(0,0,0,0.05);
         }
         .rank-item:last-child {
             border-bottom: none;
         }
         .rank-emoji { font-size: 22px; width: 36px; }
-        .rank-name { flex: 1; color: #e2e8f0; font-size: 14px; }
-        .rank-value { color: #4ade80; font-weight: 600; font-size: 14px; width: 80px; text-align: right; }
-        .rank-bar-bg { width: 100px; height: 6px; background: #1e293b; border-radius: 3px; overflow: hidden; }
-        .rank-bar-fill { height: 100%; border-radius: 3px; background: linear-gradient(90deg, #4ade80, #22d3ee); }
-        /* 异常条目 */
+        .rank-name { flex: 1; color: #1e293b; font-size: 14px; }
+        .rank-value { color: #16a34a; font-weight: 600; font-size: 14px; width: 80px; text-align: right; }
+        .rank-bar-bg { width: 100px; height: 6px; background: #e2e8f0; border-radius: 3px; overflow: hidden; }
+        .rank-bar-fill { height: 100%; border-radius: 3px; background: linear-gradient(90deg, #22c55e, #14b8a6); }
+        /* 异常条目 - 浅色 */
         .alert-item {
             padding: 10px 14px;
             border-radius: 8px;
@@ -1118,14 +1129,14 @@ if idx_dashboard is not None:
             display: flex;
             align-items: center;
             gap: 10px;
-            background: rgba(255,255,255,0.03);
+            background: rgba(0,0,0,0.02);
             border-left: 3px solid;
         }
         .alert-item .icon { font-size: 16px; }
-        .alert-item .msg { color: #e2e8f0; font-size: 14px; }
-        /* 标题 */
+        .alert-item .msg { color: #1e293b; font-size: 14px; }
+        /* 标题 - 浅色 */
         .section-title {
-            color: #e2e8f0;
+            color: #1e293b;
             font-size: 16px;
             font-weight: 600;
             margin-bottom: 12px;
@@ -1135,12 +1146,16 @@ if idx_dashboard is not None:
             gap: 8px;
         }
         .section-title .badge {
-            background: rgba(74, 222, 128, 0.15);
-            color: #4ade80;
+            background: rgba(34, 197, 94, 0.15);
+            color: #16a34a;
             font-size: 11px;
             padding: 2px 10px;
             border-radius: 12px;
             font-weight: 500;
+        }
+        /* 其他文本颜色 */
+        .stMarkdown, .stText, .stCaption, .stInfo, .stWarning, .stSuccess {
+            color: #1e293b !important;
         }
         </style>
         """, unsafe_allow_html=True)
