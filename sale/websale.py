@@ -1212,12 +1212,12 @@ if idx_dashboard is not None:
         health_score = min(100, health_score)
 
         # ---------- KPI 卡片行 ----------
-        col1, col2, col3, col4 = st.columns(4)
+col1, col2, col3, col4 = st.columns(4)
 
-        with col1:
-            change_class = "change-up" if change >= 0 else "change-down"
-            change_text = f"{'▲' if change >= 0 else '▼'} {abs(change):.1f}%" if change != 0 else "持平"
-            st.markdown(f"""
+with col1:
+    change_class = "change-up" if change >= 0 else "change-down"
+    change_text = f"{'▲' if change >= 0 else '▼'} {abs(change):.1f}%" if change != 0 else "持平"
+    st.markdown(f"""
             <div class="glass-card">
                 <div class="kpi-label">昨日销售</div>
                 <div class="kpi-number">¥{latest_sales:,.0f}</div>
@@ -1227,48 +1227,51 @@ if idx_dashboard is not None:
                 </div>
             </div>
             """, unsafe_allow_html=True)
-
+        
         with col2:
             bar_color = "#4ade80" if target_rate >= 80 else "#fbbf24" if target_rate >= 50 else "#f87171"
             st.markdown(f"""
             <div class="glass-card">
                 <div class="kpi-label">月目标完成率</div>
-                <div style="font-size:38px;font-weight:700;color:#ffffff;letter-spacing:-0.5px;">{target_rate:.0f}%</div>
+                <!-- 将 color:#ffffff 改为深色 -->
+                <div style="font-size:38px;font-weight:700;color:#0f172a;letter-spacing:-0.5px;">{target_rate:.0f}%</div>
                 <div class="progress-track">
                     <div class="progress-fill" style="width:{min(target_rate,100)}%;background:{bar_color};"></div>
                 </div>
-                <div style="color:#64748b;font-size:12px;">¥{month_sales:,.0f} / ¥{total_target:,.0f}</div>
+                <div style="color:#475569;font-size:12px;">¥{month_sales:,.0f} / ¥{total_target:,.0f}</div>
             </div>
             """, unsafe_allow_html=True)
-
+        
         with col3:
             return_color = "#f87171" if return_rate > 10 else "#fbbf24" if return_rate > 5 else "#4ade80"
             status_text = "正常" if return_rate < 5 else "偏高" if return_rate < 10 else "异常"
             st.markdown(f"""
             <div class="glass-card">
                 <div class="kpi-label">退货率</div>
-                <div style="font-size:38px;font-weight:700;color:#ffffff;letter-spacing:-0.5px;">{return_rate:.1f}%</div>
+                <!-- 将 color:#ffffff 改为深色 -->
+                <div style="font-size:38px;font-weight:700;color:#0f172a;letter-spacing:-0.5px;">{return_rate:.1f}%</div>
                 <div style="margin-top:4px;">
                     <span style="color:{return_color};font-weight:500;">● {status_text}</span>
                     <span style="color:#64748b;font-size:13px;margin-left:8px;">退货 ¥{return_latest:,.0f}</span>
                 </div>
             </div>
             """, unsafe_allow_html=True)
-
+        
         with col4:
             health_color = "#4ade80" if health_score >= 80 else "#fbbf24" if health_score >= 60 else "#f87171"
             health_text = "良好" if health_score >= 80 else "一般" if health_score >= 60 else "需关注"
             st.markdown(f"""
             <div class="glass-card">
                 <div class="kpi-label">经营健康度</div>
-                <div style="font-size:38px;font-weight:700;color:#ffffff;letter-spacing:-0.5px;">{health_score}分</div>
+                <!-- 将 color:#ffffff 改为深色 -->
+                <div style="font-size:38px;font-weight:700;color:#0f172a;letter-spacing:-0.5px;">{health_score}分</div>
                 <div class="progress-track">
                     <div class="progress-fill" style="width:{health_score}%;background:{health_color};"></div>
                 </div>
                 <div style="color:{health_color};font-size:13px;font-weight:500;">● {health_text}</div>
             </div>
             """, unsafe_allow_html=True)
-
+        
         st.markdown("---")
 
         # ---------- 异常提醒 ----------
