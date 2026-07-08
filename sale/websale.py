@@ -1277,7 +1277,6 @@ if idx_dashboard is not None:
             st.markdown(f"""
             <div class="glass-card">
                 <div class="kpi-label">月目标完成率</div>
-                <!-- 数字改为深色，便于在浅色背景阅读 -->
                 <div style="font-size:38px;font-weight:700;color:#0f172a;letter-spacing:-0.5px;">{target_rate:.0f}%</div>
                 <div class="progress-track">
                     <div class="progress-fill" style="width:{min(target_rate,100)}%;background:{bar_color};"></div>
@@ -1292,7 +1291,6 @@ if idx_dashboard is not None:
             st.markdown(f"""
             <div class="glass-card">
                 <div class="kpi-label">退货率</div>
-                <!-- 数字改为深色 -->
                 <div style="font-size:38px;font-weight:700;color:#0f172a;letter-spacing:-0.5px;">{return_rate:.1f}%</div>
                 <div style="margin-top:4px;">
                     <span style="color:{return_color};font-weight:500;">● {status_text}</span>
@@ -1307,7 +1305,6 @@ if idx_dashboard is not None:
             st.markdown(f"""
             <div class="glass-card">
                 <div class="kpi-label">经营健康度</div>
-                <!-- 数字改为深色 -->
                 <div style="font-size:38px;font-weight:700;color:#0f172a;letter-spacing:-0.5px;">{health_score}分</div>
                 <div class="progress-track">
                     <div class="progress-fill" style="width:{health_score}%;background:{health_color};"></div>
@@ -1433,7 +1430,6 @@ if idx_dashboard is not None:
                         color = "#f87171" if rate > 10 else "#fbbf24" if rate > 5 else "#4ade80"
                         st.markdown(f"""
                         <div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid rgba(0,0,0,0.06);">
-                            <!-- 店铺名改为深色 -->
                             <span style="color:#1e293b;">{shop}</span>
                             <span style="color:{color};font-weight:600;">{rate:.1f}%</span>
                         </div>
@@ -1456,7 +1452,7 @@ if idx_dashboard is not None:
                     title="",
                     labels={"sale_date": "", "amount": ""},
                     markers=True,
-                    template="plotly_white"   # 改为浅色模板
+                    template="plotly_white"
                 )
                 fig.update_layout(
                     height=240,
@@ -1464,12 +1460,13 @@ if idx_dashboard is not None:
                     hovermode="x unified",
                     paper_bgcolor="rgba(0,0,0,0)",
                     plot_bgcolor="rgba(0,0,0,0)",
-                    font=dict(color="#1e293b", size=11),   # 文字颜色深色
+                    font=dict(color="#1e293b", size=11),
                 )
                 fig.update_traces(
-                    line=dict(color="#22c55e", width=2.5),   # 改用浅色主题的绿色
+                    line=dict(color="#22c55e", width=2.5),
                     marker=dict(color="#22c55e", size=6)
                 )
+                st.plotly_chart(fig, use_container_width=True)
 
                 # 显示每日数据
                 trend["日期"] = trend["sale_date"].dt.strftime("%m-%d")
@@ -1478,7 +1475,7 @@ if idx_dashboard is not None:
             else:
                 st.info("近7日无数据")
 
-                st.markdown("---")
+        st.markdown("---")
 
         # ---------- AI 智能总结 ----------
         st.markdown('<div class="section-title">🤖 智能总结</div>', unsafe_allow_html=True)
