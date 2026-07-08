@@ -2503,6 +2503,11 @@ if idx_alert is not None:
         if daily_df.empty or prod_df.empty:
             st.warning("数据不足，请先上传订单文件。")
         else:
+            # 确保 daily_df 包含必要的列（原始列名：shop_name, amount）
+            if "shop_name" not in daily_df.columns or "amount" not in daily_df.columns:
+                st.error("daily_sales 表中缺少 shop_name 或 amount 列，请检查数据结构。")
+                st.stop()
+            
             # 获取当前日期范围
             today = date.today()
             # 近7天：过去7天（不含今天，因为今天可能不全）
@@ -2534,18 +2539,18 @@ if idx_alert is not None:
             recent_data = daily_df[mask_recent].copy()
             previous_data = daily_df[mask_previous].copy()
             
-            # 按店铺聚合
-            recent_agg = recent_data.groupby("店铺名称").agg(
-                近7天总额=("当日金额", "sum"),
-                近7天天数=("当日金额", "count")
+            # 按店铺聚合（使用原始列名 shop_name 和 amount）
+            recent_agg = recent_data.groupby("shop_name").agg(
+                近7天总额=("amount", "sum"),
+                近7天天数=("amount", "count")
             ).reset_index()
-            previous_agg = previous_data.groupby("店铺名称").agg(
-                前7天总额=("当日金额", "sum"),
-                前7天天数=("当日金额", "count")
+            previous_agg = previous_data.groupby("shop_name").agg(
+                前7天总额=("amount", "sum"),
+                前7天天数=("amount", "count")
             ).reset_index()
             
             # 合并
-            merged = pd.merge(recent_agg, previous_agg, on="店铺名称", how="inner")
+            merged = pd.merge(recent_agg, previous_agg, on="shop_name", how="inner")
             # 计算日均
             merged["近7天日均"] = merged["近7天总额"] / merged["近7天天数"]
             merged["前7天日均"] = merged["前7天总额"] / merged["前7天天数"]
@@ -2560,9 +2565,9 @@ if idx_alert is not None:
                 st.success("🎉 近7天没有业绩下滑明显的店铺。")
             else:
                 st.dataframe(
-                    decline_df[["店铺名称", "近7天日均", "前7天日均", "下滑幅度"]],
+                    decline_df[["shop_name", "近7天日均", "前7天日均", "下滑幅度"]],
                     column_config={
-                        "店铺名称": "店铺",
+                        "shop_name": "店铺",
                         "近7天日均": st.column_config.NumberColumn("近7天日均(¥)", format="%.2f"),
                         "前7天日均": st.column_config.NumberColumn("前7天日均(¥)", format="%.2f"),
                         "下滑幅度": st.column_config.NumberColumn("下滑幅度(%)", format="%.2f%%"),
@@ -2572,7 +2577,7 @@ if idx_alert is not None:
                 )
                 # 高亮显示最严重的
                 worst = decline_df.iloc[0]
-                st.metric("⚠️ 下滑最严重店铺", worst["店铺名称"], delta=f"{worst['下滑幅度']:.2f}%", delta_color="inverse")
+                st.metric("⚠️ 下滑最严重店铺", worst["shop_name"], delta=f"{worst['下滑幅度']:.2f}%", delta_color="inverse")
             
             # ------ 2. 退货率激增商品 ------
             st.markdown("### 📈 退货率激增商品（近7天 vs 前7天退货率）")
@@ -2639,7 +2644,6 @@ if idx_alert is not None:
                 # 高亮最严重的
                 worst_prod = return_spike.iloc[0]
                 st.metric("⚠️ 退货率激增最严重商品", worst_prod["style_code"], delta=f"{worst_prod['退货率变化']:.2f} 百分点", delta_color="inverse")
-
 # ========== 调试 ==========
 if idx_debug is not None:
     with tabs[idx_debug]:
