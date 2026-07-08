@@ -5,3 +5,4 @@ supabase
 st-supabase-connection
 plotly
 matplotlib
+openai>=1.0.0
