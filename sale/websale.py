@@ -32,7 +32,6 @@ st.markdown("""
     h5, h6 { font-size: 16px !important; margin-top: 0.25rem !important; margin-bottom: 0.25rem !important; color: #1e293b !important; }
     hr { margin-top: 0.5rem !important; margin-bottom: 0.5rem !important; border-color: #e2e8f0 !important; }
     .css-1d391kg h1, .css-1d391kg h2, .css-1d391kg h3 { font-size: 1.2rem !important; }
-    /* 新日期按钮样式 - 浅色适配 */
     div[data-testid="stButton"] button {
         padding: 4px 12px !important;
         font-size: 13px !important;
@@ -60,11 +59,9 @@ st.markdown("""
         gap: 6px;
         flex-wrap: wrap;
     }
-    /* 侧边栏背景浅色 */
     .css-1d391kg, .css-1d391kg .st-emotion-cache-1v0mbdj {
         background: #f1f5f9 !important;
     }
-    /* 表格文字颜色 */
     .stDataFrame, .stTable, .stMarkdown table {
         color: #1e293b !important;
     }
@@ -1021,7 +1018,7 @@ with st.sidebar:
                 del st.session_state[key]
         st.rerun()
 
-# ========== 动态创建选项卡（按业务流程重构） ==========
+# ========== 动态创建选项卡 ==========
 base_tabs = [
     "📊 经营驾驶舱",
     "🏪 店铺分析",
@@ -1563,7 +1560,7 @@ if idx_latest is not None:
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
                 df[cols].to_excel(writer, index=False)
-            st.download_button("💾 导出 Excel", data=output.getvalue(), file_name="最新日明细.xlsx")
+            st.download_button("💾 导出 Excel", data=output.getvalue(), file_name="最新日明细.xlsx", key="export_latest_detail")
         else:
             st.info("暂无店铺业绩数据，请先上传订单文件")
 
@@ -1635,7 +1632,7 @@ if idx_range is not None:
                                 output = io.BytesIO()
                                 with pd.ExcelWriter(output, engine='openpyxl') as writer:
                                     summary.to_excel(writer, index=False)
-                                st.download_button("💾 导出", data=output.getvalue(), file_name=f"累计_{start}_{end}.xlsx")
+                                st.download_button("💾 导出", data=output.getvalue(), file_name=f"累计_{start}_{end}.xlsx", key="export_range_summary")
         else:
             st.info("暂无数据，请先上传订单文件")
 
@@ -1677,7 +1674,7 @@ if idx_query is not None:
                     output = io.BytesIO()
                     with pd.ExcelWriter(output, engine='openpyxl') as writer:
                         res[cols].to_excel(writer, index=False)
-                    st.download_button("💾 导出", data=output.getvalue(), file_name=f"查询_{query_date}.xlsx")
+                    st.download_button("💾 导出", data=output.getvalue(), file_name=f"查询_{query_date}.xlsx", key="export_query_result")
         else:
             st.info("暂无数据")
 
@@ -1718,7 +1715,7 @@ if idx_ship_return is not None:
                 output = io.BytesIO()
                 with pd.ExcelWriter(output, engine='openpyxl') as writer:
                     summary.to_excel(writer, index=False)
-                st.download_button("💾 导出", data=output.getvalue(), file_name=f"发货退货_{selected_date.strftime('%Y%m%d')}.xlsx")
+                st.download_button("💾 导出", data=output.getvalue(), file_name=f"发货退货_{selected_date.strftime('%Y%m%d')}.xlsx", key="export_ship_return")
             else:
                 st.info("无日期数据")
 
@@ -1746,40 +1743,13 @@ if idx_history is not None:
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
                 daily_df.to_excel(writer, index=False)
-            st.download_button("💾 导出全部", data=output.getvalue(), file_name="历史业绩.xlsx")
+            st.download_button("💾 导出全部", data=output.getvalue(), file_name="历史业绩.xlsx", key="export_history_all")
         else:
             st.info("暂无历史数据")
 
-# 后续所有选项卡（商品分析、销售对比、销售分布、系统设置、异常预警、调试、商品库导出）代码保持不变，由于篇幅限制，此处省略。
-# 但您需要将原文件中相应的部分接在后面，保持原有结构。
-
-# ========== 历史业绩 ==========
-if idx_history is not None:
-    with tabs[idx_history]:
-        with st.spinner("正在加载历史数据，请稍候..."):
-            daily_df = load_daily_sales()
-        if not daily_df.empty:
-            if st.session_state.table_suffix == "_all":
-                daily_df = daily_df.rename(columns={"shop_name": "主播名称"})
-            st.dataframe(daily_df, use_container_width=True, hide_index=True)
-            if st.session_state.table_suffix == "_all":
-                st.metric("📊 总业绩合计", f"{daily_df['amount'].sum():,.2f}")
-            else:
-                douyin_df = daily_df[daily_df["shop_name"].str.contains("抖音", case=False, na=False)]
-                video_df = daily_df[daily_df["shop_name"].str.contains("视频号", case=False, na=False)]
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.metric("📱 抖音合计", f"{douyin_df['amount'].sum():,.2f}")
-                with col2:
-                    st.metric("📺 视频号合计", f"{video_df['amount'].sum():,.2f}")
-                with col3:
-                    st.metric("📊 总业绩合计", f"{daily_df['amount'].sum():,.2f}")
-            output = io.BytesIO()
-            with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                daily_df.to_excel(writer, index=False)
-            st.download_button("💾 导出全部", data=output.getvalue(), file_name="历史业绩.xlsx")
-        else:
-            st.info("暂无历史数据")
+# 以下是其余选项卡（商品分析、销售对比、销售分布、系统设置、异常预警、调试、商品库导出），
+# 由于它们不受此次修改影响，且代码较长，请从您原文件中保留这些部分，确保它们位于此文件末尾。
+# 为避免超出字数限制，在此省略，但您只需将原文件中的后续部分接在 `# ========== 商品分析 ==========` 之后即可。
 
 # ========== 商品分析 ==========
 if idx_product is not None:
