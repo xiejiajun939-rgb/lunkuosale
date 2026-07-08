@@ -1188,46 +1188,47 @@ if idx_dashboard is not None:
         # ---------- 双列布局：排行 + 趋势 ----------
         col_left, col_right = st.columns(2)
 
-       with col_left:
-    st.markdown("#### 🏆 店铺销售排行 TOP5")
-    shop_latest = daily_df[daily_df["sale_date"].dt.date == latest_date]
-    shop_rank = shop_latest.groupby("shop_name")["amount"].sum().sort_values(ascending=False).head(5)
-    if not shop_rank.empty:
-        for i, (shop, amt) in enumerate(shop_rank.items()):
-            emoji = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"][i]
-            pct = amt / shop_rank.iloc[0] if shop_rank.iloc[0] > 0 else 0
-            st.write(f"{emoji} **{shop}**")
-            st.progress(min(pct, 1.0), text=f"¥{amt:,.0f}")
-    else:
-        st.info("昨日暂无销售数据")
+        with col_left:
+            st.markdown("#### 🏆 店铺销售排行 TOP5")
+            shop_latest = daily_df[daily_df["sale_date"].dt.date == latest_date]
+            shop_rank = shop_latest.groupby("shop_name")["amount"].sum().sort_values(ascending=False).head(5)
+            if not shop_rank.empty:
+                for i, (shop, amt) in enumerate(shop_rank.items()):
+                    emoji = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"][i]
+                    pct = amt / shop_rank.iloc[0] if shop_rank.iloc[0] > 0 else 0
+                    st.write(f"{emoji} **{shop}**")
+                    st.progress(min(pct, 1.0), text=f"¥{amt:,.0f}")
+            else:
+                st.info("昨日暂无销售数据")
 
-    st.markdown("---")
-    st.markdown("#### 📊 退货TOP3")
-    # 从 product_sales 中按店铺汇总发货和退货（最新日期）
-    prod_latest = prod_df[prod_df["sale_date"].dt.date == latest_date]
-    if not prod_latest.empty:
-        # 按店铺汇总
-        return_rank = prod_latest.groupby("shop_name").agg(
-            发货=("ship_amount", "sum"),
-            退货=("return_amount", "sum")
-        ).reset_index()
-        # 过滤发货为0的店铺
-        return_rank = return_rank[return_rank["发货"] > 0]
-        # 计算退货率，保留一位小数
-        return_rank["退货率"] = (return_rank["退货"] / return_rank["发货"] * 100).round(1)
-        # 修正负零：如果退货率绝对值小于0.05，设为0.0
-        return_rank["退货率"] = return_rank["退货率"].apply(lambda x: 0.0 if abs(x) < 0.05 else x)
-        # 排序取前三
-        return_rank = return_rank.sort_values("退货率", ascending=False).head(3)
-        if not return_rank.empty:
-            for _, row in return_rank.iterrows():
-                shop = row["shop_name"]
-                rate = row["退货率"]
-                st.write(f"🔴 **{shop}** 退货率 {rate:.1f}%")
-        else:
-            st.info("暂无数据")
-    else:
-        st.info("暂无数据")
+            st.markdown("---")
+            st.markdown("#### 📊 退货TOP3")
+            # 从 product_sales 中按店铺汇总发货和退货（最新日期）
+            prod_latest = prod_df[prod_df["sale_date"].dt.date == latest_date]
+            if not prod_latest.empty:
+                # 按店铺汇总
+                return_rank = prod_latest.groupby("shop_name").agg(
+                    发货=("ship_amount", "sum"),
+                    退货=("return_amount", "sum")
+                ).reset_index()
+                # 过滤发货为0的店铺
+                return_rank = return_rank[return_rank["发货"] > 0]
+                # 计算退货率（取绝对值避免负零）
+                return_rank["退货率"] = (return_rank["退货"] / return_rank["发货"] * 100).round(1)
+                # 排序取前三
+                return_rank = return_rank.sort_values("退货率", ascending=False).head(3)
+                if not return_rank.empty:
+                    for _, row in return_rank.iterrows():
+                        shop = row["shop_name"]
+                        rate = row["退货率"]
+                        # 如果退货率接近0，显示0.0%，避免 -0.0
+                        if abs(rate) < 0.05:
+                            rate = 0.0
+                        st.write(f"🔴 **{shop}** 退货率 {rate:.1f}%")
+                else:
+                    st.info("暂无数据")
+            else:
+                st.info("暂无数据")
 
         with col_right:
             st.markdown("#### 📈 近7日销售趋势")
