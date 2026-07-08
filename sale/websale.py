@@ -1042,56 +1042,37 @@ if idx_dashboard is not None:
             daily_df = load_daily_sales(st.session_state.table_suffix)
             prod_df = load_product_sales(st.session_state.table_suffix)
 
-        if daily_df.empty:
-            st.info("📌 暂无每日业绩数据，请先上传订单文件。")
+        if daily_df.empty or prod_df.empty:
+            st.info("📌 暂无数据，请先上传订单文件。")
             st.stop()
 
         st.caption(f"数据更新至：{daily_df['sale_date'].max().date()}")
 
-        # 检查必要列
         if "shop_name" not in daily_df.columns or "amount" not in daily_df.columns:
-            st.error("每日业绩数据格式异常，缺少 shop_name 或 amount 列。")
+            st.error("数据格式异常，请检查 daily_sales 表结构。")
             st.stop()
-
-        # 如果商品数据为空，仅提示不影响其他指标
-        if prod_df.empty:
-            st.warning("⚠️ 暂无商品销售明细数据，退货率无法计算。")
 
         # ---------- 以数据最新日期为基准 ----------
         latest_date = daily_df["sale_date"].max().date()
         prev_date = latest_date - timedelta(days=1)
 
-        # 最新日期的销售
         mask_latest = daily_df["sale_date"].dt.date == latest_date
         latest_sales = daily_df[mask_latest]["amount"].sum()
 
-        # 前一日的销售（用于对比）
         mask_prev = daily_df["sale_date"].dt.date == prev_date
         prev_sales = daily_df[mask_prev]["amount"].sum()
         change = ((latest_sales - prev_sales) / prev_sales * 100) if prev_sales > 0 else 0
 
-        # 月目标（从月初到最新日期）
         month_start = latest_date.replace(day=1)
         month_mask = daily_df["sale_date"].dt.date >= month_start
         month_sales = daily_df[month_mask]["amount"].sum()
         total_target = sum(st.session_state.target_dict.values())
         target_rate = (month_sales / total_target * 100) if total_target > 0 else 0
 
-        # ----- 退货率计算（增强容错） -----
-        if not prod_df.empty and "ship_amount" in prod_df.columns and "return_amount" in prod_df.columns:
-            latest_prod = prod_df[prod_df["sale_date"].dt.date == latest_date]
-            ship_latest = latest_prod["ship_amount"].sum()
-            return_latest = latest_prod["return_amount"].sum()
-            if ship_latest > 0:
-                return_rate = (return_latest / ship_latest * 100)
-                return_rate_display = f"{return_rate:.1f}%"
-                return_delta = None  # 无对比，暂不显示变化
-            else:
-                return_rate = 0
-                return_rate_display = "无发货"
-        else:
-            return_rate = 0
-            return_rate_display = "无数据"
+        latest_prod = prod_df[prod_df["sale_date"].dt.date == latest_date]
+        ship_latest = latest_prod["ship_amount"].sum()
+        return_latest = latest_prod["return_amount"].sum()
+        return_rate = (return_latest / ship_latest * 100) if ship_latest > 0 else 0
 
         # 经营健康度
         health_score = 70
@@ -1099,9 +1080,9 @@ if idx_dashboard is not None:
             health_score += 15
         elif target_rate > 50:
             health_score += 5
-        if return_rate < 5 and ship_latest > 0:
+        if return_rate < 5:
             health_score += 10
-        elif return_rate < 10 and ship_latest > 0:
+        elif return_rate < 10:
             health_score += 5
         if latest_sales > prev_sales:
             health_score += 5
@@ -1116,7 +1097,7 @@ if idx_dashboard is not None:
             st.progress(min(target_rate / 100, 1.0))
             st.caption(f"已销售 ¥{month_sales:,.0f} / 目标 ¥{total_target:,.0f}")
         with col3:
-            st.metric("📦 昨日退货率", return_rate_display, delta_color="inverse")
+            st.metric("📦 昨日退货率", f"{return_rate:.1f}%", delta_color="inverse")
         with col4:
             st.metric("💚 经营健康度", f"{health_score}分")
             if health_score >= 80:
@@ -1128,12 +1109,12 @@ if idx_dashboard is not None:
 
         st.markdown("---")
 
-        # ---------- 异常提醒 ----------
+        # ---------- 异常提醒（修复退货率除零问题） ----------
         st.markdown("### ⚠️ 昨日异常提醒")
         alerts = []
 
-        # 下滑店铺（近7天 vs 前7天，基于最新日期往前推）
-        end_date = latest_date - timedelta(days=1)   # 最近7天截止到最新日期的前一天
+        # 下滑店铺（逻辑不变）
+        end_date = latest_date - timedelta(days=1)
         start_date_recent = end_date - timedelta(days=6)
         start_date_previous = start_date_recent - timedelta(days=7)
         end_date_previous = start_date_recent - timedelta(days=1)
@@ -1144,35 +1125,48 @@ if idx_dashboard is not None:
         recent_data = daily_df[mask_recent].copy()
         previous_data = daily_df[mask_previous].copy()
 
-        if not recent_data.empty and not previous_data.empty:
-            recent_agg = recent_data.groupby("shop_name")["amount"].sum().reset_index().rename(columns={"amount": "近7天"})
-            previous_agg = previous_data.groupby("shop_name")["amount"].sum().reset_index().rename(columns={"amount": "前7天"})
-            merged = pd.merge(recent_agg, previous_agg, on="shop_name", how="inner")
-            merged["下滑"] = ((merged["前7天"] - merged["近7天"]) / merged["前7天"] * 100) if not merged.empty else 0
-            merged = merged[merged["前7天"] > 0]
-            merged = merged[merged["近7天"] < merged["前7天"]]
-            merged = merged[merged["下滑"] >= 20].sort_values("下滑", ascending=False)
+        recent_agg = recent_data.groupby("shop_name")["amount"].sum().reset_index().rename(columns={"amount": "近7天"})
+        previous_agg = previous_data.groupby("shop_name")["amount"].sum().reset_index().rename(columns={"amount": "前7天"})
 
-            for _, row in merged.head(3).iterrows():
-                alerts.append(f"📉 {row['shop_name']} 近7天销售下降 {row['下滑']:.0f}%")
+        merged = pd.merge(recent_agg, previous_agg, on="shop_name", how="inner")
+        merged["下滑"] = ((merged["前7天"] - merged["近7天"]) / merged["前7天"] * 100) if not merged.empty else 0
+        merged = merged[merged["前7天"] > 0]
+        merged = merged[merged["近7天"] < merged["前7天"]]
+        merged = merged[merged["下滑"] >= 20].sort_values("下滑", ascending=False)
 
-        # 退货率激增商品（仅当有商品数据时）
-        if not prod_df.empty and "ship_amount" in prod_df.columns and "return_amount" in prod_df.columns:
-            prod_recent = prod_df[(prod_df["sale_date"] >= pd.to_datetime(start_date_recent)) & (prod_df["sale_date"] <= pd.to_datetime(end_date))]
-            prod_previous = prod_df[(prod_df["sale_date"] >= pd.to_datetime(start_date_previous)) & (prod_df["sale_date"] <= pd.to_datetime(end_date_previous))]
+        for _, row in merged.head(3).iterrows():
+            alerts.append(f"📉 {row['shop_name']} 近7天销售下降 {row['下滑']:.0f}%")
 
-            if not prod_recent.empty and not prod_previous.empty:
-                recent_prod = prod_recent.groupby("style_code").agg(ship=("ship_amount", "sum"), ret=("return_amount", "sum")).reset_index()
-                prev_prod = prod_previous.groupby("style_code").agg(ship=("ship_amount", "sum"), ret=("return_amount", "sum")).reset_index()
-                merged_prod = pd.merge(recent_prod, prev_prod, on="style_code", suffixes=("_近", "_前"))
-                merged_prod["退货率近"] = merged_prod["ret_近"] / merged_prod["ship_近"] * 100
-                merged_prod["退货率前"] = merged_prod["ret_前"] / merged_prod["ship_前"] * 100
-                merged_prod["退货率前"] = merged_prod["退货率前"].fillna(0)  # 处理除零
-                merged_prod["变化"] = merged_prod["退货率近"] - merged_prod["退货率前"]
-                merged_prod = merged_prod[merged_prod["变化"] >= 10].sort_values("变化", ascending=False)
+        # ---------- 退货率激增商品（修复除零） ----------
+        prod_recent = prod_df[(prod_df["sale_date"] >= pd.to_datetime(start_date_recent)) & (prod_df["sale_date"] <= pd.to_datetime(end_date))]
+        prod_previous = prod_df[(prod_df["sale_date"] >= pd.to_datetime(start_date_previous)) & (prod_df["sale_date"] <= pd.to_datetime(end_date_previous))]
 
-                for _, row in merged_prod.head(3).iterrows():
-                    alerts.append(f"📦 {row['style_code']} 退货率上升 {row['变化']:.1f} 个百分点")
+        if not prod_recent.empty and not prod_previous.empty:
+            recent_prod = prod_recent.groupby("style_code").agg(
+                ship=("ship_amount", "sum"),
+                ret=("return_amount", "sum")
+            ).reset_index()
+            prev_prod = prod_previous.groupby("style_code").agg(
+                ship=("ship_amount", "sum"),
+                ret=("return_amount", "sum")
+            ).reset_index()
+
+            merged_prod = pd.merge(recent_prod, prev_prod, on="style_code", suffixes=("_近", "_前"))
+
+            # 安全计算：前7天发货为0时，退货率变化设为0，并跳过这类商品
+            merged_prod["退货率近"] = (merged_prod["ret_近"] / merged_prod["ship_近"] * 100).fillna(0)
+            merged_prod["退货率前"] = (merged_prod["ret_前"] / merged_prod["ship_前"] * 100).fillna(0)
+            # 只有当前7天发货 > 0 且 近7天发货 > 0 时才计算变化，否则设为0
+            merged_prod["变化"] = 0.0
+            mask_valid = (merged_prod["ship_前"] > 0) & (merged_prod["ship_近"] > 0)
+            merged_prod.loc[mask_valid, "变化"] = merged_prod.loc[mask_valid, "退货率近"] - merged_prod.loc[mask_valid, "退货率前"]
+
+            # 筛选变化大于等于10个百分点且非无穷大
+            merged_prod = merged_prod[(merged_prod["变化"] >= 10) & np.isfinite(merged_prod["变化"])]
+            merged_prod = merged_prod.sort_values("变化", ascending=False)
+
+            for _, row in merged_prod.head(3).iterrows():
+                alerts.append(f"📦 {row['style_code']} 退货率上升 {row['变化']:.1f} 个百分点")
 
         # 目标完成率低的店铺
         if st.session_state.target_dict:
@@ -1209,19 +1203,16 @@ if idx_dashboard is not None:
 
             st.markdown("---")
             st.markdown("#### 📊 退货TOP3")
-            if not prod_df.empty and not shop_latest.empty:
-                # 合并商品销售明细计算退货率
-                # 但退货TOP3通常按店铺维度计算，可以从 daily_df 无法直接获取退货，需从商品表汇总
-                # 这里简化：从商品表中按店铺汇总退货率
-                shop_return = prod_df[prod_df["sale_date"].dt.date == latest_date].groupby("shop_name").agg(
-                    退货=("return_amount", "sum"),
-                    发货=("ship_amount", "sum")
-                ).reset_index()
-                shop_return = shop_return[shop_return["发货"] > 0]
-                shop_return["退货率"] = shop_return["退货"] / shop_return["发货"] * 100
-                shop_return = shop_return.sort_values("退货率", ascending=False).head(3)
-                for _, row in shop_return.iterrows():
-                    st.write(f"🔴 **{row['shop_name']}** 退货率 {row['退货率']:.1f}%")
+            if not shop_latest.empty:
+                return_rank = shop_latest.groupby("shop_name").agg(
+                    退货=("amount", lambda x: x[x < 0].sum() * -1),
+                    发货=("amount", lambda x: x[x > 0].sum())
+                )
+                return_rank = return_rank[return_rank["发货"] > 0]
+                return_rank["退货率"] = return_rank["退货"] / return_rank["发货"] * 100
+                return_rank = return_rank.sort_values("退货率", ascending=False).head(3)
+                for shop, row in return_rank.iterrows():
+                    st.write(f"🔴 **{shop}** 退货率 {row['退货率']:.1f}%")
             else:
                 st.info("暂无数据")
 
