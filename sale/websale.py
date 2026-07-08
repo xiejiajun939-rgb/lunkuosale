@@ -980,12 +980,13 @@ with st.sidebar:
 
 # ========== 动态创建选项卡（按业务流程重构） ==========
 base_tabs = [
-    "📊 经营驾驶舱",          # 首页，默认打开
-    "🏪 店铺分析",            # 原"最新日明细"+"日期查询"合并
-    "📦 商品分析",            # 原"商品分析"强化
-    "🎤 主播分析",            # 原"销售对比"（主播维度）
-    "📈 趋势分析",            # 原"日期范围累计"+"日期查询"
-    "📂 数据管理"             # 原"发货退货明细"+"历史业绩"+"上传"
+    "📊 经营驾驶舱",
+    "🏪 店铺分析",
+    "📦 商品分析",
+    "🎤 主播分析",
+    "📈 趋势分析",
+    "📂 数据管理",
+    "📈 销售分布与品牌"   # 新增为独立选项卡
 ]
 admin_extra_tabs = ["⚠️ 异常预警", "🔧 调试", "📚 商品库导出", "⚙️ 系统设置"]
 
@@ -1018,6 +1019,7 @@ idx_product = get_tab_index("📦 商品分析")
 idx_anchor = get_tab_index("🎤 主播分析")
 idx_trend = get_tab_index("📈 趋势分析")
 idx_data = get_tab_index("📂 数据管理")
+idx_distribution = get_tab_index("📈 销售分布与品牌")
 idx_alert = get_tab_index("⚠️ 异常预警")
 idx_debug = get_tab_index("🔧 调试")
 idx_export = get_tab_index("📚 商品库导出")
@@ -1030,7 +1032,6 @@ idx_query = idx_shop                # 日期查询 → 店铺分析
 idx_ship_return = idx_data          # 发货退货明细 → 数据管理
 idx_history = idx_data              # 历史业绩 → 数据管理
 idx_anchor_compare = idx_anchor     # 销售对比（主播）→ 主播分析
-idx_distribution = idx_shop         # 销售分布与品牌 → 店铺分析
 
 # ========== 经营驾驶舱（首页） ==========
 if idx_dashboard is not None:
