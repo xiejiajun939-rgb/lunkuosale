@@ -988,7 +988,7 @@ base_tabs = [
     "🎤 销售对比",
     "📈 销售分布与品牌"
 ]
-admin_extra_tabs = ["🔧 调试", "📚 商品库导出", "🗄️ 历史业绩", "⚙️ 系统设置"]
+admin_extra_tabs = ["⚠️ 异常预警", "🔧 调试", "📚 商品库导出", "🗄️ 历史业绩", "⚙️ 系统设置"]
 
 if st.session_state.role == "admin":
     tab_labels = base_tabs + admin_extra_tabs
@@ -1016,6 +1016,7 @@ idx_ship_return = get_tab_index("📦 发货退货明细")
 idx_product = get_tab_index("📊 商品分析")
 idx_anchor_compare = get_tab_index("🎤 销售对比")
 idx_distribution = get_tab_index("📈 销售分布与品牌")
+idx_alert = get_tab_index("⚠️ 异常预警")
 idx_debug = get_tab_index("🔧 调试")
 idx_export = get_tab_index("📚 商品库导出")
 idx_history = get_tab_index("🗄️ 历史业绩")
@@ -2488,6 +2489,156 @@ if idx_system is not None:
                             st.error(f"创建失败：{msg}")
                 else:
                     st.error("请填写用户名和密码")
+# ========== 异常预警（仅管理员） ==========
+if idx_alert is not None:
+    with tabs[idx_alert]:
+        st.subheader("⚠️ 异常预警监控")
+        st.info("监控近7天业绩下滑明显的店铺，以及退货率激增的商品。可调整敏感度阈值。")
+        
+        # 加载数据（利用缓存）
+        with st.spinner("加载数据..."):
+            daily_df = load_daily_sales(st.session_state.table_suffix)
+            prod_df = load_product_sales(st.session_state.table_suffix)
+        
+        if daily_df.empty or prod_df.empty:
+            st.warning("数据不足，请先上传订单文件。")
+        else:
+            # 获取当前日期范围
+            today = date.today()
+            # 近7天：过去7天（不含今天，因为今天可能不全）
+            end_date = today - timedelta(days=1)
+            start_date_recent = end_date - timedelta(days=6)
+            # 前7天：再往前推7天
+            start_date_previous = start_date_recent - timedelta(days=7)
+            end_date_previous = start_date_recent - timedelta(days=1)
+            
+            # 确保日期在数据范围内
+            min_data_date = daily_df["sale_date"].min().date()
+            max_data_date = daily_df["sale_date"].max().date()
+            if start_date_recent < min_data_date:
+                st.warning("数据不足以覆盖近7天，请检查数据日期范围。")
+                st.stop()
+            
+            # ------ 1. 业绩下滑店铺 ------
+            st.markdown("### 📉 业绩下滑店铺（近7天 vs 前7天日均）")
+            col1, col2 = st.columns([2, 1])
+            with col1:
+                decline_threshold = st.slider("下滑幅度阈值（%）", min_value=0, max_value=100, value=20, key="decline_threshold")
+            with col2:
+                min_days = st.number_input("至少需要最近7天有销售天数", min_value=1, max_value=7, value=3, key="min_days")
+            
+            # 筛选日期范围
+            mask_recent = (daily_df["sale_date"] >= pd.to_datetime(start_date_recent)) & (daily_df["sale_date"] <= pd.to_datetime(end_date))
+            mask_previous = (daily_df["sale_date"] >= pd.to_datetime(start_date_previous)) & (daily_df["sale_date"] <= pd.to_datetime(end_date_previous))
+            
+            recent_data = daily_df[mask_recent].copy()
+            previous_data = daily_df[mask_previous].copy()
+            
+            # 按店铺聚合
+            recent_agg = recent_data.groupby("店铺名称").agg(
+                近7天总额=("当日金额", "sum"),
+                近7天天数=("当日金额", "count")
+            ).reset_index()
+            previous_agg = previous_data.groupby("店铺名称").agg(
+                前7天总额=("当日金额", "sum"),
+                前7天天数=("当日金额", "count")
+            ).reset_index()
+            
+            # 合并
+            merged = pd.merge(recent_agg, previous_agg, on="店铺名称", how="inner")
+            # 计算日均
+            merged["近7天日均"] = merged["近7天总额"] / merged["近7天天数"]
+            merged["前7天日均"] = merged["前7天总额"] / merged["前7天天数"]
+            # 过滤有销售的天数
+            merged = merged[merged["近7天天数"] >= min_days]
+            # 计算下滑幅度
+            merged["下滑幅度"] = ((merged["前7天日均"] - merged["近7天日均"]) / merged["前7天日均"] * 100).round(2)
+            # 筛选下滑大于阈值的
+            decline_df = merged[merged["下滑幅度"] >= decline_threshold].sort_values("下滑幅度", ascending=False)
+            
+            if decline_df.empty:
+                st.success("🎉 近7天没有业绩下滑明显的店铺。")
+            else:
+                st.dataframe(
+                    decline_df[["店铺名称", "近7天日均", "前7天日均", "下滑幅度"]],
+                    column_config={
+                        "店铺名称": "店铺",
+                        "近7天日均": st.column_config.NumberColumn("近7天日均(¥)", format="%.2f"),
+                        "前7天日均": st.column_config.NumberColumn("前7天日均(¥)", format="%.2f"),
+                        "下滑幅度": st.column_config.NumberColumn("下滑幅度(%)", format="%.2f%%"),
+                    },
+                    use_container_width=True,
+                    hide_index=True
+                )
+                # 高亮显示最严重的
+                worst = decline_df.iloc[0]
+                st.metric("⚠️ 下滑最严重店铺", worst["店铺名称"], delta=f"{worst['下滑幅度']:.2f}%", delta_color="inverse")
+            
+            # ------ 2. 退货率激增商品 ------
+            st.markdown("### 📈 退货率激增商品（近7天 vs 前7天退货率）")
+            col3, col4 = st.columns(2)
+            with col3:
+                return_rate_threshold = st.slider("退货率上升阈值（百分点）", min_value=0, max_value=50, value=10, key="return_rate_threshold")
+            with col4:
+                min_ship_recent = st.number_input("近7天发货金额至少", min_value=0, value=1000, step=100, key="min_ship")
+            
+            # 从 product_sales 中按货号汇总
+            # 先过滤日期
+            prod_recent = prod_df[(prod_df["sale_date"] >= pd.to_datetime(start_date_recent)) & (prod_df["sale_date"] <= pd.to_datetime(end_date))]
+            prod_previous = prod_df[(prod_df["sale_date"] >= pd.to_datetime(start_date_previous)) & (prod_df["sale_date"] <= pd.to_datetime(end_date_previous))]
+            
+            # 按货号聚合
+            def agg_ship_return(df):
+                return df.groupby("style_code").agg(
+                    发货金额=("ship_amount", "sum"),
+                    退货金额=("return_amount", "sum")
+                ).reset_index()
+            
+            recent_prod = agg_ship_return(prod_recent)
+            previous_prod = agg_ship_return(prod_previous)
+            
+            # 合并
+            merged_prod = pd.merge(recent_prod, previous_prod, on="style_code", suffixes=("_近7天", "_前7天"), how="inner")
+            # 过滤近7天发货金额大于阈值
+            merged_prod = merged_prod[merged_prod["发货金额_近7天"] >= min_ship_recent]
+            # 计算退货率
+            merged_prod["退货率_近7天"] = (merged_prod["退货金额_近7天"] / merged_prod["发货金额_近7天"] * 100).round(2)
+            merged_prod["退货率_前7天"] = (merged_prod["退货金额_前7天"] / merged_prod["发货金额_前7天"] * 100).round(2)
+            # 处理前7天发货为0的情况
+            merged_prod["退货率_前7天"] = merged_prod["退货率_前7天"].fillna(0)
+            # 计算退货率变化
+            merged_prod["退货率变化"] = (merged_prod["退货率_近7天"] - merged_prod["退货率_前7天"]).round(2)
+            # 筛选增长大于阈值
+            return_spike = merged_prod[merged_prod["退货率变化"] >= return_rate_threshold].sort_values("退货率变化", ascending=False)
+            
+            if return_spike.empty:
+                st.success("🎉 近7天没有退货率激增的商品。")
+            else:
+                # 合并商品名称（从 master 获取）可选
+                master_df = load_product_master()
+                if not master_df.empty and "style_code" in master_df.columns:
+                    master_df["style_code"] = master_df["style_code"].astype(str).str.strip().str.upper()
+                    return_spike = return_spike.merge(master_df[["style_code", "category"]], on="style_code", how="left")
+                    return_spike.rename(columns={"category": "分类"}, inplace=True)
+                else:
+                    return_spike["分类"] = "-"
+                
+                st.dataframe(
+                    return_spike[["style_code", "分类", "发货金额_近7天", "退货率_近7天", "退货率_前7天", "退货率变化"]],
+                    column_config={
+                        "style_code": "货号",
+                        "分类": "分类",
+                        "发货金额_近7天": st.column_config.NumberColumn("近7天发货(¥)", format="%.2f"),
+                        "退货率_近7天": st.column_config.NumberColumn("近7天退货率(%)", format="%.2f%%"),
+                        "退货率_前7天": st.column_config.NumberColumn("前7天退货率(%)", format="%.2f%%"),
+                        "退货率变化": st.column_config.NumberColumn("变化(百分点)", format="%.2f"),
+                    },
+                    use_container_width=True,
+                    hide_index=True
+                )
+                # 高亮最严重的
+                worst_prod = return_spike.iloc[0]
+                st.metric("⚠️ 退货率激增最严重商品", worst_prod["style_code"], delta=f"{worst_prod['退货率变化']:.2f} 百分点", delta_color="inverse")
 
 # ========== 调试 ==========
 if idx_debug is not None:
