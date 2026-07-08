@@ -162,7 +162,9 @@ def login():
                 st.rerun()
             else:
                 st.error("用户名或密码错误")
-
+# ========== 初始化 session_state ==========
+if "sub_users" not in st.session_state:
+    st.session_state.sub_users = load_sub_accounts_from_db()
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
 if not st.session_state.authenticated:
@@ -174,9 +176,7 @@ st.markdown('<div class="custom-main-title">📊 抖音&视频号商品销售分
 st.markdown(f'<div class="welcome-text">欢迎，**{st.session_state.username}** ({"管理员" if st.session_state.role == "admin" else ("子账号" if st.session_state.role == "viewer" else "成员")})</div>', unsafe_allow_html=True)
 st.markdown("---")
 
-# ========== 初始化 session_state ==========
-if "sub_users" not in st.session_state:
-    st.session_state.sub_users = load_sub_accounts_from_db()
+
 
 if "df_all_daily" not in st.session_state:
     st.session_state.df_all_daily = None
