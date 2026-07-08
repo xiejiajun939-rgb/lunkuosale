@@ -1036,7 +1036,6 @@ idx_distribution = idx_shop         # 销售分布与品牌 → 店铺分析
 if idx_dashboard is not None:
     with tabs[idx_dashboard]:
         st.markdown("### 📊 昨日经营概览")
-        st.caption(f"数据更新至：{daily_df['sale_date'].max().date() if not daily_df.empty else '无数据'}")
 
         # 加载数据（利用缓存）
         with st.spinner("加载数据..."):
@@ -1047,6 +1046,9 @@ if idx_dashboard is not None:
             st.info("📌 暂无数据，请先上传订单文件。")
             st.stop()
 
+        st.caption(f"数据更新至：{daily_df['sale_date'].max().date()}")
+
+        # 数据完整性检查
         if "shop_name" not in daily_df.columns or "amount" not in daily_df.columns:
             st.error("数据格式异常，请检查 daily_sales 表结构。")
             st.stop()
@@ -1117,10 +1119,7 @@ if idx_dashboard is not None:
         alerts = []
 
         # 下滑店铺（近7天 vs 前7天，基于最新日期往前推）
-        end_date = latest_date - timedelta(days=1)   # 因为最新日期是昨天，所以最近7天是从前天往前推7天
-        # 实际上我们希望最近7天是 latest_date-7 到 latest_date-1，避免包含今天
-        # 但如果 latest_date 就是昨天，那就用 latest_date-7 到 latest_date-1
-        # 更准确：从 latest_date 往前推7天（不含 latest_date，因为它是最后一天）
+        end_date = latest_date - timedelta(days=1)   # 最近7天截止到最新日期的前一天
         start_date_recent = end_date - timedelta(days=6)
         start_date_previous = start_date_recent - timedelta(days=7)
         end_date_previous = start_date_recent - timedelta(days=1)
@@ -1237,7 +1236,6 @@ if idx_dashboard is not None:
         else:
             summary = f"📊 昨日销售 ¥{latest_sales:,.0f}，较前日变化 {change:+.1f}%，月目标完成 {target_rate:.0f}%，整体平稳。"
         st.info(f"📌 {summary}")
-
 # ========== 最新日明细 ==========
 if idx_latest is not None:
     with tabs[idx_latest]:
