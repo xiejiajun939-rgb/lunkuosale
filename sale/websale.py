@@ -1408,7 +1408,7 @@ if idx_dashboard is not None:
                     title="",
                     labels={"sale_date": "", "amount": ""},
                     markers=True,
-                    template="plotly_dark"
+                    template="plotly_white"   # 改为浅色模板
                 )
                 fig.update_layout(
                     height=240,
@@ -1416,13 +1416,12 @@ if idx_dashboard is not None:
                     hovermode="x unified",
                     paper_bgcolor="rgba(0,0,0,0)",
                     plot_bgcolor="rgba(0,0,0,0)",
-                    font=dict(color="#94a3b8", size=11),
+                    font=dict(color="#1e293b", size=11),   # 文字颜色深色
                 )
                 fig.update_traces(
-                    line=dict(color="#4ade80", width=2.5),
-                    marker=dict(color="#4ade80", size=6)
+                    line=dict(color="#22c55e", width=2.5),   # 改用浅色主题的绿色
+                    marker=dict(color="#22c55e", size=6)
                 )
-                st.plotly_chart(fig, use_container_width=True)
 
                 # 显示每日数据
                 trend["日期"] = trend["sale_date"].dt.strftime("%m-%d")
