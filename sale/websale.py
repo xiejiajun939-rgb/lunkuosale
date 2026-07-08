@@ -1035,43 +1035,48 @@ idx_distribution = idx_shop         # 销售分布与品牌 → 店铺分析
 # ========== 经营驾驶舱（首页） ==========
 if idx_dashboard is not None:
     with tabs[idx_dashboard]:
-        st.markdown("### 📊 今日经营概览")
-        
+        st.markdown("### 📊 昨日经营概览")
+        st.caption(f"数据更新至：{daily_df['sale_date'].max().date() if not daily_df.empty else '无数据'}")
+
         # 加载数据（利用缓存）
         with st.spinner("加载数据..."):
             daily_df = load_daily_sales(st.session_state.table_suffix)
             prod_df = load_product_sales(st.session_state.table_suffix)
-        
+
         if daily_df.empty or prod_df.empty:
             st.info("📌 暂无数据，请先上传订单文件。")
             st.stop()
-        
+
         if "shop_name" not in daily_df.columns or "amount" not in daily_df.columns:
             st.error("数据格式异常，请检查 daily_sales 表结构。")
             st.stop()
-        
-        # ---------- 计算关键指标 ----------
-        today = date.today()
-        yesterday = today - timedelta(days=1)
-        
-        today_mask = daily_df["sale_date"].dt.date == today
-        today_sales = daily_df[today_mask]["amount"].sum()
-        
-        yesterday_mask = daily_df["sale_date"].dt.date == yesterday
-        yesterday_sales = daily_df[yesterday_mask]["amount"].sum()
-        change = ((today_sales - yesterday_sales) / yesterday_sales * 100) if yesterday_sales > 0 else 0
-        
-        month_start = today.replace(day=1)
+
+        # ---------- 以数据最新日期为基准 ----------
+        latest_date = daily_df["sale_date"].max().date()
+        prev_date = latest_date - timedelta(days=1)
+
+        # 最新日期的销售
+        mask_latest = daily_df["sale_date"].dt.date == latest_date
+        latest_sales = daily_df[mask_latest]["amount"].sum()
+
+        # 前一日的销售（用于对比）
+        mask_prev = daily_df["sale_date"].dt.date == prev_date
+        prev_sales = daily_df[mask_prev]["amount"].sum()
+        change = ((latest_sales - prev_sales) / prev_sales * 100) if prev_sales > 0 else 0
+
+        # 月目标（从月初到最新日期）
+        month_start = latest_date.replace(day=1)
         month_mask = daily_df["sale_date"].dt.date >= month_start
         month_sales = daily_df[month_mask]["amount"].sum()
         total_target = sum(st.session_state.target_dict.values())
         target_rate = (month_sales / total_target * 100) if total_target > 0 else 0
-        
-        today_prod = prod_df[prod_df["sale_date"].dt.date == today]
-        ship_today = today_prod["ship_amount"].sum()
-        return_today = today_prod["return_amount"].sum()
-        return_rate = (return_today / ship_today * 100) if ship_today > 0 else 0
-        
+
+        # 最新日期退货率
+        latest_prod = prod_df[prod_df["sale_date"].dt.date == latest_date]
+        ship_latest = latest_prod["ship_amount"].sum()
+        return_latest = latest_prod["return_amount"].sum()
+        return_rate = (return_latest / ship_latest * 100) if ship_latest > 0 else 0
+
         # 经营健康度
         health_score = 70
         if target_rate > 80:
@@ -1082,20 +1087,20 @@ if idx_dashboard is not None:
             health_score += 10
         elif return_rate < 10:
             health_score += 5
-        if today_sales > yesterday_sales:
+        if latest_sales > prev_sales:
             health_score += 5
         health_score = min(100, health_score)
-        
+
         # ---------- 4个核心指标卡片 ----------
         col1, col2, col3, col4 = st.columns(4)
         with col1:
-            st.metric("💰 今日销售", f"¥{today_sales:,.0f}", f"{change:+.1f}%" if change != 0 else None)
+            st.metric("💰 昨日销售", f"¥{latest_sales:,.0f}", f"{change:+.1f}%" if change != 0 else None)
         with col2:
             st.metric("🎯 月目标完成率", f"{target_rate:.0f}%")
             st.progress(min(target_rate / 100, 1.0))
             st.caption(f"已销售 ¥{month_sales:,.0f} / 目标 ¥{total_target:,.0f}")
         with col3:
-            st.metric("📦 退货率", f"{return_rate:.1f}%", delta_color="inverse")
+            st.metric("📦 昨日退货率", f"{return_rate:.1f}%", delta_color="inverse")
         with col4:
             st.metric("💚 经营健康度", f"{health_score}分")
             if health_score >= 80:
@@ -1104,40 +1109,44 @@ if idx_dashboard is not None:
                 st.progress(health_score/100, text="🟡 一般")
             else:
                 st.progress(health_score/100, text="🔴 需关注")
-        
+
         st.markdown("---")
-        
+
         # ---------- 异常提醒 ----------
-        st.markdown("### ⚠️ 今日异常提醒")
+        st.markdown("### ⚠️ 昨日异常提醒")
         alerts = []
-        # 下滑店铺
-        end_date = today - timedelta(days=1)
+
+        # 下滑店铺（近7天 vs 前7天，基于最新日期往前推）
+        end_date = latest_date - timedelta(days=1)   # 因为最新日期是昨天，所以最近7天是从前天往前推7天
+        # 实际上我们希望最近7天是 latest_date-7 到 latest_date-1，避免包含今天
+        # 但如果 latest_date 就是昨天，那就用 latest_date-7 到 latest_date-1
+        # 更准确：从 latest_date 往前推7天（不含 latest_date，因为它是最后一天）
         start_date_recent = end_date - timedelta(days=6)
         start_date_previous = start_date_recent - timedelta(days=7)
         end_date_previous = start_date_recent - timedelta(days=1)
-        
+
         mask_recent = (daily_df["sale_date"] >= pd.to_datetime(start_date_recent)) & (daily_df["sale_date"] <= pd.to_datetime(end_date))
         mask_previous = (daily_df["sale_date"] >= pd.to_datetime(start_date_previous)) & (daily_df["sale_date"] <= pd.to_datetime(end_date_previous))
-        
+
         recent_data = daily_df[mask_recent].copy()
         previous_data = daily_df[mask_previous].copy()
-        
+
         recent_agg = recent_data.groupby("shop_name")["amount"].sum().reset_index().rename(columns={"amount": "近7天"})
         previous_agg = previous_data.groupby("shop_name")["amount"].sum().reset_index().rename(columns={"amount": "前7天"})
-        
+
         merged = pd.merge(recent_agg, previous_agg, on="shop_name", how="inner")
         merged["下滑"] = ((merged["前7天"] - merged["近7天"]) / merged["前7天"] * 100) if not merged.empty else 0
         merged = merged[merged["前7天"] > 0]
         merged = merged[merged["近7天"] < merged["前7天"]]
         merged = merged[merged["下滑"] >= 20].sort_values("下滑", ascending=False)
-        
+
         for _, row in merged.head(3).iterrows():
             alerts.append(f"📉 {row['shop_name']} 近7天销售下降 {row['下滑']:.0f}%")
-        
+
         # 退货率激增商品
         prod_recent = prod_df[(prod_df["sale_date"] >= pd.to_datetime(start_date_recent)) & (prod_df["sale_date"] <= pd.to_datetime(end_date))]
         prod_previous = prod_df[(prod_df["sale_date"] >= pd.to_datetime(start_date_previous)) & (prod_df["sale_date"] <= pd.to_datetime(end_date_previous))]
-        
+
         if not prod_recent.empty and not prod_previous.empty:
             recent_prod = prod_recent.groupby("style_code").agg(ship=("ship_amount", "sum"), ret=("return_amount", "sum")).reset_index()
             prev_prod = prod_previous.groupby("style_code").agg(ship=("ship_amount", "sum"), ret=("return_amount", "sum")).reset_index()
@@ -1146,34 +1155,34 @@ if idx_dashboard is not None:
             merged_prod["退货率前"] = merged_prod["ret_前"] / merged_prod["ship_前"] * 100
             merged_prod["变化"] = merged_prod["退货率近"] - merged_prod["退货率前"]
             merged_prod = merged_prod[merged_prod["变化"] >= 10].sort_values("变化", ascending=False)
-            
+
             for _, row in merged_prod.head(3).iterrows():
                 alerts.append(f"📦 {row['style_code']} 退货率上升 {row['变化']:.1f} 个百分点")
-        
+
         # 目标完成率低的店铺
         if st.session_state.target_dict:
             for shop, target in st.session_state.target_dict.items():
                 shop_sales = daily_df[(daily_df["sale_date"].dt.date >= month_start) & (daily_df["shop_name"] == shop)]["amount"].sum()
                 if target > 0 and shop_sales / target < 0.3:
                     alerts.append(f"🎯 {shop} 月目标完成率不足30%")
-        
+
         if alerts:
             for alert in alerts[:5]:
                 st.warning(alert)
             if len(alerts) > 5:
                 st.info(f"还有 {len(alerts)-5} 条异常，请查看「异常预警」选项卡")
         else:
-            st.success("🎉 今日一切正常，无异常项")
-        
+            st.success("🎉 昨日一切正常，无异常项")
+
         st.markdown("---")
-        
+
         # ---------- 双列布局：排行 + 趋势 ----------
         col_left, col_right = st.columns(2)
-        
+
         with col_left:
             st.markdown("#### 🏆 店铺销售排行 TOP5")
-            shop_today = daily_df[daily_df["sale_date"].dt.date == today]
-            shop_rank = shop_today.groupby("shop_name")["amount"].sum().sort_values(ascending=False).head(5)
+            shop_latest = daily_df[daily_df["sale_date"].dt.date == latest_date]
+            shop_rank = shop_latest.groupby("shop_name")["amount"].sum().sort_values(ascending=False).head(5)
             if not shop_rank.empty:
                 for i, (shop, amt) in enumerate(shop_rank.items()):
                     emoji = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"][i]
@@ -1181,12 +1190,12 @@ if idx_dashboard is not None:
                     st.write(f"{emoji} **{shop}**")
                     st.progress(min(pct, 1.0), text=f"¥{amt:,.0f}")
             else:
-                st.info("今日暂无销售数据")
-            
+                st.info("昨日暂无销售数据")
+
             st.markdown("---")
             st.markdown("#### 📊 退货TOP3")
-            if not shop_today.empty:
-                return_rank = shop_today.groupby("shop_name").agg(
+            if not shop_latest.empty:
+                return_rank = shop_latest.groupby("shop_name").agg(
                     退货=("amount", lambda x: x[x < 0].sum() * -1),
                     发货=("amount", lambda x: x[x > 0].sum())
                 )
@@ -1197,10 +1206,10 @@ if idx_dashboard is not None:
                     st.write(f"🔴 **{shop}** 退货率 {row['退货率']:.1f}%")
             else:
                 st.info("暂无数据")
-        
+
         with col_right:
             st.markdown("#### 📈 近7日销售趋势")
-            last_7 = daily_df[daily_df["sale_date"].dt.date >= (today - timedelta(days=6))]
+            last_7 = daily_df[daily_df["sale_date"].dt.date >= (latest_date - timedelta(days=6))]
             trend = last_7.groupby("sale_date")["amount"].sum().reset_index()
             if not trend.empty:
                 fig = px.line(trend, x="sale_date", y="amount", title="", labels={"sale_date": "", "amount": "销售额(¥)"}, markers=True)
@@ -1212,23 +1221,22 @@ if idx_dashboard is not None:
                 st.dataframe(trend[["日期", "销售"]], hide_index=True, use_container_width=True)
             else:
                 st.info("近7日无数据")
-        
+
         st.markdown("---")
-        
+
         # ---------- AI一句话总结 ----------
-        st.markdown("### 💡 今日一句话总结")
+        st.markdown("### 💡 昨日一句话总结")
         if change < -5:
-            summary = f"📉 今日销售较昨日下降 {abs(change):.1f}%，需关注主要下降来源。建议查看上方异常提醒。"
+            summary = f"📉 昨日销售较前日下降 {abs(change):.1f}%，需关注主要下降来源。建议查看上方异常提醒。"
         elif change > 5:
-            summary = f"📈 今日销售较昨日增长 {change:.1f}%，表现良好，继续保持！"
+            summary = f"📈 昨日销售较前日增长 {change:.1f}%，表现良好，继续保持！"
         elif target_rate < 30:
             summary = f"⚠️ 月目标完成率仅 {target_rate:.0f}%，本月进度偏慢，建议加大推广力度。"
         elif return_rate > 15:
-            summary = f"⚠️ 今日退货率 {return_rate:.1f}% 偏高，建议检查商品质量或物流问题。"
+            summary = f"⚠️ 昨日退货率 {return_rate:.1f}% 偏高，建议检查商品质量或物流问题。"
         else:
-            summary = f"📊 今日销售 ¥{today_sales:,.0f}，较昨日变化 {change:+.1f}%，月目标完成 {target_rate:.0f}%，整体平稳。"
+            summary = f"📊 昨日销售 ¥{latest_sales:,.0f}，较前日变化 {change:+.1f}%，月目标完成 {target_rate:.0f}%，整体平稳。"
         st.info(f"📌 {summary}")
-
 
 # ========== 最新日明细 ==========
 if idx_latest is not None:
