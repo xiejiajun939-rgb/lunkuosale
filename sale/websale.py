@@ -1437,7 +1437,7 @@ if idx_dashboard is not None:
 
         st.markdown("---")
 
-            # ---------- AI 智能总结 ----------
+        # ---------- AI 智能总结 ----------
             st.markdown('<div class="section-title">🤖 智能总结</div>', unsafe_allow_html=True)
     
             model_options = {
@@ -1484,7 +1484,7 @@ if idx_dashboard is not None:
                 <div style="background:rgba(34,197,94,0.08);border:1px solid rgba(34,197,94,0.2);border-radius:12px;padding:16px 20px;">
                     <div style="color:#1e293b;font-size:14px;line-height:1.7;">{ai_summary}</div>
                 </div>
-            """, unsafe_allow_html=True)
+            """, unsafe_allow_html=True)    
 
 
 
