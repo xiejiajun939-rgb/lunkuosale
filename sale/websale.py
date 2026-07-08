@@ -1033,118 +1033,9 @@ idx_ship_return = idx_data          # 发货退货明细 → 数据管理
 idx_history = idx_data              # 历史业绩 → 数据管理
 idx_anchor_compare = idx_anchor     # 销售对比（主播）→ 主播分析
 
-# ========== 经营驾驶舱（高级UI版） ==========
+# ========== 经营驾驶舱（高级视觉版） ==========
 if idx_dashboard is not None:
     with tabs[idx_dashboard]:
-        # 注入自定义样式
-        st.markdown("""
-        <style>
-        /* 页面背景 */
-        .stApp {
-            background: #0a0e17;
-        }
-        .main > div {
-            background: transparent;
-        }
-        /* 数据卡片 - 毛玻璃效果 */
-        .glass-card {
-            background: linear-gradient(135deg, rgba(26, 35, 53, 0.95), rgba(15, 20, 35, 0.95));
-            border-radius: 16px;
-            padding: 22px 24px;
-            border: 1px solid rgba(255, 255, 255, 0.06);
-            backdrop-filter: blur(10px);
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
-            transition: transform 0.2s ease, box-shadow 0.2s ease;
-            margin-bottom: 8px;
-        }
-        .glass-card:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 12px 48px rgba(0, 0, 0, 0.6);
-        }
-        /* KPI 数字 */
-        .kpi-number {
-            font-size: 38px;
-            font-weight: 700;
-            letter-spacing: -0.5px;
-            background: linear-gradient(135deg, #ffffff 60%, #94a3b8);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-        }
-        .kpi-label {
-            color: #8892b0;
-            font-size: 13px;
-            font-weight: 500;
-            letter-spacing: 0.3px;
-            text-transform: uppercase;
-        }
-        /* 变化标签 */
-        .change-up { color: #4ade80; font-weight: 600; }
-        .change-down { color: #f87171; font-weight: 600; }
-        .change-neutral { color: #94a3b8; }
-        /* 进度条 */
-        .progress-track {
-            width: 100%;
-            height: 6px;
-            background: #1e293b;
-            border-radius: 3px;
-            overflow: hidden;
-            margin: 8px 0 4px 0;
-        }
-        .progress-fill {
-            height: 100%;
-            border-radius: 3px;
-            transition: width 0.8s ease;
-        }
-        /* 排行条目 */
-        .rank-item {
-            display: flex;
-            align-items: center;
-            padding: 6px 0;
-            border-bottom: 1px solid rgba(255,255,255,0.04);
-        }
-        .rank-item:last-child {
-            border-bottom: none;
-        }
-        .rank-emoji { font-size: 22px; width: 36px; }
-        .rank-name { flex: 1; color: #e2e8f0; font-size: 14px; }
-        .rank-value { color: #4ade80; font-weight: 600; font-size: 14px; width: 80px; text-align: right; }
-        .rank-bar-bg { width: 100px; height: 6px; background: #1e293b; border-radius: 3px; overflow: hidden; }
-        .rank-bar-fill { height: 100%; border-radius: 3px; background: linear-gradient(90deg, #4ade80, #22d3ee); }
-        /* 异常条目 */
-        .alert-item {
-            padding: 10px 14px;
-            border-radius: 8px;
-            margin-bottom: 6px;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            background: rgba(255,255,255,0.03);
-            border-left: 3px solid;
-        }
-        .alert-item .icon { font-size: 16px; }
-        .alert-item .msg { color: #e2e8f0; font-size: 14px; }
-        /* 标题 */
-        .section-title {
-            color: #e2e8f0;
-            font-size: 16px;
-            font-weight: 600;
-            margin-bottom: 12px;
-            letter-spacing: 0.2px;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-        .section-title .badge {
-            background: rgba(74, 222, 128, 0.15);
-            color: #4ade80;
-            font-size: 11px;
-            padding: 2px 10px;
-            border-radius: 12px;
-            font-weight: 500;
-        }
-        </style>
-        """, unsafe_allow_html=True)
-
         # ---------- 加载数据 ----------
         with st.spinner("加载数据..."):
             daily_df = load_daily_sales(st.session_state.table_suffix)
@@ -1155,13 +1046,13 @@ if idx_dashboard is not None:
             st.stop()
 
         latest_date = daily_df["sale_date"].max().date()
-        st.caption(f"📅 数据更新至：{latest_date.strftime('%Y年%m月%d日')}")
+        st.caption(f"📅 数据更新至：{latest_date}")
 
         if "shop_name" not in daily_df.columns or "amount" not in daily_df.columns:
             st.error("数据格式异常，请检查 daily_sales 表结构。")
             st.stop()
 
-        # ---------- 计算指标 ----------
+        # ---------- 计算核心指标 ----------
         prev_date = latest_date - timedelta(days=1)
 
         mask_latest = daily_df["sale_date"].dt.date == latest_date
@@ -1182,7 +1073,7 @@ if idx_dashboard is not None:
         return_latest = latest_prod["return_amount"].sum()
         return_rate = (return_latest / ship_latest * 100) if ship_latest > 0 else 0
 
-        # 健康度
+        # 经营健康度
         health_score = 70
         if target_rate > 80:
             health_score += 15
@@ -1196,71 +1087,64 @@ if idx_dashboard is not None:
             health_score += 5
         health_score = min(100, health_score)
 
-        # ---------- KPI 卡片行 ----------
+        # ---------- 4个核心KPI卡片（大号数字） ----------
         col1, col2, col3, col4 = st.columns(4)
 
         with col1:
-            change_class = "change-up" if change >= 0 else "change-down"
-            change_text = f"{'▲' if change >= 0 else '▼'} {abs(change):.1f}%" if change != 0 else "持平"
+            change_color = "inverse" if change < 0 else "normal"
             st.markdown(f"""
-            <div class="glass-card">
-                <div class="kpi-label">昨日销售</div>
-                <div class="kpi-number">¥{latest_sales:,.0f}</div>
-                <div style="margin-top:6px;">
-                    <span class="{change_class}">{change_text}</span>
-                    <span style="color:#64748b;font-size:13px;margin-left:8px;">前日 ¥{prev_sales:,.0f}</span>
-                </div>
+            <div style="background: linear-gradient(135deg, #1a1a2e, #16213e); border-radius: 12px; padding: 20px; border: 1px solid #2d3a5e;">
+                <div style="color: #8892b0; font-size: 14px; font-weight: 500;">昨日销售</div>
+                <div style="color: #ffffff; font-size: 32px; font-weight: 700; margin: 4px 0;">¥{latest_sales:,.0f}</div>
+                <div style="color: {"#4ade80" if change >= 0 else "#f87171"}; font-size: 14px;">{"" if change == 0 else f"{'▲' if change > 0 else '▼'} {abs(change):.1f}%"}</div>
+                <div style="color: #64748b; font-size: 12px;">前日 ¥{prev_sales:,.0f}</div>
             </div>
             """, unsafe_allow_html=True)
 
         with col2:
-            bar_color = "#4ade80" if target_rate >= 80 else "#fbbf24" if target_rate >= 50 else "#f87171"
+            progress_color = "#4ade80" if target_rate >= 80 else "#fbbf24" if target_rate >= 50 else "#f87171"
             st.markdown(f"""
-            <div class="glass-card">
-                <div class="kpi-label">月目标完成率</div>
-                <div style="font-size:38px;font-weight:700;color:#ffffff;letter-spacing:-0.5px;">{target_rate:.0f}%</div>
-                <div class="progress-track">
-                    <div class="progress-fill" style="width:{min(target_rate,100)}%;background:{bar_color};"></div>
+            <div style="background: linear-gradient(135deg, #1a1a2e, #16213e); border-radius: 12px; padding: 20px; border: 1px solid #2d3a5e;">
+                <div style="color: #8892b0; font-size: 14px; font-weight: 500;">月目标完成率</div>
+                <div style="color: #ffffff; font-size: 32px; font-weight: 700; margin: 4px 0;">{target_rate:.0f}%</div>
+                <div style="width: 100%; height: 6px; background: #1e293b; border-radius: 3px; margin: 8px 0;">
+                    <div style="width: {min(target_rate, 100)}%; height: 6px; background: {progress_color}; border-radius: 3px;"></div>
                 </div>
-                <div style="color:#64748b;font-size:12px;">¥{month_sales:,.0f} / ¥{total_target:,.0f}</div>
+                <div style="color: #64748b; font-size: 12px;">已销售 ¥{month_sales:,.0f} / 目标 ¥{total_target:,.0f}</div>
             </div>
             """, unsafe_allow_html=True)
 
         with col3:
-            return_color = "#f87171" if return_rate > 10 else "#fbbf24" if return_rate > 5 else "#4ade80"
-            status_text = "正常" if return_rate < 5 else "偏高" if return_rate < 10 else "异常"
+            return_color = "#f87171" if return_rate > 10 else "#4ade80" if return_rate < 5 else "#fbbf24"
             st.markdown(f"""
-            <div class="glass-card">
-                <div class="kpi-label">退货率</div>
-                <div style="font-size:38px;font-weight:700;color:#ffffff;letter-spacing:-0.5px;">{return_rate:.1f}%</div>
-                <div style="margin-top:4px;">
-                    <span style="color:{return_color};font-weight:500;">● {status_text}</span>
-                    <span style="color:#64748b;font-size:13px;margin-left:8px;">退货 ¥{return_latest:,.0f}</span>
-                </div>
+            <div style="background: linear-gradient(135deg, #1a1a2e, #16213e); border-radius: 12px; padding: 20px; border: 1px solid #2d3a5e;">
+                <div style="color: #8892b0; font-size: 14px; font-weight: 500;">退货率</div>
+                <div style="color: #ffffff; font-size: 32px; font-weight: 700; margin: 4px 0;">{return_rate:.1f}%</div>
+                <div style="color: {return_color}; font-size: 14px;">{"🟢 正常" if return_rate < 5 else "🟡 偏高" if return_rate < 10 else "🔴 异常"}</div>
+                <div style="color: #64748b; font-size: 12px;">退货 ¥{return_latest:,.0f} / 发货 ¥{ship_latest:,.0f}</div>
             </div>
             """, unsafe_allow_html=True)
 
         with col4:
             health_color = "#4ade80" if health_score >= 80 else "#fbbf24" if health_score >= 60 else "#f87171"
-            health_text = "良好" if health_score >= 80 else "一般" if health_score >= 60 else "需关注"
             st.markdown(f"""
-            <div class="glass-card">
-                <div class="kpi-label">经营健康度</div>
-                <div style="font-size:38px;font-weight:700;color:#ffffff;letter-spacing:-0.5px;">{health_score}分</div>
-                <div class="progress-track">
-                    <div class="progress-fill" style="width:{health_score}%;background:{health_color};"></div>
+            <div style="background: linear-gradient(135deg, #1a1a2e, #16213e); border-radius: 12px; padding: 20px; border: 1px solid #2d3a5e;">
+                <div style="color: #8892b0; font-size: 14px; font-weight: 500;">经营健康度</div>
+                <div style="color: #ffffff; font-size: 32px; font-weight: 700; margin: 4px 0;">{health_score}分</div>
+                <div style="width: 100%; height: 6px; background: #1e293b; border-radius: 3px; margin: 8px 0;">
+                    <div style="width: {health_score}%; height: 6px; background: {health_color}; border-radius: 3px;"></div>
                 </div>
-                <div style="color:{health_color};font-size:13px;font-weight:500;">● {health_text}</div>
+                <div style="color: {health_color}; font-size: 12px;">{"🟢 良好" if health_score >= 80 else "🟡 一般" if health_score >= 60 else "🔴 需关注"}</div>
             </div>
             """, unsafe_allow_html=True)
 
         st.markdown("---")
 
         # ---------- 异常提醒 ----------
-        st.markdown('<div class="section-title">⚠️ 异常提醒 <span class="badge">需关注</span></div>', unsafe_allow_html=True)
-
+        st.markdown("### ⚠️ 异常提醒")
         alerts = []
-        # 下滑店铺
+
+        # 下滑店铺（近7天 vs 前7天）
         end_date = latest_date - timedelta(days=1)
         start_date_recent = end_date - timedelta(days=6)
         start_date_previous = start_date_recent - timedelta(days=7)
@@ -1280,9 +1164,9 @@ if idx_dashboard is not None:
             merged = merged[merged["下滑"] >= 20].sort_values("下滑", ascending=False)
 
             for _, row in merged.head(3).iterrows():
-                alerts.append(("#f87171" if row["下滑"] > 40 else "#fbbf24", f"📉 {row['shop_name']} 近7天销售下降 {row['下滑']:.0f}%"))
+                alerts.append(("🔴" if row["下滑"] > 40 else "🟠", f"{row['shop_name']} 近7天销售下降 {row['下滑']:.0f}%"))
 
-        # 退货率激增
+        # 退货率激增商品
         prod_recent = prod_df[(prod_df["sale_date"] >= pd.to_datetime(start_date_recent)) & (prod_df["sale_date"] <= pd.to_datetime(end_date))]
         prod_previous = prod_df[(prod_df["sale_date"] >= pd.to_datetime(start_date_previous)) & (prod_df["sale_date"] <= pd.to_datetime(start_date_recent - timedelta(days=1)))]
 
@@ -1298,22 +1182,21 @@ if idx_dashboard is not None:
             merged_prod = merged_prod[(merged_prod["变化"] >= 10) & np.isfinite(merged_prod["变化"])].sort_values("变化", ascending=False)
 
             for _, row in merged_prod.head(3).iterrows():
-                alerts.append(("#f87171" if row["变化"] > 20 else "#fbbf24", f"📦 {row['style_code']} 退货率上升 {row['变化']:.1f} 个百分点"))
+                alerts.append(("🔴" if row["变化"] > 20 else "🟠", f"{row['style_code']} 退货率上升 {row['变化']:.1f} 个百分点"))
 
-        # 目标完成率低
+        # 目标完成率低的店铺
         if st.session_state.target_dict:
             for shop, target in st.session_state.target_dict.items():
                 shop_sales = daily_df[(daily_df["sale_date"].dt.date >= month_start) & (daily_df["shop_name"] == shop)]["amount"].sum()
                 if target > 0 and shop_sales / target < 0.3:
-                    alerts.append(("#f87171", f"🎯 {shop} 月目标完成率不足30%"))
+                    alerts.append(("🔴", f"{shop} 月目标完成率不足30%"))
 
         if alerts:
-            alert_html = '<div style="background:rgba(255,255,255,0.03);border-radius:12px;padding:12px 16px;">'
-            for color, msg in alerts[:5]:
-                alert_html += f'<div class="alert-item" style="border-left-color:{color};">'
-                alert_html += f'<span class="msg">{msg}</span></div>'
+            alert_html = '<div style="background: #1e293b; border-radius: 8px; padding: 12px 16px; border-left: 4px solid #f87171;">'
+            for icon, msg in alerts[:5]:
+                alert_html += f'<div style="color: #e2e8f0; padding: 4px 0;">{icon} {msg}</div>'
             if len(alerts) > 5:
-                alert_html += f'<div style="color:#64748b;font-size:13px;padding:4px 0;">还有 {len(alerts)-5} 条异常，请查看「异常预警」</div>'
+                alert_html += f'<div style="color: #64748b; font-size: 13px;">还有 {len(alerts)-5} 条异常，请查看「异常预警」</div>'
             alert_html += '</div>'
             st.markdown(alert_html, unsafe_allow_html=True)
         else:
@@ -1321,28 +1204,27 @@ if idx_dashboard is not None:
 
         st.markdown("---")
 
-        # ---------- 双列布局 ----------
+        # ---------- 双列布局：排行 + 趋势 ----------
         col_left, col_right = st.columns([1, 1])
 
         with col_left:
-            # 销售排行
-            st.markdown('<div class="section-title">🏆 店铺排行</div>', unsafe_allow_html=True)
+            st.markdown("#### 🏆 店铺销售排行")
             shop_latest = daily_df[daily_df["sale_date"].dt.date == latest_date]
             shop_rank = shop_latest.groupby("shop_name")["amount"].sum().sort_values(ascending=False).head(5)
 
             if not shop_rank.empty:
-                max_val = shop_rank.iloc[0]
                 rank_html = ""
+                max_val = shop_rank.iloc[0]
                 for i, (shop, amt) in enumerate(shop_rank.items()):
                     emoji = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"][i]
                     pct = (amt / max_val * 100) if max_val > 0 else 0
                     rank_html += f"""
-                    <div class="rank-item">
-                        <div class="rank-emoji">{emoji}</div>
-                        <div class="rank-name">{shop}</div>
-                        <div class="rank-value">¥{amt/10000:.1f}万</div>
-                        <div class="rank-bar-bg">
-                            <div class="rank-bar-fill" style="width:{pct}%;"></div>
+                    <div style="display: flex; align-items: center; padding: 4px 0; gap: 8px;">
+                        <div style="width: 36px; font-size: 20px;">{emoji}</div>
+                        <div style="flex: 1; color: #e2e8f0; font-size: 14px;">{shop}</div>
+                        <div style="width: 80px; text-align: right; color: #4ade80; font-weight: 600; font-size: 14px;">¥{amt/10000:.1f}万</div>
+                        <div style="width: 100px; height: 8px; background: #1e293b; border-radius: 4px; overflow: hidden;">
+                            <div style="width: {pct}%; height: 100%; background: linear-gradient(90deg, #4ade80, #22d3ee); border-radius: 4px;"></div>
                         </div>
                     </div>
                     """
@@ -1350,8 +1232,7 @@ if idx_dashboard is not None:
             else:
                 st.info("暂无数据")
 
-            # 退货排行
-            st.markdown('<div class="section-title" style="margin-top:16px;">📊 退货排行</div>', unsafe_allow_html=True)
+            st.markdown("#### 📊 退货排行")
             prod_latest = prod_df[prod_df["sale_date"].dt.date == latest_date]
             if not prod_latest.empty:
                 return_rank = prod_latest.groupby("shop_name").agg(
@@ -1370,9 +1251,9 @@ if idx_dashboard is not None:
                             rate = 0.0
                         color = "#f87171" if rate > 10 else "#fbbf24" if rate > 5 else "#4ade80"
                         st.markdown(f"""
-                        <div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid rgba(255,255,255,0.04);">
-                            <span style="color:#e2e8f0;">{shop}</span>
-                            <span style="color:{color};font-weight:600;">{rate:.1f}%</span>
+                        <div style="display: flex; align-items: center; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid #1e293b;">
+                            <span style="color: #e2e8f0;">{shop}</span>
+                            <span style="color: {color}; font-weight: 600;">{rate:.1f}%</span>
                         </div>
                         """, unsafe_allow_html=True)
                 else:
@@ -1381,7 +1262,7 @@ if idx_dashboard is not None:
                 st.info("暂无数据")
 
         with col_right:
-            st.markdown('<div class="section-title">📈 近7日销售趋势</div>', unsafe_allow_html=True)
+            st.markdown("#### 📈 近7日销售趋势")
             last_7 = daily_df[daily_df["sale_date"].dt.date >= (latest_date - timedelta(days=6))]
             trend = last_7.groupby("sale_date")["amount"].sum().reset_index()
 
@@ -1391,75 +1272,14 @@ if idx_dashboard is not None:
                     x="sale_date",
                     y="amount",
                     title="",
-                    labels={"sale_date": "", "amount": ""},
+                    labels={"sale_date": "", "amount": "销售额"},
                     markers=True,
                     template="plotly_dark"
                 )
                 fig.update_layout(
                     height=240,
                     margin=dict(l=0, r=0, t=10, b=0),
-                    hovermode="x unified",
-                    paper_bgcolor="rgba(0,0,0,0)",
-                    plot_bgcolor="rgba(0,0,0,0)",
-                    font=dict(color="#94a3b8", size=11),
-                )
-                fig.update_traces(
-                    line=dict(color="#4ade80", width=2.5),
-                    marker=dict(color="#4ade80", size=6)
-                )
-                st.plotly_chart(fig, use_container_width=True)
-
-                # 显示每日数据
-                trend["日期"] = trend["sale_date"].dt.strftime("%m-%d")
-                trend["销售"] = trend["amount"].apply(lambda x: f"¥{x:,.0f}")
-                st.dataframe(trend[["日期", "销售"]], hide_index=True, use_container_width=True)
-            else:
-                st.info("近7日无数据")
-
-        st.markdown("---")
-
-        # ---------- AI 智能总结 ----------
-        st.markdown('<div class="section-title">🤖 智能总结</div>', unsafe_allow_html=True)
-
-        # 构建上下文（用于AI）
-        shop_rank_items = list(shop_rank.items()) if not shop_rank.empty else []
-        rank_text = "\n".join([f"{i+1}. {shop}: ¥{amt:,.0f}" for i, (shop, amt) in enumerate(shop_rank_items[:3])]) if shop_rank_items else "暂无"
-
-        context = f"""
-        昨日销售：¥{latest_sales:,.0f}
-        前日销售：¥{prev_sales:,.0f}
-        环比变化：{change:+.1f}%
-        月目标完成率：{target_rate:.0f}%
-        退货率：{return_rate:.1f}%
-        店铺排行 TOP3：{rank_text}
-        异常：{len(alerts)}条
-        """
-
-        with st.spinner("🤖 AI 正在分析..."):
-            try:
-                # 尝试调用本地DeepSeek，如果不可用则使用模板
-                ai_summary = get_ai_summary(
-                    prompt="请用一段话总结昨日经营状况，指出亮点和问题，给出1-2条建议",
-                    context=context
-                )
-                st.markdown(f"""
-                <div style="background:rgba(74,222,128,0.05);border:1px solid rgba(74,222,128,0.15);border-radius:12px;padding:16px 20px;">
-                    <div style="color:#e2e8f0;font-size:14px;line-height:1.7;">{ai_summary}</div>
-                </div>
-                """, unsafe_allow_html=True)
-            except:
-                # 降级模板
-                if change < -5:
-                    summary = f"📉 昨日销售较前日下降 {abs(change):.1f}%，需关注主要下降来源。建议查看上方异常提醒。"
-                elif change > 5:
-                    summary = f"📈 昨日销售较前日增长 {change:.1f}%，表现良好，继续保持！"
-                elif target_rate < 30:
-                    summary = f"⚠️ 月目标完成率仅 {target_rate:.0f}%，本月进度偏慢，建议加大推广力度。"
-                elif return_rate > 15:
-                    summary = f"⚠️ 昨日退货率 {return_rate:.1f}% 偏高，建议检查商品质量或物流问题。"
-                else:
-                    summary = f"📊 昨日销售 ¥{latest_sales:,.0f}，较前日变化 {change:+.1f}%，月目标完成 {target_rate:.0f}%，整体平稳。"
-                st.info(f"📌 {summary}")
+                    hover
 # ========== 最新日明细 ==========
 if idx_latest is not None:
     with tabs[idx_latest]:
