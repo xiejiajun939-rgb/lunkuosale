@@ -1001,8 +1001,7 @@ else:
     if not allowed and "" in perms:
         allowed = perms[""]
     if not allowed:
-        allowed = base_tabs  # 默认显示全部
-    # 过滤掉不在 base_tabs 中的项
+        allowed = base_tabs
     valid_tabs = [tab for tab in allowed if tab in base_tabs]
     tab_labels = valid_tabs if valid_tabs else base_tabs
 
@@ -1012,6 +1011,7 @@ tabs = st.tabs(tab_labels)
 def get_tab_index(label):
     return tab_labels.index(label) if label in tab_labels else None
 
+# ----- 新索引（对应新选项卡） -----
 idx_dashboard = get_tab_index("📊 经营驾驶舱")
 idx_shop = get_tab_index("🏪 店铺分析")
 idx_product = get_tab_index("📦 商品分析")
@@ -1022,6 +1022,15 @@ idx_alert = get_tab_index("⚠️ 异常预警")
 idx_debug = get_tab_index("🔧 调试")
 idx_export = get_tab_index("📚 商品库导出")
 idx_system = get_tab_index("⚙️ 系统设置")
+
+# ----- 兼容旧索引（映射到新位置，避免旧代码报错） -----
+idx_latest = idx_shop               # 最新日明细 → 店铺分析
+idx_range = idx_trend               # 日期范围累计 → 趋势分析
+idx_query = idx_shop                # 日期查询 → 店铺分析
+idx_ship_return = idx_data          # 发货退货明细 → 数据管理
+idx_history = idx_data              # 历史业绩 → 数据管理
+idx_anchor_compare = idx_anchor     # 销售对比（主播）→ 主播分析
+idx_distribution = idx_shop         # 销售分布与品牌 → 店铺分析
 
 # ========== 经营驾驶舱（首页） ==========
 if idx_dashboard is not None:
