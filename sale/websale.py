@@ -1033,12 +1033,119 @@ idx_ship_return = idx_data          # 发货退货明细 → 数据管理
 idx_history = idx_data              # 历史业绩 → 数据管理
 idx_anchor_compare = idx_anchor     # 销售对比（主播）→ 主播分析
 
-# ========== 经营驾驶舱（首页） ==========
+# ========== 经营驾驶舱（高级UI版） ==========
 if idx_dashboard is not None:
     with tabs[idx_dashboard]:
-        st.markdown("### 📊 昨日经营概览")
+        # 注入自定义样式
+        st.markdown("""
+        <style>
+        /* 页面背景 */
+        .stApp {
+            background: #0a0e17;
+        }
+        .main > div {
+            background: transparent;
+        }
+        /* 数据卡片 - 毛玻璃效果 */
+        .glass-card {
+            background: linear-gradient(135deg, rgba(26, 35, 53, 0.95), rgba(15, 20, 35, 0.95));
+            border-radius: 16px;
+            padding: 22px 24px;
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            backdrop-filter: blur(10px);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+            margin-bottom: 8px;
+        }
+        .glass-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 12px 48px rgba(0, 0, 0, 0.6);
+        }
+        /* KPI 数字 */
+        .kpi-number {
+            font-size: 38px;
+            font-weight: 700;
+            letter-spacing: -0.5px;
+            background: linear-gradient(135deg, #ffffff 60%, #94a3b8);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .kpi-label {
+            color: #8892b0;
+            font-size: 13px;
+            font-weight: 500;
+            letter-spacing: 0.3px;
+            text-transform: uppercase;
+        }
+        /* 变化标签 */
+        .change-up { color: #4ade80; font-weight: 600; }
+        .change-down { color: #f87171; font-weight: 600; }
+        .change-neutral { color: #94a3b8; }
+        /* 进度条 */
+        .progress-track {
+            width: 100%;
+            height: 6px;
+            background: #1e293b;
+            border-radius: 3px;
+            overflow: hidden;
+            margin: 8px 0 4px 0;
+        }
+        .progress-fill {
+            height: 100%;
+            border-radius: 3px;
+            transition: width 0.8s ease;
+        }
+        /* 排行条目 */
+        .rank-item {
+            display: flex;
+            align-items: center;
+            padding: 6px 0;
+            border-bottom: 1px solid rgba(255,255,255,0.04);
+        }
+        .rank-item:last-child {
+            border-bottom: none;
+        }
+        .rank-emoji { font-size: 22px; width: 36px; }
+        .rank-name { flex: 1; color: #e2e8f0; font-size: 14px; }
+        .rank-value { color: #4ade80; font-weight: 600; font-size: 14px; width: 80px; text-align: right; }
+        .rank-bar-bg { width: 100px; height: 6px; background: #1e293b; border-radius: 3px; overflow: hidden; }
+        .rank-bar-fill { height: 100%; border-radius: 3px; background: linear-gradient(90deg, #4ade80, #22d3ee); }
+        /* 异常条目 */
+        .alert-item {
+            padding: 10px 14px;
+            border-radius: 8px;
+            margin-bottom: 6px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            background: rgba(255,255,255,0.03);
+            border-left: 3px solid;
+        }
+        .alert-item .icon { font-size: 16px; }
+        .alert-item .msg { color: #e2e8f0; font-size: 14px; }
+        /* 标题 */
+        .section-title {
+            color: #e2e8f0;
+            font-size: 16px;
+            font-weight: 600;
+            margin-bottom: 12px;
+            letter-spacing: 0.2px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .section-title .badge {
+            background: rgba(74, 222, 128, 0.15);
+            color: #4ade80;
+            font-size: 11px;
+            padding: 2px 10px;
+            border-radius: 12px;
+            font-weight: 500;
+        }
+        </style>
+        """, unsafe_allow_html=True)
 
-        # 加载数据（利用缓存）
+        # ---------- 加载数据 ----------
         with st.spinner("加载数据..."):
             daily_df = load_daily_sales(st.session_state.table_suffix)
             prod_df = load_product_sales(st.session_state.table_suffix)
@@ -1047,14 +1154,14 @@ if idx_dashboard is not None:
             st.info("📌 暂无数据，请先上传订单文件。")
             st.stop()
 
-        st.caption(f"数据更新至：{daily_df['sale_date'].max().date()}")
+        latest_date = daily_df["sale_date"].max().date()
+        st.caption(f"📅 数据更新至：{latest_date.strftime('%Y年%m月%d日')}")
 
         if "shop_name" not in daily_df.columns or "amount" not in daily_df.columns:
             st.error("数据格式异常，请检查 daily_sales 表结构。")
             st.stop()
 
-        # ---------- 以数据最新日期为基准 ----------
-        latest_date = daily_df["sale_date"].max().date()
+        # ---------- 计算指标 ----------
         prev_date = latest_date - timedelta(days=1)
 
         mask_latest = daily_df["sale_date"].dt.date == latest_date
@@ -1075,7 +1182,7 @@ if idx_dashboard is not None:
         return_latest = latest_prod["return_amount"].sum()
         return_rate = (return_latest / ship_latest * 100) if ship_latest > 0 else 0
 
-        # 经营健康度
+        # 健康度
         health_score = 70
         if target_rate > 80:
             health_score += 15
@@ -1089,157 +1196,220 @@ if idx_dashboard is not None:
             health_score += 5
         health_score = min(100, health_score)
 
-        # ---------- 4个核心指标卡片 ----------
+        # ---------- KPI 卡片行 ----------
         col1, col2, col3, col4 = st.columns(4)
+
         with col1:
-            st.metric("💰 昨日销售", f"¥{latest_sales:,.0f}", f"{change:+.1f}%" if change != 0 else None)
+            change_class = "change-up" if change >= 0 else "change-down"
+            change_text = f"{'▲' if change >= 0 else '▼'} {abs(change):.1f}%" if change != 0 else "持平"
+            st.markdown(f"""
+            <div class="glass-card">
+                <div class="kpi-label">昨日销售</div>
+                <div class="kpi-number">¥{latest_sales:,.0f}</div>
+                <div style="margin-top:6px;">
+                    <span class="{change_class}">{change_text}</span>
+                    <span style="color:#64748b;font-size:13px;margin-left:8px;">前日 ¥{prev_sales:,.0f}</span>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
         with col2:
-            st.metric("🎯 月目标完成率", f"{target_rate:.0f}%")
-            st.progress(min(target_rate / 100, 1.0))
-            st.caption(f"已销售 ¥{month_sales:,.0f} / 目标 ¥{total_target:,.0f}")
+            bar_color = "#4ade80" if target_rate >= 80 else "#fbbf24" if target_rate >= 50 else "#f87171"
+            st.markdown(f"""
+            <div class="glass-card">
+                <div class="kpi-label">月目标完成率</div>
+                <div style="font-size:38px;font-weight:700;color:#ffffff;letter-spacing:-0.5px;">{target_rate:.0f}%</div>
+                <div class="progress-track">
+                    <div class="progress-fill" style="width:{min(target_rate,100)}%;background:{bar_color};"></div>
+                </div>
+                <div style="color:#64748b;font-size:12px;">¥{month_sales:,.0f} / ¥{total_target:,.0f}</div>
+            </div>
+            """, unsafe_allow_html=True)
+
         with col3:
-            st.metric("📦 昨日退货率", f"{return_rate:.1f}%", delta_color="inverse")
+            return_color = "#f87171" if return_rate > 10 else "#fbbf24" if return_rate > 5 else "#4ade80"
+            status_text = "正常" if return_rate < 5 else "偏高" if return_rate < 10 else "异常"
+            st.markdown(f"""
+            <div class="glass-card">
+                <div class="kpi-label">退货率</div>
+                <div style="font-size:38px;font-weight:700;color:#ffffff;letter-spacing:-0.5px;">{return_rate:.1f}%</div>
+                <div style="margin-top:4px;">
+                    <span style="color:{return_color};font-weight:500;">● {status_text}</span>
+                    <span style="color:#64748b;font-size:13px;margin-left:8px;">退货 ¥{return_latest:,.0f}</span>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
         with col4:
-            st.metric("💚 经营健康度", f"{health_score}分")
-            if health_score >= 80:
-                st.progress(health_score/100, text="🟢 良好")
-            elif health_score >= 60:
-                st.progress(health_score/100, text="🟡 一般")
-            else:
-                st.progress(health_score/100, text="🔴 需关注")
+            health_color = "#4ade80" if health_score >= 80 else "#fbbf24" if health_score >= 60 else "#f87171"
+            health_text = "良好" if health_score >= 80 else "一般" if health_score >= 60 else "需关注"
+            st.markdown(f"""
+            <div class="glass-card">
+                <div class="kpi-label">经营健康度</div>
+                <div style="font-size:38px;font-weight:700;color:#ffffff;letter-spacing:-0.5px;">{health_score}分</div>
+                <div class="progress-track">
+                    <div class="progress-fill" style="width:{health_score}%;background:{health_color};"></div>
+                </div>
+                <div style="color:{health_color};font-size:13px;font-weight:500;">● {health_text}</div>
+            </div>
+            """, unsafe_allow_html=True)
 
         st.markdown("---")
 
-        # ---------- 异常提醒（修复退货率除零问题） ----------
-        st.markdown("### ⚠️ 昨日异常提醒")
-        alerts = []
+        # ---------- 异常提醒 ----------
+        st.markdown('<div class="section-title">⚠️ 异常提醒 <span class="badge">需关注</span></div>', unsafe_allow_html=True)
 
-        # 下滑店铺（逻辑不变）
+        alerts = []
+        # 下滑店铺
         end_date = latest_date - timedelta(days=1)
         start_date_recent = end_date - timedelta(days=6)
         start_date_previous = start_date_recent - timedelta(days=7)
-        end_date_previous = start_date_recent - timedelta(days=1)
 
         mask_recent = (daily_df["sale_date"] >= pd.to_datetime(start_date_recent)) & (daily_df["sale_date"] <= pd.to_datetime(end_date))
-        mask_previous = (daily_df["sale_date"] >= pd.to_datetime(start_date_previous)) & (daily_df["sale_date"] <= pd.to_datetime(end_date_previous))
+        mask_previous = (daily_df["sale_date"] >= pd.to_datetime(start_date_previous)) & (daily_df["sale_date"] <= pd.to_datetime(start_date_recent - timedelta(days=1)))
 
         recent_data = daily_df[mask_recent].copy()
         previous_data = daily_df[mask_previous].copy()
 
-        recent_agg = recent_data.groupby("shop_name")["amount"].sum().reset_index().rename(columns={"amount": "近7天"})
-        previous_agg = previous_data.groupby("shop_name")["amount"].sum().reset_index().rename(columns={"amount": "前7天"})
+        if not recent_data.empty and not previous_data.empty:
+            recent_agg = recent_data.groupby("shop_name")["amount"].sum().reset_index().rename(columns={"amount": "近7天"})
+            previous_agg = previous_data.groupby("shop_name")["amount"].sum().reset_index().rename(columns={"amount": "前7天"})
+            merged = pd.merge(recent_agg, previous_agg, on="shop_name", how="inner")
+            merged["下滑"] = ((merged["前7天"] - merged["近7天"]) / merged["前7天"] * 100) if not merged.empty else 0
+            merged = merged[(merged["前7天"] > 0) & (merged["近7天"] < merged["前7天"])]
+            merged = merged[merged["下滑"] >= 20].sort_values("下滑", ascending=False)
 
-        merged = pd.merge(recent_agg, previous_agg, on="shop_name", how="inner")
-        merged["下滑"] = ((merged["前7天"] - merged["近7天"]) / merged["前7天"] * 100) if not merged.empty else 0
-        merged = merged[merged["前7天"] > 0]
-        merged = merged[merged["近7天"] < merged["前7天"]]
-        merged = merged[merged["下滑"] >= 20].sort_values("下滑", ascending=False)
+            for _, row in merged.head(3).iterrows():
+                alerts.append(("#f87171" if row["下滑"] > 40 else "#fbbf24", f"📉 {row['shop_name']} 近7天销售下降 {row['下滑']:.0f}%"))
 
-        for _, row in merged.head(3).iterrows():
-            alerts.append(f"📉 {row['shop_name']} 近7天销售下降 {row['下滑']:.0f}%")
-
-        # ---------- 退货率激增商品（修复除零） ----------
+        # 退货率激增
         prod_recent = prod_df[(prod_df["sale_date"] >= pd.to_datetime(start_date_recent)) & (prod_df["sale_date"] <= pd.to_datetime(end_date))]
-        prod_previous = prod_df[(prod_df["sale_date"] >= pd.to_datetime(start_date_previous)) & (prod_df["sale_date"] <= pd.to_datetime(end_date_previous))]
+        prod_previous = prod_df[(prod_df["sale_date"] >= pd.to_datetime(start_date_previous)) & (prod_df["sale_date"] <= pd.to_datetime(start_date_recent - timedelta(days=1)))]
 
         if not prod_recent.empty and not prod_previous.empty:
-            recent_prod = prod_recent.groupby("style_code").agg(
-                ship=("ship_amount", "sum"),
-                ret=("return_amount", "sum")
-            ).reset_index()
-            prev_prod = prod_previous.groupby("style_code").agg(
-                ship=("ship_amount", "sum"),
-                ret=("return_amount", "sum")
-            ).reset_index()
-
+            recent_prod = prod_recent.groupby("style_code").agg(ship=("ship_amount", "sum"), ret=("return_amount", "sum")).reset_index()
+            prev_prod = prod_previous.groupby("style_code").agg(ship=("ship_amount", "sum"), ret=("return_amount", "sum")).reset_index()
             merged_prod = pd.merge(recent_prod, prev_prod, on="style_code", suffixes=("_近", "_前"))
-
-            # 安全计算：前7天发货为0时，退货率变化设为0，并跳过这类商品
             merged_prod["退货率近"] = (merged_prod["ret_近"] / merged_prod["ship_近"] * 100).fillna(0)
             merged_prod["退货率前"] = (merged_prod["ret_前"] / merged_prod["ship_前"] * 100).fillna(0)
-            # 只有当前7天发货 > 0 且 近7天发货 > 0 时才计算变化，否则设为0
-            merged_prod["变化"] = 0.0
             mask_valid = (merged_prod["ship_前"] > 0) & (merged_prod["ship_近"] > 0)
+            merged_prod["变化"] = 0.0
             merged_prod.loc[mask_valid, "变化"] = merged_prod.loc[mask_valid, "退货率近"] - merged_prod.loc[mask_valid, "退货率前"]
-
-            # 筛选变化大于等于10个百分点且非无穷大
-            merged_prod = merged_prod[(merged_prod["变化"] >= 10) & np.isfinite(merged_prod["变化"])]
-            merged_prod = merged_prod.sort_values("变化", ascending=False)
+            merged_prod = merged_prod[(merged_prod["变化"] >= 10) & np.isfinite(merged_prod["变化"])].sort_values("变化", ascending=False)
 
             for _, row in merged_prod.head(3).iterrows():
-                alerts.append(f"📦 {row['style_code']} 退货率上升 {row['变化']:.1f} 个百分点")
+                alerts.append(("#f87171" if row["变化"] > 20 else "#fbbf24", f"📦 {row['style_code']} 退货率上升 {row['变化']:.1f} 个百分点"))
 
-        # 目标完成率低的店铺
+        # 目标完成率低
         if st.session_state.target_dict:
             for shop, target in st.session_state.target_dict.items():
                 shop_sales = daily_df[(daily_df["sale_date"].dt.date >= month_start) & (daily_df["shop_name"] == shop)]["amount"].sum()
                 if target > 0 and shop_sales / target < 0.3:
-                    alerts.append(f"🎯 {shop} 月目标完成率不足30%")
+                    alerts.append(("#f87171", f"🎯 {shop} 月目标完成率不足30%"))
 
         if alerts:
-            for alert in alerts[:5]:
-                st.warning(alert)
+            alert_html = '<div style="background:rgba(255,255,255,0.03);border-radius:12px;padding:12px 16px;">'
+            for color, msg in alerts[:5]:
+                alert_html += f'<div class="alert-item" style="border-left-color:{color};">'
+                alert_html += f'<span class="msg">{msg}</span></div>'
             if len(alerts) > 5:
-                st.info(f"还有 {len(alerts)-5} 条异常，请查看「异常预警」选项卡")
+                alert_html += f'<div style="color:#64748b;font-size:13px;padding:4px 0;">还有 {len(alerts)-5} 条异常，请查看「异常预警」</div>'
+            alert_html += '</div>'
+            st.markdown(alert_html, unsafe_allow_html=True)
         else:
             st.success("🎉 昨日一切正常，无异常项")
 
         st.markdown("---")
 
-        # ---------- 双列布局：排行 + 趋势 ----------
-        col_left, col_right = st.columns(2)
+        # ---------- 双列布局 ----------
+        col_left, col_right = st.columns([1, 1])
 
         with col_left:
-            st.markdown("#### 🏆 店铺销售排行 TOP5")
+            # 销售排行
+            st.markdown('<div class="section-title">🏆 店铺排行</div>', unsafe_allow_html=True)
             shop_latest = daily_df[daily_df["sale_date"].dt.date == latest_date]
             shop_rank = shop_latest.groupby("shop_name")["amount"].sum().sort_values(ascending=False).head(5)
+
             if not shop_rank.empty:
+                max_val = shop_rank.iloc[0]
+                rank_html = ""
                 for i, (shop, amt) in enumerate(shop_rank.items()):
                     emoji = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"][i]
-                    pct = amt / shop_rank.iloc[0] if shop_rank.iloc[0] > 0 else 0
-                    st.write(f"{emoji} **{shop}**")
-                    st.progress(min(pct, 1.0), text=f"¥{amt:,.0f}")
+                    pct = (amt / max_val * 100) if max_val > 0 else 0
+                    rank_html += f"""
+                    <div class="rank-item">
+                        <div class="rank-emoji">{emoji}</div>
+                        <div class="rank-name">{shop}</div>
+                        <div class="rank-value">¥{amt/10000:.1f}万</div>
+                        <div class="rank-bar-bg">
+                            <div class="rank-bar-fill" style="width:{pct}%;"></div>
+                        </div>
+                    </div>
+                    """
+                st.markdown(rank_html, unsafe_allow_html=True)
             else:
-                st.info("昨日暂无销售数据")
+                st.info("暂无数据")
 
-            st.markdown("---")
-            st.markdown("#### 📊 退货TOP3")
-            # 从 product_sales 中按店铺汇总发货和退货（最新日期）
+            # 退货排行
+            st.markdown('<div class="section-title" style="margin-top:16px;">📊 退货排行</div>', unsafe_allow_html=True)
             prod_latest = prod_df[prod_df["sale_date"].dt.date == latest_date]
             if not prod_latest.empty:
-                # 按店铺汇总
                 return_rank = prod_latest.groupby("shop_name").agg(
                     发货=("ship_amount", "sum"),
                     退货=("return_amount", "sum")
                 ).reset_index()
-                # 过滤发货为0的店铺
                 return_rank = return_rank[return_rank["发货"] > 0]
-                # 计算退货率（取绝对值避免负零）
                 return_rank["退货率"] = (return_rank["退货"] / return_rank["发货"] * 100).round(1)
-                # 排序取前三
                 return_rank = return_rank.sort_values("退货率", ascending=False).head(3)
+
                 if not return_rank.empty:
                     for _, row in return_rank.iterrows():
                         shop = row["shop_name"]
                         rate = row["退货率"]
-                        # 如果退货率接近0，显示0.0%，避免 -0.0
                         if abs(rate) < 0.05:
                             rate = 0.0
-                        st.write(f"🔴 **{shop}** 退货率 {rate:.1f}%")
+                        color = "#f87171" if rate > 10 else "#fbbf24" if rate > 5 else "#4ade80"
+                        st.markdown(f"""
+                        <div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid rgba(255,255,255,0.04);">
+                            <span style="color:#e2e8f0;">{shop}</span>
+                            <span style="color:{color};font-weight:600;">{rate:.1f}%</span>
+                        </div>
+                        """, unsafe_allow_html=True)
                 else:
                     st.info("暂无数据")
             else:
                 st.info("暂无数据")
 
         with col_right:
-            st.markdown("#### 📈 近7日销售趋势")
+            st.markdown('<div class="section-title">📈 近7日销售趋势</div>', unsafe_allow_html=True)
             last_7 = daily_df[daily_df["sale_date"].dt.date >= (latest_date - timedelta(days=6))]
             trend = last_7.groupby("sale_date")["amount"].sum().reset_index()
+
             if not trend.empty:
-                fig = px.line(trend, x="sale_date", y="amount", title="", labels={"sale_date": "", "amount": "销售额(¥)"}, markers=True)
-                fig.update_layout(height=280, margin=dict(l=0, r=0, t=0, b=0), hovermode="x unified")
-                fig.update_traces(line=dict(color="#2E86AB"), marker=dict(color="#2E86AB"))
+                fig = px.line(
+                    trend,
+                    x="sale_date",
+                    y="amount",
+                    title="",
+                    labels={"sale_date": "", "amount": ""},
+                    markers=True,
+                    template="plotly_dark"
+                )
+                fig.update_layout(
+                    height=240,
+                    margin=dict(l=0, r=0, t=10, b=0),
+                    hovermode="x unified",
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    plot_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#94a3b8", size=11),
+                )
+                fig.update_traces(
+                    line=dict(color="#4ade80", width=2.5),
+                    marker=dict(color="#4ade80", size=6)
+                )
                 st.plotly_chart(fig, use_container_width=True)
+
+                # 显示每日数据
                 trend["日期"] = trend["sale_date"].dt.strftime("%m-%d")
                 trend["销售"] = trend["amount"].apply(lambda x: f"¥{x:,.0f}")
                 st.dataframe(trend[["日期", "销售"]], hide_index=True, use_container_width=True)
@@ -1248,19 +1418,48 @@ if idx_dashboard is not None:
 
         st.markdown("---")
 
-        # ---------- AI一句话总结 ----------
-        st.markdown("### 💡 昨日一句话总结")
-        if change < -5:
-            summary = f"📉 昨日销售较前日下降 {abs(change):.1f}%，需关注主要下降来源。建议查看上方异常提醒。"
-        elif change > 5:
-            summary = f"📈 昨日销售较前日增长 {change:.1f}%，表现良好，继续保持！"
-        elif target_rate < 30:
-            summary = f"⚠️ 月目标完成率仅 {target_rate:.0f}%，本月进度偏慢，建议加大推广力度。"
-        elif return_rate > 15:
-            summary = f"⚠️ 昨日退货率 {return_rate:.1f}% 偏高，建议检查商品质量或物流问题。"
-        else:
-            summary = f"📊 昨日销售 ¥{latest_sales:,.0f}，较前日变化 {change:+.1f}%，月目标完成 {target_rate:.0f}%，整体平稳。"
-        st.info(f"📌 {summary}")
+        # ---------- AI 智能总结 ----------
+        st.markdown('<div class="section-title">🤖 智能总结</div>', unsafe_allow_html=True)
+
+        # 构建上下文（用于AI）
+        shop_rank_items = list(shop_rank.items()) if not shop_rank.empty else []
+        rank_text = "\n".join([f"{i+1}. {shop}: ¥{amt:,.0f}" for i, (shop, amt) in enumerate(shop_rank_items[:3])]) if shop_rank_items else "暂无"
+
+        context = f"""
+        昨日销售：¥{latest_sales:,.0f}
+        前日销售：¥{prev_sales:,.0f}
+        环比变化：{change:+.1f}%
+        月目标完成率：{target_rate:.0f}%
+        退货率：{return_rate:.1f}%
+        店铺排行 TOP3：{rank_text}
+        异常：{len(alerts)}条
+        """
+
+        with st.spinner("🤖 AI 正在分析..."):
+            try:
+                # 尝试调用本地DeepSeek，如果不可用则使用模板
+                ai_summary = get_ai_summary(
+                    prompt="请用一段话总结昨日经营状况，指出亮点和问题，给出1-2条建议",
+                    context=context
+                )
+                st.markdown(f"""
+                <div style="background:rgba(74,222,128,0.05);border:1px solid rgba(74,222,128,0.15);border-radius:12px;padding:16px 20px;">
+                    <div style="color:#e2e8f0;font-size:14px;line-height:1.7;">{ai_summary}</div>
+                </div>
+                """, unsafe_allow_html=True)
+            except:
+                # 降级模板
+                if change < -5:
+                    summary = f"📉 昨日销售较前日下降 {abs(change):.1f}%，需关注主要下降来源。建议查看上方异常提醒。"
+                elif change > 5:
+                    summary = f"📈 昨日销售较前日增长 {change:.1f}%，表现良好，继续保持！"
+                elif target_rate < 30:
+                    summary = f"⚠️ 月目标完成率仅 {target_rate:.0f}%，本月进度偏慢，建议加大推广力度。"
+                elif return_rate > 15:
+                    summary = f"⚠️ 昨日退货率 {return_rate:.1f}% 偏高，建议检查商品质量或物流问题。"
+                else:
+                    summary = f"📊 昨日销售 ¥{latest_sales:,.0f}，较前日变化 {change:+.1f}%，月目标完成 {target_rate:.0f}%，整体平稳。"
+                st.info(f"📌 {summary}")
 # ========== 最新日明细 ==========
 if idx_latest is not None:
     with tabs[idx_latest]:
