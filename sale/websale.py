@@ -190,9 +190,9 @@ def get_siliconflow_client():
         st.error(f"硅基流动客户端初始化失败: {e}")
         return None
 
-@st.cache_data(ttl=3600)  # 缓存结果1小时，节省费用
-def get_ai_summary(prompt: str, context: str) -> str:
-    """调用硅基流动 API 生成总结"""
+@st.cache_data(ttl=3600)
+def get_ai_summary(prompt: str, context: str, model: str) -> str:
+    """调用硅基流动 API 生成总结，支持指定模型"""
     client = get_siliconflow_client()
     if not client:
         return "⚠️ AI 服务暂不可用，请稍后再试。"
@@ -206,7 +206,7 @@ def get_ai_summary(prompt: str, context: str) -> str:
     for attempt in range(max_retries):
         try:
             response = client.chat.completions.create(
-                model="deepseek-ai/DeepSeek-V3",  # 也可换成 Qwen/Qwen2.5-72B-Instruct 等
+                model=model,          # 使用传入的模型参数
                 messages=messages,
                 stream=False,
             )
@@ -214,7 +214,7 @@ def get_ai_summary(prompt: str, context: str) -> str:
         except Exception as e:
             if attempt == max_retries - 1:
                 return f"❌ AI 总结失败，请稍后再试。错误: {str(e)}"
-            time.sleep(1 * (2 ** attempt))  # 指数退避
+            time.sleep(1 * (2 ** attempt))
     return "⚠️ AI 服务暂时无法响应。"
 
 # ========== 初始化 session_state ==========
@@ -1477,10 +1477,26 @@ if idx_dashboard is not None:
 
         st.markdown("---")
 
-        # ---------- AI 智能总结 ----------
+                # ---------- AI 智能总结 ----------
         st.markdown('<div class="section-title">🤖 智能总结</div>', unsafe_allow_html=True)
 
-        # 构建上下文数据（这些变量已在驾驶舱中定义）
+        # ---------- 添加模型选择器 ----------
+        model_options = {
+            "DeepSeek-V3": "deepseek-ai/DeepSeek-V3",
+            "DeepSeek-R1": "deepseek-ai/DeepSeek-R1",
+            "Qwen2.5-72B": "Qwen/Qwen2.5-72B-Instruct",
+            "Qwen2.5-7B": "Qwen/Qwen2.5-7B-Instruct",
+            "GLM-4-9B": "glm-4-9b-chat"
+        }
+        selected_model_name = st.selectbox(
+            "选择 AI 模型",
+            options=list(model_options.keys()),
+            index=0,
+            key="ai_model_select"
+        )
+        selected_model = model_options[selected_model_name]
+
+        # 构建上下文数据（不变）
         shop_rank_items = list(shop_rank.items()) if not shop_rank.empty else []
         rank_text = "\n".join([f"{i+1}. {shop}: ¥{amt:,.0f}" for i, (shop, amt) in enumerate(shop_rank_items[:3])]) if shop_rank_items else "暂无"
 
@@ -1503,9 +1519,10 @@ if idx_dashboard is not None:
         """
 
         with st.spinner("🤖 AI 正在分析..."):
-            ai_summary = get_ai_summary(prompt, context)
+            # 关键：将 selected_model 传入函数
+            ai_summary = get_ai_summary(prompt, context, selected_model)
 
-        # 展示 AI 返回的内容（保留现有样式，但将文字颜色改为深色以适应浅色主题）
+        # 展示结果（不变）
         st.markdown(f"""
         <div style="background:rgba(34,197,94,0.08);border:1px solid rgba(34,197,94,0.2);border-radius:12px;padding:16px 20px;">
             <div style="color:#1e293b;font-size:14px;line-height:1.7;">{ai_summary}</div>
