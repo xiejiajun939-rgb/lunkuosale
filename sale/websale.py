@@ -1174,6 +1174,26 @@ if idx_dashboard is not None:
         </style>
         """, unsafe_allow_html=True)
 
+        # ---------- AI 模型选择器（移至最顶部，避免影响其他选项卡） ----------
+        st.markdown('<div class="section-title">🤖 智能总结</div>', unsafe_allow_html=True)
+        model_options = {
+            "DeepSeek-V3": "deepseek-ai/DeepSeek-V3",
+            "DeepSeek-R1": "deepseek-ai/DeepSeek-R1",   # 用户指定使用 R1
+            "Qwen2.5-72B": "Qwen/Qwen2.5-72B-Instruct",
+            "Qwen2.5-7B": "Qwen/Qwen2.5-7B-Instruct",
+            "GLM-4-9B": "glm-4-9b-chat"
+        }
+        # 默认选中 DeepSeek-R1（索引为 1）
+        selected_model_name = st.selectbox(
+            "选择 AI 模型",
+            options=list(model_options.keys()),
+            index=1,
+            key="ai_model_select"
+        )
+        selected_model = model_options[selected_model_name]
+        st.markdown("---")  # 分隔线
+
+        # ---------- 加载数据 ----------
         with st.spinner("加载数据..."):
             daily_df = load_daily_sales(st.session_state.table_suffix)
             prod_df = load_product_sales(st.session_state.table_suffix)
@@ -1189,6 +1209,7 @@ if idx_dashboard is not None:
             st.error("数据格式异常，请检查 daily_sales 表结构。")
             st.stop()
 
+        # ---------- 计算指标 ----------
         prev_date = latest_date - timedelta(days=1)
 
         mask_latest = daily_df["sale_date"].dt.date == latest_date
@@ -1209,6 +1230,7 @@ if idx_dashboard is not None:
         return_latest = latest_prod["return_amount"].sum()
         return_rate = (return_latest / ship_latest * 100) if ship_latest > 0 else 0
 
+        # 健康度
         health_score = 70
         if target_rate > 80:
             health_score += 15
@@ -1222,6 +1244,7 @@ if idx_dashboard is not None:
             health_score += 5
         health_score = min(100, health_score)
 
+        # ---------- KPI 卡片行 ----------
         col1, col2, col3, col4 = st.columns(4)
 
         with col1:
@@ -1347,6 +1370,7 @@ if idx_dashboard is not None:
         col_left, col_right = st.columns([1, 1])
 
         with col_left:
+            # 销售排行
             st.markdown('<div class="section-title">🏆 店铺排行</div>', unsafe_allow_html=True)
             shop_latest = daily_df[daily_df["sale_date"].dt.date == latest_date]
             shop_rank = shop_latest.groupby("shop_name")["amount"].sum().sort_values(ascending=False).head(5)
@@ -1371,6 +1395,7 @@ if idx_dashboard is not None:
             else:
                 st.info("暂无数据")
 
+            # 退货排行
             st.markdown('<div class="section-title" style="margin-top:16px;">📊 退货排行</div>', unsafe_allow_html=True)
             prod_latest = prod_df[prod_df["sale_date"].dt.date == latest_date]
             if not prod_latest.empty:
@@ -1437,24 +1462,8 @@ if idx_dashboard is not None:
 
         st.markdown("---")
 
-        # ---------- AI 智能总结 ----------
-        st.markdown('<div class="section-title">🤖 智能总结</div>', unsafe_allow_html=True)
-
-        model_options = {
-            "DeepSeek-V3": "deepseek-ai/DeepSeek-V3",
-            "DeepSeek-R1": "deepseek-ai/DeepSeek-R1",
-            "Qwen2.5-72B": "Qwen/Qwen2.5-72B-Instruct",
-            "Qwen2.5-7B": "Qwen/Qwen2.5-7B-Instruct",
-            "GLM-4-9B": "glm-4-9b-chat"
-        }
-        selected_model_name = st.selectbox(
-            "选择 AI 模型",
-            options=list(model_options.keys()),
-            index=0,
-            key="ai_model_select"
-        )
-        selected_model = model_options[selected_model_name]
-
+        # ---------- AI 智能总结（调用部分） ----------
+        # 构建上下文数据（这些变量已在驾驶舱中定义）
         shop_rank_items = list(shop_rank.items()) if not shop_rank.empty else []
         rank_text = "\n".join([f"{i+1}. {shop}: ¥{amt:,.0f}" for i, (shop, amt) in enumerate(shop_rank_items[:3])]) if shop_rank_items else "暂无"
 
@@ -1479,6 +1488,7 @@ if idx_dashboard is not None:
         with st.spinner("🤖 AI 正在分析..."):
             ai_summary = get_ai_summary(prompt, context, selected_model)
 
+        # 展示 AI 返回的内容
         st.markdown(f"""
         <div style="background:rgba(34,197,94,0.08);border:1px solid rgba(34,197,94,0.2);border-radius:12px;padding:16px 20px;">
             <div style="color:#1e293b;font-size:14px;line-height:1.7;">{ai_summary}</div>
