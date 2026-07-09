@@ -1026,9 +1026,10 @@ base_tabs = [
     "🎤 主播分析",
     "📈 趋势分析",
     "📂 数据管理",
-    "📈 销售分布与品牌"
+    "📈 销售分布与品牌",
+    "⚠️ 异常预警"
 ]
-admin_extra_tabs = ["⚠️ 异常预警", "🔧 调试", "📚 商品库导出", "⚙️ 系统设置"]
+admin_extra_tabs = [ "🔧 调试", "📚 商品库导出", "⚙️ 系统设置"]
 
 if st.session_state.role == "admin":
     tab_labels = base_tabs + admin_extra_tabs
