@@ -1479,11 +1479,8 @@ if idx_dashboard is not None:
         with st.spinner("🤖 AI 正在分析..."):
             ai_summary = get_ai_summary(prompt, context, selected_model)
 
-        st.markdown(f"""
-        <div style="background:rgba(34,197,94,0.08);border:1px solid rgba(34,197,94,0.2);border-radius:12px;padding:16px 20px;">
-            <div style="color:#1e293b;font-size:14px;line-height:1.7;">{ai_summary}</div>
-        </div>
-        """, unsafe_allow_html=True)
+        # 直接使用原生组件，安全且支持 Markdown
+        st.success(ai_summary)
 
 # ========== 最新日明细 ==========
 if idx_latest is not None:
