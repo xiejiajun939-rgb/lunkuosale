@@ -4,7 +4,7 @@
 管理员账号：admin / 1234567890
 子账号存储在 Supabase 的 sub_accounts 表中
 """
-
+import json
 import streamlit as st
 import pandas as pd
 from datetime import date, timedelta
@@ -1477,10 +1477,22 @@ if idx_dashboard is not None:
         """
 
         with st.spinner("🤖 AI 正在分析..."):
-            ai_summary = get_ai_summary(prompt, context, selected_model)
-
-        # 直接使用原生组件，安全且支持 Markdown
-        st.success(ai_summary)
+            ai_output = get_ai_summary(prompt, context, selected_model)
+        
+        try:
+            # 解析 JSON
+            data = json.loads(ai_output)
+            safe_summary = data.get("analysis", "")
+            
+            # 用最安全的 Streamlit 原生 Markdown 渲染，完全不用 unsafe_allow_html
+            st.markdown(f"""
+            <div style="background:rgba(34,197,94,0.08);border:1px solid rgba(34,197,94,0.2);border-radius:12px;padding:16px 20px;color:#1e293b;font-size:14px;line-height:1.7;">
+                {safe_summary}
+            </div>
+            """, unsafe_allow_html=True)
+        except Exception:
+            # 兜底显示
+            st.info(ai_output)
 
 # ========== 最新日明细 ==========
 if idx_latest is not None:
