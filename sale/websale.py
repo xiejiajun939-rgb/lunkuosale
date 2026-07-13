@@ -1250,9 +1250,24 @@ if idx_dashboard is not None:
         # ---------- KPI 卡片行 ----------
         col1, col2, col3, col4 = st.columns(4)
 
+        
+
         with col1:
-            change_class = "change-up" if change >= 0 else "change-down"
-            change_text = f"{'▲' if change >= 0 else '▼'} {abs(change):.1f}%" if change != 0 else "持平"
+            # 判断前日销售额情况
+            if prev_sales < 0:
+                # 从负转正，显示绝对增长额
+                abs_increase = latest_sales - prev_sales  # 注意 prev_sales 为负，减负等于加
+                change_text = f"▲ 由负转正 (+{abs_increase:,.0f})"
+                change_class = "change-up"
+            elif prev_sales == 0:
+                change_text = "无前日数据"
+                change_class = "change-neutral"
+            else:
+                # 正常情况 prev_sales > 0
+                change_text = f"{'▲' if change >= 0 else '▼'} {abs(change):.1f}%" if change != 0 else "持平"
+                change_class = "change-up" if change >= 0 else "change-down"
+        
+            # 然后渲染 Markdown（保持不变）
             st.markdown(f"""
             <div class="glass-card">
                 <div class="kpi-label">昨日销售</div>
