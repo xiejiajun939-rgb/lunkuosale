@@ -281,43 +281,62 @@ def date_quick_buttons(start_key, end_key, default_start=None, default_end=None,
             return max_date
         return d
 
-    cols = st.columns([1, 1, 1, 1, 1.5])
+    # 调整为6列：5个按钮 + 1个“更多”下拉
+    cols = st.columns([1, 1, 1, 1, 1, 1.5])
+    
     with cols[0]:
-        if st.button("📅 今日", key=f"{start_key}_today", use_container_width=True):
-            today = date.today()
-            st.session_state[start_key] = clamp(today)
-            st.session_state[end_key] = clamp(today)
+        if st.button("📅 昨日", key=f"{start_key}_yesterday", use_container_width=True):
+            yesterday = date.today() - timedelta(days=1)
+            st.session_state[start_key] = clamp(yesterday)
+            st.session_state[end_key] = clamp(yesterday)
             st.rerun()
+
     with cols[1]:
         if st.button("📊 近7天", key=f"{start_key}_7days", use_container_width=True):
-            today = date.today()
-            start = today - timedelta(days=6)
+            yesterday = date.today() - timedelta(days=1)
+            start = yesterday - timedelta(days=6)  # 从昨天往前推6天，共7天
             st.session_state[start_key] = clamp(start)
-            st.session_state[end_key] = clamp(today)
+            st.session_state[end_key] = clamp(yesterday)
             st.rerun()
+
     with cols[2]:
+        if st.button("📆 上周", key=f"{start_key}_last_week", use_container_width=True):
+            today = date.today()
+            # 上周一 = 今天 - (今天星期几 + 7) 天
+            last_monday = today - timedelta(days=today.weekday() + 7)
+            last_sunday = last_monday + timedelta(days=6)
+            st.session_state[start_key] = clamp(last_monday)
+            st.session_state[end_key] = clamp(last_sunday)
+            st.rerun()
+
+    with cols[3]:
         if st.button("📆 本周", key=f"{start_key}_week", use_container_width=True):
             today = date.today()
             start_of_week = today - timedelta(days=today.weekday())
             end_of_week = start_of_week + timedelta(days=6)
+            # 如果今天还没到周末，结束日期设为今天（避免包含未来日期）
+            if end_of_week > today:
+                end_of_week = today
             st.session_state[start_key] = clamp(start_of_week)
             st.session_state[end_key] = clamp(end_of_week)
             st.rerun()
-    with cols[3]:
+
+    with cols[4]:
         if st.button("📆 本月", key=f"{start_key}_month", use_container_width=True):
             today = date.today()
             start_of_month = today.replace(day=1)
+            # 本月最后一天（若今天未到月底，则结束日期为昨天，避免包含未来）
             if today.month == 12:
                 end_of_month = today.replace(year=today.year+1, month=1, day=1) - timedelta(days=1)
             else:
                 end_of_month = today.replace(month=today.month+1, day=1) - timedelta(days=1)
-            if today < end_of_month:
-                end_of_month = today - timedelta(days=1)
+            if end_of_month > today:
+                end_of_month = today - timedelta(days=1)  # 如果今天还没到月底，用昨天
             st.session_state[start_key] = clamp(start_of_month)
             st.session_state[end_key] = clamp(end_of_month)
             st.rerun()
 
-    with cols[4]:
+    with cols[5]:
         more_options = ["更多 ▼", "自然月", "自然年", "自定义月"]
         selected_more = st.selectbox(
             "",
@@ -341,7 +360,7 @@ def date_quick_buttons(start_key, end_key, default_start=None, default_end=None,
                         end_d = date(year, month+1, 1) - timedelta(days=1)
                     today = date.today()
                     if end_d > today:
-                        end_d = today
+                        end_d = today - timedelta(days=1)  # 不包含未来
                     st.session_state[start_key] = clamp(start_d)
                     st.session_state[end_key] = clamp(end_d)
                     st.rerun()
@@ -352,13 +371,14 @@ def date_quick_buttons(start_key, end_key, default_start=None, default_end=None,
                     end_d = date(year, 12, 31)
                     today = date.today()
                     if end_d > today:
-                        end_d = today
+                        end_d = today - timedelta(days=1)
                     st.session_state[start_key] = clamp(start_d)
                     st.session_state[end_key] = clamp(end_d)
                     st.rerun()
             elif selected_more == "自定义月":
                 st.info("可自行扩展更多功能")
 
+    # 日期选择器（保持不变）
     col_d1, col_d2 = st.columns(2)
     with col_d1:
         start_val = st.session_state.get(start_key, default_start or date.today())
