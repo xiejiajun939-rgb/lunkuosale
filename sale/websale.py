@@ -1211,17 +1211,13 @@ if idx_dashboard is not None:
 
         # ---------- 计算指标 ----------
         prev_date = latest_date - timedelta(days=1)
-        
+
         mask_latest = daily_df["sale_date"].dt.date == latest_date
         latest_sales = daily_df[mask_latest]["amount"].sum()
-        
+
         mask_prev = daily_df["sale_date"].dt.date == prev_date
         prev_sales = daily_df[mask_prev]["amount"].sum()
-        
-        if prev_sales != 0:
-            change = ((latest_sales - prev_sales) / prev_sales) * 100
-        else:
-            change = 0
+        change = ((latest_sales - prev_sales) / prev_sales * 100) if prev_sales > 0 else 0
 
         month_start = latest_date.replace(day=1)
         month_mask = daily_df["sale_date"].dt.date >= month_start
@@ -1252,11 +1248,8 @@ if idx_dashboard is not None:
         col1, col2, col3, col4 = st.columns(4)
 
         with col1:
-            if prev_sales == 0:
-                change_text = "无前日数据"
-            else:
-                change_text = f"{'▲' if change >= 0 else '▼'} {abs(change):.1f}%" if change != 0 else "持平"
-            # 显示前日金额（保留原来的显示）
+            change_class = "change-up" if change >= 0 else "change-down"
+            change_text = f"{'▲' if change >= 0 else '▼'} {abs(change):.1f}%" if change != 0 else "持平"
             st.markdown(f"""
             <div class="glass-card">
                 <div class="kpi-label">昨日销售</div>
