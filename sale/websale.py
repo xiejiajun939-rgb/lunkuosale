@@ -47,9 +47,7 @@ st.markdown("""
     div[data-testid="stDateInput"] label {
         display: none !important;
     }
-    div[data-testid="stSelectbox"] label {
-        display: none !important;
-    }
+   
     div[data-testid="stDateInput"] {
         margin-top: -5px !important;
     }
