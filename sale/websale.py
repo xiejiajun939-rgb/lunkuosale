@@ -1217,7 +1217,10 @@ if idx_dashboard is not None:
 
         mask_prev = daily_df["sale_date"].dt.date == prev_date
         prev_sales = daily_df[mask_prev]["amount"].sum()
-        change = ((latest_sales - prev_sales) / prev_sales * 100) if prev_sales > 0 else 0
+        if prev_sales != 0:
+            change = ((latest_sales - prev_sales) / prev_sales) * 100
+        else:
+            change = 0
 
         month_start = latest_date.replace(day=1)
         month_mask = daily_df["sale_date"].dt.date >= month_start
