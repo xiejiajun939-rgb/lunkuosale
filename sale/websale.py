@@ -661,17 +661,23 @@ def save_product_sales(df_orders, suffix=None):
             supabase.table(table_name).upsert(batch, on_conflict="remark").execute()
 
 def save_offline_sales(df_orders):
-    """专门处理线下收入数据，写入 offline_sales_all 表"""
+    """专门处理线下收入数据，写入 offline_sales_all 表（含发货/退货拆分）"""
     if supabase is None or df_orders.empty:
         return
 
     df = df_orders.copy()
     df['sale_date'] = pd.to_datetime(df['日期']).dt.strftime('%Y-%m-%d')
     df['shop_name'] = df['组织名称'].astype(str).str.strip()
-    df['net_amount'] = pd.to_numeric(df['金额/时间'], errors='coerce').fillna(0)
+    df['amount'] = pd.to_numeric(df['金额/时间'], errors='coerce').fillna(0)
+    
+    # 拆分发货和退货（正数为发货，负数为退货）
+    df['ship_amount'] = df['amount'].clip(lower=0)   # 正数部分
+    df['return_amount'] = (-df['amount']).clip(lower=0)  # 负数取正
+    df['net_amount'] = df['amount']  # 净额即为原金额
+    
     df['remark'] = df['备注'].astype(str).str.strip()
 
-    records = df[['sale_date', 'shop_name', 'net_amount', 'remark']].to_dict(orient='records')
+    records = df[['sale_date', 'shop_name', 'ship_amount', 'return_amount', 'net_amount', 'remark']].to_dict(orient='records')
     if not records:
         return
 
@@ -746,16 +752,14 @@ def load_product_sales(suffix=None, apply_filter=True):
                 df["dept"] = None
             # ========== 维度关联结束 ==========
             
-            # ========== 合并线下收入数据（仅全部数据） ==========
+                        # ========== 合并线下收入数据（仅全部数据） ==========
             if suffix == "_all":
                 try:
                     offline_resp = supabase.table("offline_sales_all").select("*").execute()
                     if offline_resp.data:
                         offline_df = pd.DataFrame(offline_resp.data)
                         offline_df["sale_date"] = pd.to_datetime(offline_df["sale_date"])
-                        # 补全列（使结构与 df 一致）
-                        offline_df["ship_amount"] = 0
-                        offline_df["return_amount"] = 0
+                        # 补全其他列（线下数据没有商品维度）
                         offline_df["product_code"] = None
                         offline_df["style_code"] = None
                         offline_df["brand"] = None
