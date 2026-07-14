@@ -3340,24 +3340,29 @@ if idx_org is not None:
             grouped['退货率'] = (grouped['return_amt'] / (grouped['ship'] + 1e-5) * 100).round(2)
             grouped['退货率'] = grouped['退货率'].map(lambda x: f"{x:.2f}%")
 
+            # ========== 新增：按组织净销售额从高到低排序 ==========
+            org_order = grouped.groupby('org_name')['net'].sum().sort_values(ascending=False).index
+
             # 按组织分组，组织汇总直接显示在标题中
-            for org in sorted(grouped['org_name'].unique()):
+            for org in org_order:
                 org_data = grouped[grouped['org_name'] == org]
                 org_net = org_data['net'].sum()
                 org_ship = org_data['ship'].sum()
                 org_return = org_data['return_amt'].sum()
-                # 标题显示：🏢 组织名称 | 净额 ¥xxx (发货 ¥xxx / 退货 ¥xxx)
-                with st.expander(f"🏢 {org}  | 净额 ¥{org_net:,.2f}  (发货 ¥{org_ship:,.2f} / 退货 ¥{org_return:,.2f})"):
-                    # 按平台分组
-                    for plat in sorted(org_data['platform'].unique()):
+                # 标题显示：🏢 组织名称 | 净额 ¥xxx | 发货 ¥xxx | 退货 ¥xxx
+                with st.expander(f"🏢 {org}  | 净额 ¥{org_net:,.2f} | 发货 ¥{org_ship:,.2f} | 退货 ¥{org_return:,.2f}"):
+                    # 按平台分组（平台也按净额排序，让数据更清晰）
+                    platform_order = org_data.groupby('platform')['net'].sum().sort_values(ascending=False).index
+                    for plat in platform_order:
                         plat_data = org_data[org_data['platform'] == plat]
                         plat_net = plat_data['net'].sum()
                         plat_ship = plat_data['ship'].sum()
                         plat_return = plat_data['return_amt'].sum()
                         with st.expander(f"📱 {plat}  净额 ¥{plat_net:,.2f}（发货 ¥{plat_ship:,.2f} / 退货 ¥{plat_return:,.2f}）"):
-                            # 展示该平台下的店铺明细
+                            # 展示该平台下的店铺明细（店铺也按净额排序）
                             display_df = plat_data[['shop_name', 'ship', 'return_amt', 'net', '退货率']]
                             display_df.columns = ['店铺', '发货额', '退货额', '净销售额', '退货率']
+                            display_df = display_df.sort_values('净销售额', ascending=False)
                             st.dataframe(display_df, hide_index=True, use_container_width=True)
 
             # 导出功能
