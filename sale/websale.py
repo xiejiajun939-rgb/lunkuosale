@@ -3340,10 +3340,14 @@ if idx_org is not None:
             grouped['退货率'] = (grouped['return_amt'] / (grouped['ship'] + 1e-5) * 100).round(2)
             grouped['退货率'] = grouped['退货率'].map(lambda x: f"{x:.2f}%")
 
-            # 按组织分组
+            # 按组织分组，组织汇总直接显示在标题中
             for org in sorted(grouped['org_name'].unique()):
-                with st.expander(f"🏢 {org}"):
-                    org_data = grouped[grouped['org_name'] == org]
+                org_data = grouped[grouped['org_name'] == org]
+                org_net = org_data['net'].sum()
+                org_ship = org_data['ship'].sum()
+                org_return = org_data['return_amt'].sum()
+                # 标题显示：🏢 组织名称 | 净额 ¥xxx (发货 ¥xxx / 退货 ¥xxx)
+                with st.expander(f"🏢 {org}  | 净额 ¥{org_net:,.2f}  (发货 ¥{org_ship:,.2f} / 退货 ¥{org_return:,.2f})"):
                     # 按平台分组
                     for plat in sorted(org_data['platform'].unique()):
                         plat_data = org_data[org_data['platform'] == plat]
@@ -3355,13 +3359,8 @@ if idx_org is not None:
                             display_df = plat_data[['shop_name', 'ship', 'return_amt', 'net', '退货率']]
                             display_df.columns = ['店铺', '发货额', '退货额', '净销售额', '退货率']
                             st.dataframe(display_df, hide_index=True, use_container_width=True)
-                    # 展示该组织合计
-                    total_net = org_data['net'].sum()
-                    total_ship = org_data['ship'].sum()
-                    total_return = org_data['return_amt'].sum()
-                    st.caption(f"📌 组织合计：净额 ¥{total_net:,.2f} | 发货 ¥{total_ship:,.2f} | 退货 ¥{total_return:,.2f}")
 
-            # 导出功能（与之前一致）
+            # 导出功能
             st.markdown("#### 导出数据")
             export_format = st.radio("导出格式", ["明细数据", "汇总（组织+平台）"], key="export_format_expander")
             if st.button("💾 导出数据", key="export_expander"):
