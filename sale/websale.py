@@ -20,7 +20,7 @@ from openai import OpenAI
 
 st.set_page_config(page_title="业绩统计工具", layout="wide", page_icon="📊")
 
-# ========== 自定义CSS（保持不变） ==========
+# ========== 自定义CSS ==========
 st.markdown("""
 <style>
     .custom-main-title { font-size: 28px !important; font-weight: 600 !important; margin-top: -0.5rem !important; margin-bottom: 0.25rem !important; padding-bottom: 0 !important; color: #1e293b !important; }
@@ -170,16 +170,12 @@ def login():
             else:
                 st.error("用户名或密码错误")
 
-# ========== 硅基流动 AI 调用（不变） ==========
+# ========== 硅基流动 AI 调用 ==========
 @st.cache_resource
 def get_siliconflow_client():
-    """初始化硅基流动客户端（单例）"""
     try:
         api_key = st.secrets["SILICONFLOW_API_KEY"]
-        client = OpenAI(
-            api_key=api_key,
-            base_url="https://api.siliconflow.cn/v1"
-        )
+        client = OpenAI(api_key=api_key, base_url="https://api.siliconflow.cn/v1")
         return client
     except Exception as e:
         st.error(f"硅基流动客户端初始化失败: {e}")
@@ -187,24 +183,14 @@ def get_siliconflow_client():
 
 @st.cache_data(ttl=3600)
 def get_ai_summary(prompt: str, context: str, model: str) -> str:
-    """调用硅基流动 API 生成总结，支持指定模型"""
     client = get_siliconflow_client()
     if not client:
         return "⚠️ AI 服务暂不可用，请稍后再试。"
-
-    messages = [
-        {"role": "system", "content": prompt},
-        {"role": "user", "content": context}
-    ]
-
+    messages = [{"role": "system", "content": prompt}, {"role": "user", "content": context}]
     max_retries = 3
     for attempt in range(max_retries):
         try:
-            response = client.chat.completions.create(
-                model=model,
-                messages=messages,
-                stream=False,
-            )
+            response = client.chat.completions.create(model=model, messages=messages, stream=False)
             return response.choices[0].message.content
         except Exception as e:
             if attempt == max_retries - 1:
@@ -251,9 +237,8 @@ def load_dimension_mapping() -> pd.DataFrame:
         resp = supabase.table("mapping_rows").select("*").execute()
         if resp.data:
             df = pd.DataFrame(resp.data)
-            # 清洗字段
             df['shop_name'] = df['shop_name'].astype(str).str.strip()
-            df['anchor_name'] = df['anchor_name'].fillna('').astype(str).str.strip()
+            df['anchor_name'] = df['anchor_name'].fillna('NONE').astype(str).str.strip()
             df['org_name'] = df['org_name'].fillna('未分配组织').astype(str).str.strip()
             df['dept'] = df['dept'].fillna('未分配部门').astype(str).str.strip()
             return df
@@ -263,7 +248,7 @@ def load_dimension_mapping() -> pd.DataFrame:
         st.error(f"加载维度映射表失败：{e}")
         return pd.DataFrame()
 
-# ========== 数据权限过滤函数（不变） ==========
+# ========== 数据权限过滤函数 ==========
 def apply_data_permission(df, username=None, role=None):
     if username is None:
         username = st.session_state.get("username", "")
@@ -289,7 +274,7 @@ def apply_data_permission(df, username=None, role=None):
             df = df[df["anchor"].isin(filter_shop_names)]
     return df
 
-# ========== 新日期快捷按钮函数（不变） ==========
+# ========== 新日期快捷按钮函数 ==========
 def date_quick_buttons(start_key, end_key, default_start=None, default_end=None, min_date=None, max_date=None):
     if start_key not in st.session_state:
         st.session_state[start_key] = default_start or date.today().replace(day=1)
@@ -303,34 +288,28 @@ def date_quick_buttons(start_key, end_key, default_start=None, default_end=None,
             return max_date
         return d
 
-    # 调整为6列：5个按钮 + 1个“更多”下拉
     cols = st.columns([1, 1, 1, 1, 1, 1.5])
-    
     with cols[0]:
         if st.button("📅 昨日", key=f"{start_key}_yesterday", use_container_width=True):
             yesterday = date.today() - timedelta(days=1)
             st.session_state[start_key] = clamp(yesterday)
             st.session_state[end_key] = clamp(yesterday)
             st.rerun()
-
     with cols[1]:
         if st.button("📊 近7天", key=f"{start_key}_7days", use_container_width=True):
             yesterday = date.today() - timedelta(days=1)
-            start = yesterday - timedelta(days=6)  # 从昨天往前推6天，共7天
+            start = yesterday - timedelta(days=6)
             st.session_state[start_key] = clamp(start)
             st.session_state[end_key] = clamp(yesterday)
             st.rerun()
-
     with cols[2]:
         if st.button("📆 上周", key=f"{start_key}_last_week", use_container_width=True):
             today = date.today()
-            # 上周一 = 今天 - (今天星期几 + 7) 天
             last_monday = today - timedelta(days=today.weekday() + 7)
             last_sunday = last_monday + timedelta(days=6)
             st.session_state[start_key] = clamp(last_monday)
             st.session_state[end_key] = clamp(last_sunday)
             st.rerun()
-
     with cols[3]:
         if st.button("📆 本周", key=f"{start_key}_week", use_container_width=True):
             today = date.today()
@@ -341,7 +320,6 @@ def date_quick_buttons(start_key, end_key, default_start=None, default_end=None,
             st.session_state[start_key] = clamp(start_of_week)
             st.session_state[end_key] = clamp(end_of_week)
             st.rerun()
-
     with cols[4]:
         if st.button("📆 本月", key=f"{start_key}_month", use_container_width=True):
             today = date.today()
@@ -355,16 +333,9 @@ def date_quick_buttons(start_key, end_key, default_start=None, default_end=None,
             st.session_state[start_key] = clamp(start_of_month)
             st.session_state[end_key] = clamp(end_of_month)
             st.rerun()
-
     with cols[5]:
         more_options = ["更多 ▼", "自然月", "自然年", "自定义月"]
-        selected_more = st.selectbox(
-            "",
-            options=more_options,
-            index=0,
-            key=f"{start_key}_more",
-            label_visibility="collapsed"
-        )
+        selected_more = st.selectbox("", options=more_options, index=0, key=f"{start_key}_more", label_visibility="collapsed")
         if selected_more != "更多 ▼":
             if selected_more == "自然月":
                 col_y, col_m = st.columns(2)
@@ -421,7 +392,7 @@ def extract_anchor(remark):
     match = re.search(r'主播[：:]([^_]+)', remark)
     return match.group(1).strip() if match else None
 
-# ========== 数据加载函数（改造 load_product_sales） ==========
+# ========== 数据加载函数 ==========
 @st.cache_data(ttl=300)
 def load_daily_sales(suffix=None, apply_filter=True):
     if supabase is None:
@@ -561,7 +532,7 @@ def clear_targets(suffix=None):
     st.session_state.target_dict = {}
     st.rerun()
 
-# ========== 商品相关函数（部分改造） ==========
+# ========== 商品相关函数 ==========
 SEASON_MAP = {"1": "春", "2": "夏", "3": "秋", "4": "冬"}
 SIZE_MAP = {"001": "S", "002": "M", "003": "L", "004": "XL", "008": "均码"}
 
@@ -688,7 +659,7 @@ def save_product_sales(df_orders, suffix=None):
             batch = records[i:i+batch_size]
             supabase.table(table_name).upsert(batch, on_conflict="remark").execute()
 
-# 改造 load_product_sales：对全部数据源 (_all) 进行维度关联
+# ========== 核心修改：load_product_sales（仅对 _all 增加维度关联） ==========
 @st.cache_data(ttl=300)
 def load_product_sales(suffix=None, apply_filter=True):
     if supabase is None:
@@ -723,23 +694,28 @@ def load_product_sales(suffix=None, apply_filter=True):
             if suffix in ["_live", "_all"] and "anchor" not in df.columns:
                 df["anchor"] = df["remark"].apply(extract_anchor)
             
-            # ---------- 维度关联逻辑：仅当 suffix == "_all" 时执行 ----------
+            # ========== 维度关联逻辑（仅当 suffix == "_all"） ==========
             if suffix == "_all":
                 mapping_df = load_dimension_mapping()
                 if not mapping_df.empty:
-                    # 确保 anchor 列存在（_all 已有）
-                    df = df.merge(mapping_df, left_on=['shop_name', 'anchor'], right_on=['shop_name', 'anchor_name'], how='left')
-                    # 填充未匹配到的组织/部门
-                    df['org_name'] = df['org_name'].fillna('未分配组织')
-                    df['dept'] = df['dept'].fillna('未分配部门')
+                    if "anchor" not in df.columns:
+                        df["anchor"] = "NONE"
+                    df["anchor"] = df["anchor"].fillna("NONE")
+                    df = df.merge(
+                        mapping_df,
+                        left_on=["shop_name", "anchor"],
+                        right_on=["shop_name", "anchor_name"],
+                        how="left"
+                    )
+                    df["org_name"] = df["org_name"].fillna("未分配组织")
+                    df["dept"] = df["dept"].fillna("未分配部门")
                 else:
-                    df['org_name'] = '未分配组织'
-                    df['dept'] = '未分配部门'
+                    df["org_name"] = "未分配组织"
+                    df["dept"] = "未分配部门"
             else:
-                # 非 _all 不添加组织字段（保持原有列结构）
-                df['org_name'] = None
-                df['dept'] = None
-            # ---------- 维度关联结束 ----------
+                df["org_name"] = None
+                df["dept"] = None
+            # ========== 维度关联结束 ==========
 
             if apply_filter:
                 df = apply_data_permission(df)
@@ -849,7 +825,6 @@ def load_target_file(uploaded_file, suffix):
     except Exception as e:
         return False, str(e)
 
-# ========== 管理工具（礼金标签、批量等，不变） ==========
 def manage_newbie_coupon():
     st.subheader("🏷️ 单商品礼金标签管理")
     master_df = load_product_master()
@@ -944,7 +919,7 @@ rebuild_daily_data(st.session_state.table_suffix)
 if st.session_state.target_dict == {}:
     st.session_state.target_dict = load_targets(st.session_state.table_suffix)
 
-# ========== 侧边栏（增加映射表管理） ==========
+# ========== 侧边栏 ==========
 with st.sidebar:
     st.header("📂 数据加载")
     st.subheader("🔄 数据源切换")
@@ -1013,7 +988,6 @@ with st.sidebar:
                 st.error(msg)
                 st.session_state.processing_upload = False
 
-        # 原有的订单和目标上传
         if current_display_suffix == "":
             st.subheader("📁 非直播数据上传")
             uploaded_order = st.file_uploader("选择订单文件 (Excel)", type=["xlsx", "xls"], key="order_uploader_normal_final")
@@ -1030,7 +1004,7 @@ with st.sidebar:
             target_file = st.file_uploader("选择目标文件 (Excel)", type=["xlsx", "xls"], key="target_upload_live_final")
             if st.button("📤 确认上传目标", key="confirm_target_live_final"):
                 handle_upload(target_file, "_live", "target")
-        else:  # _all
+        else:
             st.subheader("📊 全部数据上传")
             uploaded_order = st.file_uploader("选择订单文件 (Excel)", type=["xlsx", "xls"], key="order_uploader_all_final")
             if st.button("📤 确认上传", key="confirm_upload_all_final"):
@@ -1038,37 +1012,6 @@ with st.sidebar:
             target_file = st.file_uploader("选择目标文件 (Excel)", type=["xlsx", "xls"], key="target_upload_all_final")
             if st.button("📤 确认上传目标", key="confirm_target_all_final"):
                 handle_upload(target_file, "_all", "target")
-
-            # ---------- 新增：映射表管理（仅在全部数据源下显示） ----------
-            st.markdown("---")
-            st.subheader("🗺️ 维度映射表管理")
-            with st.expander("上传 / 更新映射表（CSV）"):
-                uploaded_mapping = st.file_uploader("选择 mapping_rows.csv", type=["csv"], key="mapping_uploader")
-                if uploaded_mapping is not None:
-                    if st.button("📤 确认更新映射表", key="confirm_mapping_upload"):
-                        try:
-                            df_map = pd.read_csv(uploaded_mapping)
-                            required_cols = ['shop_name', 'anchor_name', 'org_name', 'dept']
-                            if not all(col in df_map.columns for col in required_cols):
-                                st.error(f"CSV 必须包含列：{', '.join(required_cols)}")
-                            else:
-                                with st.spinner("正在更新映射表..."):
-                                    # 清空现有表
-                                    supabase.table("mapping_rows").delete().neq("id", 0).execute()
-                                    # 逐行插入（或用 upsert）
-                                    records = df_map[required_cols].to_dict(orient='records')
-                                    batch_size = 500
-                                    for i in range(0, len(records), batch_size):
-                                        batch = records[i:i+batch_size]
-                                        supabase.table("mapping_rows").insert(batch).execute()
-                                    # 清除缓存
-                                    st.cache_data.clear()
-                                    st.success(f"✅ 映射表更新成功，共 {len(records)} 条记录")
-                                    st.rerun()
-                        except Exception as e:
-                            st.error(f"更新映射表失败：{e}")
-            # ---------- 映射表管理结束 ----------
-
         st.markdown("---")
         st.header("⚙️ 工具")
         template_df = pd.DataFrame({"店铺名称": ["示例店铺A", "示例店铺B"], "目标金额": [100000, 200000]})
@@ -1109,8 +1052,7 @@ with st.sidebar:
                 del st.session_state[key]
         st.rerun()
 
-# ========== 动态创建选项卡（增加组织/部门分析 Tab，仅 _all） ==========
-# 基础 Tab 列表（不含新增的“组织与部门分析”）
+# ========== 动态创建选项卡 ==========
 base_tabs = [
     "📊 经营驾驶舱",
     "🏪 店铺分析",
@@ -1121,11 +1063,22 @@ base_tabs = [
     "📈 销售分布与品牌",
     "⚠️ 异常预警"
 ]
-admin_extra_tabs = ["🔧 调试", "📚 商品库导出", "⚙️ 系统设置"]
+admin_extra_tabs = [ "🔧 调试", "📚 商品库导出", "⚙️ 系统设置"]
 
-# 权限过滤生成 tab_labels
+# ---------- 动态插入“组织与部门分析” Tab（仅 _all） ----------
+if st.session_state.table_suffix == "_all":
+    base_tabs_with_org = base_tabs.copy()
+    # 插入到“趋势分析”和“数据管理”之间
+    try:
+        pos = base_tabs_with_org.index("📈 趋势分析") + 1
+    except ValueError:
+        pos = len(base_tabs_with_org)
+    base_tabs_with_org.insert(pos, "🏢 组织与部门分析")
+else:
+    base_tabs_with_org = base_tabs
+
 if st.session_state.role == "admin":
-    tab_labels = base_tabs + admin_extra_tabs
+    tab_labels = base_tabs_with_org + admin_extra_tabs
 else:
     current_suffix = st.session_state.table_suffix
     user_info = st.session_state.sub_users.get(st.session_state.username, {})
@@ -1134,21 +1087,10 @@ else:
     if not allowed and "" in perms:
         allowed = perms[""]
     if not allowed:
-        allowed = base_tabs
-    valid_tabs = [tab for tab in allowed if tab in base_tabs]
-    tab_labels = valid_tabs if valid_tabs else base_tabs
+        allowed = base_tabs_with_org
+    valid_tabs = [tab for tab in allowed if tab in base_tabs_with_org]
+    tab_labels = valid_tabs if valid_tabs else base_tabs_with_org
 
-# ---------- 插入“🏢 组织与部门分析” Tab（仅当 suffix == "_all"） ----------
-if st.session_state.table_suffix == "_all":
-    # 插入到 "📈 趋势分析" 和 "📂 数据管理" 之间（可根据喜好调整）
-    # 先尝试找到插入位置
-    try:
-        pos = tab_labels.index("📈 趋势分析") + 1
-    except ValueError:
-        pos = len(tab_labels)
-    tab_labels.insert(pos, "🏢 组织与部门分析")
-
-# 现在计算所有 Tab 索引
 tabs = st.tabs(tab_labels, key="main_tabs")
 
 def get_tab_index(label):
@@ -1158,11 +1100,11 @@ idx_dashboard = get_tab_index("📊 经营驾驶舱")
 idx_shop = get_tab_index("🏪 店铺分析")
 idx_product = get_tab_index("📦 商品分析")
 idx_anchor = get_tab_index("🎤 主播分析")
-idx_org = get_tab_index("🏢 组织与部门分析")  # 新增
 idx_trend = get_tab_index("📈 趋势分析")
 idx_data = get_tab_index("📂 数据管理")
 idx_distribution = get_tab_index("📈 销售分布与品牌")
 idx_alert = get_tab_index("⚠️ 异常预警")
+idx_org = get_tab_index("🏢 组织与部门分析")  # 新 Tab
 idx_debug = get_tab_index("🔧 调试")
 idx_export = get_tab_index("📚 商品库导出")
 idx_system = get_tab_index("⚙️ 系统设置")
@@ -1175,7 +1117,7 @@ idx_ship_return = idx_data
 idx_history = idx_data
 idx_anchor_compare = idx_anchor
 
-# ========== 经营驾驶舱（不变） ==========
+# ========== 经营驾驶舱（保持不变） ==========
 if idx_dashboard is not None:
     with tabs[idx_dashboard]:
         st.markdown("""
@@ -1341,19 +1283,16 @@ if idx_dashboard is not None:
         with col1:
             # 判断前日销售额情况
             if prev_sales < 0:
-                # 从负转正，显示绝对增长额
-                abs_increase = latest_sales - prev_sales  # 注意 prev_sales 为负，减负等于加
+                abs_increase = latest_sales - prev_sales
                 change_text = f"▲ 由负转正 (+{abs_increase:,.0f})"
                 change_class = "change-up"
             elif prev_sales == 0:
                 change_text = "无前日数据"
                 change_class = "change-neutral"
             else:
-                # 正常情况 prev_sales > 0
                 change_text = f"{'▲' if change >= 0 else '▼'} {abs(change):.1f}%" if change != 0 else "持平"
                 change_class = "change-up" if change >= 0 else "change-down"
         
-            # 然后渲染 Markdown（保持不变）
             st.markdown(f"""
             <div class="glass-card">
                 <div class="kpi-label">昨日销售</div>
@@ -1474,7 +1413,6 @@ if idx_dashboard is not None:
         col_left, col_right = st.columns([1, 1])
 
         with col_left:
-            # 销售排行
             st.markdown('<div class="section-title">🏆 店铺排行</div>', unsafe_allow_html=True)
             shop_latest = daily_df[daily_df["sale_date"].dt.date == latest_date]
             shop_rank = shop_latest.groupby("shop_name")["amount"].sum().sort_values(ascending=False).head(5)
@@ -1569,7 +1507,6 @@ if idx_dashboard is not None:
         # ---------- AI 智能总结（手动触发） ----------
         st.markdown('<div class="section-title">🤖 智能总结</div>', unsafe_allow_html=True)
 
-        # 模型选择器
         model_options = {
             "DeepSeek-V3": "deepseek-ai/DeepSeek-V3",
             "DeepSeek-R1": "deepseek-ai/DeepSeek-R1",
@@ -1580,12 +1517,11 @@ if idx_dashboard is not None:
         selected_model_name = st.selectbox(
             "选择 AI 模型",
             options=list(model_options.keys()),
-            index=1,   # 默认 DeepSeek-R1
+            index=1,
             key="ai_model_select"
         )
         selected_model = model_options[selected_model_name]
 
-        # 手动触发按钮
         if st.button("🚀 生成智能总结", key="generate_ai_summary"):
             shop_rank_items = list(shop_rank.items()) if not shop_rank.empty else []
             rank_text = "\n".join([f"{i+1}. {shop}: ¥{amt:,.0f}" for i, (shop, amt) in enumerate(shop_rank_items[:3])]) if shop_rank_items else "暂无"
@@ -1614,7 +1550,6 @@ if idx_dashboard is not None:
             st.session_state.ai_summary_result = ai_summary
             st.rerun()
 
-        # 显示已有的结果
         if "ai_summary_result" in st.session_state and st.session_state.ai_summary_result:
             st.markdown(f"""
             <div style="background:rgba(34,197,94,0.08);border:1px solid rgba(34,197,94,0.2);border-radius:12px;padding:16px 20px;margin-top:10px;">
@@ -1885,7 +1820,7 @@ if idx_history is not None:
         else:
             st.info("暂无历史数据")
 
-# ========== 商品分析（不变） ==========
+# ========== 商品分析 ==========
 if idx_product is not None:
     with tabs[idx_product]:
         if st.session_state.get("detail_clicked", False):
@@ -1963,7 +1898,6 @@ if idx_product is not None:
                                default_end=max_date,
                                min_date=min_date,
                                max_date=max_date)
-            # 获取日期值
             start_date = st.session_state.get("prod_start_final", min_date)
             end_date = st.session_state.get("prod_end_final", max_date)
             
@@ -2977,9 +2911,7 @@ if idx_system is not None:
                     new_perms = {}
                     for suf, display_name in suffix_display.items():
                         current_allowed = perms.get(suf, [])
-                        all_options = base_tabs  # 此时 base_tabs 不包含组织Tab，但我们会在后面插入，所以权限管理暂不包含它（默认允许）
-                        # 但为了统一，我们可以手动添加 '🏢 组织与部门分析' 到选项列表
-                        all_options = base_tabs + (["🏢 组织与部门分析"] if st.session_state.table_suffix == "_all" else [])
+                        all_options = base_tabs_with_org  # 使用包含新Tab的列表
                         default = [tab for tab in current_allowed if tab in all_options]
                         selected = st.multiselect(
                             f"{display_name} 允许的选项卡",
@@ -3066,7 +2998,7 @@ if idx_system is not None:
             with col2:
                 default_suffix = st.selectbox("默认数据源", ["非直播数据", "直播数据", "全部数据"], key="new_default_suffix_sys")
                 suffix_map = {"非直播数据": "", "直播数据": "_live", "全部数据": "_all"}
-                default_perms = {suf: base_tabs for suf in ["", "_live", "_all"]}
+                default_perms = {suf: base_tabs_with_org for suf in ["", "_live", "_all"]}
                 default_platform = "all"
             if st.button("创建子账号", key="create_sys"):
                 if new_username and new_password:
@@ -3091,13 +3023,12 @@ if idx_system is not None:
                 else:
                     st.error("请填写用户名和密码")
 
-# ========== 异常预警（仅管理员） ==========
+# ========== 异常预警 ==========
 if idx_alert is not None:
     with tabs[idx_alert]:
         st.subheader("⚠️ 异常预警监控")
         st.info("监控近7天业绩下滑明显的店铺，以及退货率激增的商品。可调整敏感度阈值。")
         
-        # 加载数据（利用缓存）
         with st.spinner("加载数据..."):
             daily_df = load_daily_sales(st.session_state.table_suffix)
             prod_df = load_product_sales(st.session_state.table_suffix)
@@ -3105,28 +3036,23 @@ if idx_alert is not None:
         if daily_df.empty or prod_df.empty:
             st.warning("数据不足，请先上传订单文件。")
         else:
-            # 确保 daily_df 包含必要的列（原始列名：shop_name, amount）
             if "shop_name" not in daily_df.columns or "amount" not in daily_df.columns:
                 st.error("daily_sales 表中缺少 shop_name 或 amount 列，请检查数据结构。")
                 st.stop()
             
-            # 获取当前日期范围
             today = date.today()
-            # 近7天：过去7天（不含今天，因为今天可能不全）
             end_date = today - timedelta(days=1)
             start_date_recent = end_date - timedelta(days=6)
-            # 前7天：再往前推7天
             start_date_previous = start_date_recent - timedelta(days=7)
             end_date_previous = start_date_recent - timedelta(days=1)
             
-            # 确保日期在数据范围内
             min_data_date = daily_df["sale_date"].min().date()
             max_data_date = daily_df["sale_date"].max().date()
             if start_date_recent < min_data_date:
                 st.warning("数据不足以覆盖近7天，请检查数据日期范围。")
                 st.stop()
             
-            # ------ 1. 业绩下滑店铺 ------
+            # 业绩下滑店铺
             st.markdown("### 📉 业绩下滑店铺（近7天 vs 前7天日均）")
             col1, col2 = st.columns([2, 1])
             with col1:
@@ -3134,14 +3060,12 @@ if idx_alert is not None:
             with col2:
                 min_days = st.number_input("至少需要最近7天有销售天数", min_value=1, max_value=7, value=3, key="min_days")
             
-            # 筛选日期范围
             mask_recent = (daily_df["sale_date"] >= pd.to_datetime(start_date_recent)) & (daily_df["sale_date"] <= pd.to_datetime(end_date))
             mask_previous = (daily_df["sale_date"] >= pd.to_datetime(start_date_previous)) & (daily_df["sale_date"] <= pd.to_datetime(end_date_previous))
             
             recent_data = daily_df[mask_recent].copy()
             previous_data = daily_df[mask_previous].copy()
             
-            # 按店铺聚合（使用原始列名 shop_name 和 amount）
             recent_agg = recent_data.groupby("shop_name").agg(
                 近7天总额=("amount", "sum"),
                 近7天天数=("amount", "count")
@@ -3151,16 +3075,11 @@ if idx_alert is not None:
                 前7天天数=("amount", "count")
             ).reset_index()
             
-            # 合并
             merged = pd.merge(recent_agg, previous_agg, on="shop_name", how="inner")
-            # 计算日均
             merged["近7天日均"] = merged["近7天总额"] / merged["近7天天数"]
             merged["前7天日均"] = merged["前7天总额"] / merged["前7天天数"]
-            # 过滤有销售的天数
             merged = merged[merged["近7天天数"] >= min_days]
-            # 计算下滑幅度
             merged["下滑幅度"] = ((merged["前7天日均"] - merged["近7天日均"]) / merged["前7天日均"] * 100).round(2)
-            # 筛选下滑大于阈值的
             decline_df = merged[merged["下滑幅度"] >= decline_threshold].sort_values("下滑幅度", ascending=False)
             
             if decline_df.empty:
@@ -3177,11 +3096,10 @@ if idx_alert is not None:
                     use_container_width=True,
                     hide_index=True
                 )
-                # 高亮显示最严重的
                 worst = decline_df.iloc[0]
                 st.metric("⚠️ 下滑最严重店铺", worst["shop_name"], delta=f"{worst['下滑幅度']:.2f}%", delta_color="inverse")
             
-            # ------ 2. 退货率激增商品 ------
+            # 退货率激增商品
             st.markdown("### 📈 退货率激增商品（近7天 vs 前7天退货率）")
             col3, col4 = st.columns(2)
             with col3:
@@ -3189,12 +3107,9 @@ if idx_alert is not None:
             with col4:
                 min_ship_recent = st.number_input("近7天发货金额至少", min_value=0, value=1000, step=100, key="min_ship")
             
-            # 从 product_sales 中按货号汇总
-            # 先过滤日期
             prod_recent = prod_df[(prod_df["sale_date"] >= pd.to_datetime(start_date_recent)) & (prod_df["sale_date"] <= pd.to_datetime(end_date))]
             prod_previous = prod_df[(prod_df["sale_date"] >= pd.to_datetime(start_date_previous)) & (prod_df["sale_date"] <= pd.to_datetime(end_date_previous))]
             
-            # 按货号聚合
             def agg_ship_return(df):
                 return df.groupby("style_code").agg(
                     发货金额=("ship_amount", "sum"),
@@ -3204,24 +3119,17 @@ if idx_alert is not None:
             recent_prod = agg_ship_return(prod_recent)
             previous_prod = agg_ship_return(prod_previous)
             
-            # 合并
             merged_prod = pd.merge(recent_prod, previous_prod, on="style_code", suffixes=("_近7天", "_前7天"), how="inner")
-            # 过滤近7天发货金额大于阈值
             merged_prod = merged_prod[merged_prod["发货金额_近7天"] >= min_ship_recent]
-            # 计算退货率
             merged_prod["退货率_近7天"] = (merged_prod["退货金额_近7天"] / merged_prod["发货金额_近7天"] * 100).round(2)
             merged_prod["退货率_前7天"] = (merged_prod["退货金额_前7天"] / merged_prod["发货金额_前7天"] * 100).round(2)
-            # 处理前7天发货为0的情况
             merged_prod["退货率_前7天"] = merged_prod["退货率_前7天"].fillna(0)
-            # 计算退货率变化
             merged_prod["退货率变化"] = (merged_prod["退货率_近7天"] - merged_prod["退货率_前7天"]).round(2)
-            # 筛选增长大于阈值
             return_spike = merged_prod[merged_prod["退货率变化"] >= return_rate_threshold].sort_values("退货率变化", ascending=False)
             
             if return_spike.empty:
                 st.success("🎉 近7天没有退货率激增的商品。")
             else:
-                # 合并商品名称（从 master 获取）可选
                 master_df = load_product_master()
                 if not master_df.empty and "style_code" in master_df.columns:
                     master_df["style_code"] = master_df["style_code"].astype(str).str.strip().str.upper()
@@ -3243,166 +3151,178 @@ if idx_alert is not None:
                     use_container_width=True,
                     hide_index=True
                 )
-                # 高亮最严重的
                 worst_prod = return_spike.iloc[0]
                 st.metric("⚠️ 退货率激增最严重商品", worst_prod["style_code"], delta=f"{worst_prod['退货率变化']:.2f} 百分点", delta_color="inverse")
 
-# ========== 新增：组织与部门分析 Tab（仅 _all） ==========
+# ========== 新增：组织与部门分析 Tab ==========
 if idx_org is not None:
     with tabs[idx_org]:
         st.subheader("🏢 组织与部门分析")
-        st.info("基于全部数据源（_all）的商品销售数据，按组织/部门维度展示业绩表现。")
+        st.info("该板块基于「全部数据」源，按组织/部门维度展示经营状况，供销售总监决策参考。")
 
         with st.spinner("加载组织/部门数据..."):
-            # 加载商品销售数据（已包含 org_name, dept）
             prod_df = load_product_sales(st.session_state.table_suffix)
             if prod_df.empty:
                 st.warning("暂无商品数据，请先上传订单文件。")
                 st.stop()
-            # 仅当 _all 时才有 org_name/dept，否则提示
             if 'org_name' not in prod_df.columns or 'dept' not in prod_df.columns:
-                st.error("当前数据源缺少组织/部门信息，请确保在全部数据源下使用。")
+                st.error("当前数据源缺少组织/部门信息，请确保在「全部数据」源下使用。")
                 st.stop()
 
-        # 日期范围筛选
+        # 独立的日期选择
         min_date = prod_df["sale_date"].min().date()
         max_date = prod_df["sale_date"].max().date()
-        date_quick_buttons("org_start", "org_end",
-                           default_start=min_date,
-                           default_end=max_date,
-                           min_date=min_date,
-                           max_date=max_date)
-        start_date = st.session_state.get("org_start", min_date)
-        end_date = st.session_state.get("org_end", max_date)
+        col_date1, col_date2 = st.columns(2)
+        with col_date1:
+            start_date = st.date_input("开始日期", value=min_date, min_value=min_date, max_value=max_date, key="org_start_date")
+        with col_date2:
+            end_date = st.date_input("结束日期", value=max_date, min_value=min_date, max_value=max_date, key="org_end_date")
+        if start_date > end_date:
+            st.error("开始日期不能晚于结束日期")
+            st.stop()
 
-        # 筛选数据
+        # 日期过滤
         mask = (prod_df["sale_date"] >= pd.to_datetime(start_date)) & (prod_df["sale_date"] <= pd.to_datetime(end_date))
-        df_filtered = prod_df[mask].copy()
-        if df_filtered.empty:
+        df = prod_df[mask].copy()
+        if df.empty:
             st.warning("所选日期范围内无数据")
             st.stop()
 
-        # ---------- 1. 组织业绩占比（环形图） ----------
-        st.markdown("#### 各组织净销售额占比")
-        org_net = df_filtered.groupby('org_name')['net_amount'].sum().reset_index()
-        org_net = org_net[org_net['net_amount'] != 0]
-        if not org_net.empty:
-            fig_org = px.pie(org_net, names='org_name', values='net_amount',
-                             title='', hole=0.4,
-                             color_discrete_sequence=px.colors.qualitative.Pastel)
-            fig_org.update_traces(textposition='inside', textinfo='percent+label')
-            st.plotly_chart(fig_org, use_container_width=True)
-        else:
-            st.info("无有效组织数据")
+        # ---- 模块 A：总览 KPI ----
+        st.markdown("---")
+        st.markdown("#### 📊 核心大盘 KPI")
+        total_ship = df['ship_amount'].sum()
+        total_return = df['return_amount'].sum()
+        total_net = df['net_amount'].sum()
+        return_rate = total_return / (total_ship + 1e-5) * 100
 
-        # ---------- 2. 部门业绩排行（堆叠柱状图） ----------
-        st.markdown("#### 各部门净销售额（按组织堆叠）")
-        dept_org = df_filtered.groupby(['org_name', 'dept'])['net_amount'].sum().reset_index()
-        dept_org = dept_org[dept_org['net_amount'] != 0]
-        if not dept_org.empty:
-            # 取 top 组织，避免图表过于拥挤
-            top_orgs = dept_org.groupby('org_name')['net_amount'].sum().nlargest(10).index
-            dept_org_top = dept_org[dept_org['org_name'].isin(top_orgs)]
-            fig_dept = px.bar(dept_org_top, x='dept', y='net_amount', color='org_name',
-                              title='', labels={'net_amount':'净销售额', 'dept':'部门'},
-                              barmode='stack')
-            fig_dept.update_layout(xaxis_tickangle=-45)
-            st.plotly_chart(fig_dept, use_container_width=True)
-        else:
-            st.info("无部门数据")
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("总发货额", f"¥{total_ship:,.2f}")
+        with col2:
+            st.metric("总退货额", f"¥{total_return:,.2f}")
+        with col3:
+            st.metric("总净销售额", f"¥{total_net:,.2f}")
+        with col4:
+            st.metric("综合退货率", f"{return_rate:.2f}%", delta="需关注" if return_rate > 50 else "正常")
 
-                # ---------- 3. 维度透视表（部门筛选 + 平台拆分为列） ----------
-        st.markdown("#### 组织-部门 维度透视表（平台拆分）")
-        
-        # ---- 识别平台 ----
-        def get_platform(shop_name):
-            if shop_name.startswith('天猫'):
-                return '天猫'
-            elif shop_name.startswith('小红书'):
-                return '小红书'
-            elif shop_name.startswith('抖音'):
-                return '抖音'
-            elif shop_name.startswith('视频号'):
-                return '视频号'
+        # ---- 模块 B：组织与部门赛马 ----
+        st.markdown("---")
+        st.markdown("#### 🏆 组织与部门赛马红黑榜")
+
+        col_b1, col_b2 = st.columns(2)
+
+        with col_b1:
+            org_net = df.groupby('org_name')['net_amount'].sum().reset_index()
+            org_net = org_net[org_net['net_amount'] != 0]
+            if not org_net.empty:
+                fig_org = px.pie(org_net, names='org_name', values='net_amount',
+                                 title='各组织净销售额占比', hole=0.4,
+                                 color_discrete_sequence=px.colors.qualitative.Pastel)
+                fig_org.update_traces(textposition='inside', textinfo='percent+label')
+                st.plotly_chart(fig_org, use_container_width=True)
             else:
-                return '其他'
-        
-        df_filtered['platform'] = df_filtered['shop_name'].apply(get_platform)
-        
-        # ---- 部门多选筛选器 ----
-        all_depts = sorted(df_filtered['dept'].unique())
+                st.info("无组织数据")
+
+        with col_b2:
+            dept_net = df.groupby('dept')['net_amount'].sum().reset_index()
+            dept_net = dept_net[dept_net['net_amount'] != 0].sort_values('net_amount', ascending=True)
+            if not dept_net.empty:
+                top15 = dept_net.tail(15)
+                fig_dept = px.bar(top15, x='net_amount', y='dept', orientation='h',
+                                  title='各部门净销售额排行（TOP15）',
+                                  labels={'net_amount': '净销售额', 'dept': '部门'},
+                                  color='net_amount', color_continuous_scale='Blues')
+                fig_dept.update_layout(yaxis={'categoryorder': 'total ascending'})
+                st.plotly_chart(fig_dept, use_container_width=True)
+            else:
+                st.info("无部门数据")
+
+        # 退货率警告线
+        st.markdown("#### 退货率警告线")
+        dept_return = df.groupby('dept').agg(
+            ship=('ship_amount', 'sum'),
+            return_amt=('return_amount', 'sum')
+        ).reset_index()
+        dept_return['退货率'] = (dept_return['return_amt'] / (dept_return['ship'] + 1e-5) * 100).round(2)
+        dept_return = dept_return[dept_return['ship'] > 0]
+        if not dept_return.empty:
+            top10 = dept_return.sort_values('退货率', ascending=False).head(10)
+            fig_return = px.bar(top10, x='dept', y='退货率',
+                                title='退货率 TOP10 部门（红色 > 50%，橙色 > 30%）',
+                                labels={'dept': '部门', '退货率': '退货率 (%)'},
+                                color=top10['退货率'],
+                                color_continuous_scale='RdYlGn_r')
+            fig_return.add_hline(y=50, line_dash="dash", line_color="red", annotation_text="警戒线 50%")
+            fig_return.add_hline(y=30, line_dash="dash", line_color="orange", annotation_text="注意线 30%")
+            st.plotly_chart(fig_return, use_container_width=True)
+        else:
+            st.info("无有效部门数据")
+
+        # ---- 模块 C：多维透视表 ----
+        st.markdown("---")
+        st.markdown("#### 🔍 多维数据透视与穿透")
+
+        all_depts = sorted(df['dept'].unique())
         selected_depts = st.multiselect(
             "选择要查看的部门（留空则显示全部）",
             options=all_depts,
             default=[],
-            key="org_dept_filter_pivot"
+            key="org_pivot_dept_filter"
         )
-        
-        # 应用部门筛选
         if selected_depts:
-            df_pivot = df_filtered[df_filtered['dept'].isin(selected_depts)]
-            st.caption(f"当前筛选部门：{', '.join(selected_depts)}")
+            df_pivot = df[df['dept'].isin(selected_depts)]
         else:
-            df_pivot = df_filtered
-            st.caption("显示全部部门")
-        
-        if not df_pivot.empty:
-            # ---- 构建透视表：行为组织+部门，列为平台，值为净销售额 ----
-            pivot_net = df_pivot.pivot_table(
-                index=['org_name', 'dept'],
-                columns='platform',
-                values='net_amount',
-                aggfunc='sum',
-                fill_value=0
-            ).reset_index().rename_axis(None, axis=1)
-            
-            # 同样构建发货额和退货额（可选）
-            pivot_ship = df_pivot.pivot_table(
-                index=['org_name', 'dept'],
-                columns='platform',
-                values='ship_amount',
-                aggfunc='sum',
-                fill_value=0
-            ).reset_index().rename_axis(None, axis=1)
-            
-            pivot_return = df_pivot.pivot_table(
-                index=['org_name', 'dept'],
-                columns='platform',
-                values='return_amount',
-                aggfunc='sum',
-                fill_value=0
-            ).reset_index().rename_axis(None, axis=1)
-            
-            # 合并：将发货和退货也作为列（但为了简洁，只展示净销售额+退货率）
-            # 我们构建一个综合表格：组织、部门、各平台净销售额、总净额、退货率
-            pivot = pivot_net.copy()
-            # 计算总净额
-            platform_cols = [col for col in pivot.columns if col not in ['org_name', 'dept']]
-            pivot['总净销售额'] = pivot[platform_cols].sum(axis=1)
-            
-            # 添加发货额和退货额（可选，可以再合并）
-            # 为了简洁，这里只展示净销售额，如需更多指标可扩展
-            
-            # 重命名平台列（加前缀）
-            pivot.columns = ['组织', '部门'] + [f'{col}净额' for col in platform_cols] + ['总净销售额']
-            
-            # 排序
-            pivot = pivot.sort_values(['组织', '部门'], ascending=[True, True])
-            
-            st.dataframe(pivot, use_container_width=True, hide_index=True)
+            df_pivot = df
 
-            # ---- 导出 ----
+        if not df_pivot.empty:
+            pivot_df = df_pivot.pivot_table(
+                index=['org_name', 'dept', 'shop_name'],
+                values=['ship_amount', 'return_amount', 'net_amount'],
+                aggfunc='sum',
+                fill_value=0
+            ).reset_index()
+            pivot_df['退货率'] = (pivot_df['return_amount'] / (pivot_df['ship_amount'] + 1e-5) * 100).round(2)
+            pivot_df['退货率'] = pivot_df['退货率'].map(lambda x: f"{x:.2f}%")
+            pivot_df.columns = ['组织', '部门', '店铺', '发货额', '退货额', '净销售额', '退货率']
+            pivot_df = pivot_df.sort_values(['组织', '部门', '净销售额'], ascending=[True, True, False])
+
+            st.dataframe(pivot_df, use_container_width=True, hide_index=True)
+
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                pivot.to_excel(writer, index=False)
+                pivot_df.to_excel(writer, index=False, sheet_name='组织部门明细')
             st.download_button(
-                "💾 导出当前透视表 (Excel)",
+                "💾 导出透视表 (Excel)",
                 data=output.getvalue(),
-                file_name=f"组织部门平台透视表_{start_date}_{end_date}.xlsx",
-                key="export_org_dept_pivot"
+                file_name=f"组织部门透视表_{start_date}_{end_date}.xlsx",
+                key="export_org_pivot"
             )
         else:
-            st.info("当前筛选条件下无数据，请调整部门选择或日期范围。")
+            st.info("当前筛选条件下无数据")
+
+        # ---- 模块 D：异常预警 ----
+        st.markdown("---")
+        st.markdown("#### ⚠️ 异常决策预警")
+
+        alert_df = df.groupby(['org_name', 'dept', 'shop_name']).agg(
+            net=('net_amount', 'sum'),
+            ship=('ship_amount', 'sum'),
+            return_amt=('return_amount', 'sum')
+        ).reset_index()
+        alert_df['退货率'] = (alert_df['return_amt'] / (alert_df['ship'] + 1e-5) * 100)
+        alert_negative = alert_df[alert_df['net'] < 0]
+        alert_high_return = alert_df[alert_df['退货率'] > 65]
+
+        if not alert_negative.empty:
+            for _, row in alert_negative.iterrows():
+                st.error(f"🚨 净销售额为负：{row['org_name']} -> {row['dept']} -> {row['shop_name']}，净额 ¥{row['net']:,.2f}")
+        if not alert_high_return.empty:
+            for _, row in alert_high_return.iterrows():
+                st.warning(f"⚠️ 退货率异常偏高（>{65}%）：{row['org_name']} -> {row['dept']} -> {row['shop_name']}，退货率 {row['退货率']:.1f}%")
+        if alert_negative.empty and alert_high_return.empty:
+            st.success("🎉 所有部门/店铺运营正常，无重大异常。")
+
 # ========== 调试 ==========
 if idx_debug is not None:
     with tabs[idx_debug]:
