@@ -3311,8 +3311,8 @@ if idx_org is not None:
         else:
             st.info("无部门数据")
 
-                        # ---------- 3. 维度透视表（支持部门筛选 + 平台筛选 + 平台拆分） ----------
-        st.markdown("#### 组织-部门-平台 维度透视表")
+                # ---------- 3. 维度透视表（部门筛选 + 平台拆分为列） ----------
+        st.markdown("#### 组织-部门 维度透视表（平台拆分）")
         
         # ---- 识别平台 ----
         def get_platform(shop_name):
@@ -3338,56 +3338,60 @@ if idx_org is not None:
             key="org_dept_filter_pivot"
         )
         
-        # ---- 平台多选筛选器 ----
-        all_platforms = sorted(df_filtered['platform'].unique())
-        selected_platforms = st.multiselect(
-            "选择要查看的平台（留空则显示全部）",
-            options=all_platforms,
-            default=[],
-            key="org_platform_filter_pivot"
-        )
-        
-        # 应用筛选
-        df_pivot = df_filtered.copy()
+        # 应用部门筛选
         if selected_depts:
-            df_pivot = df_pivot[df_pivot['dept'].isin(selected_depts)]
-        if selected_platforms:
-            df_pivot = df_pivot[df_pivot['platform'].isin(selected_platforms)]
-        
-        # 显示当前筛选状态
-        filter_status = []
-        if selected_depts:
-            filter_status.append(f"部门: {', '.join(selected_depts)}")
-        if selected_platforms:
-            filter_status.append(f"平台: {', '.join(selected_platforms)}")
-        if filter_status:
-            st.caption(f"当前筛选：{' | '.join(filter_status)}")
+            df_pivot = df_filtered[df_filtered['dept'].isin(selected_depts)]
+            st.caption(f"当前筛选部门：{', '.join(selected_depts)}")
         else:
-            st.caption("显示全部数据")
+            df_pivot = df_filtered
+            st.caption("显示全部部门")
         
         if not df_pivot.empty:
-            # ---- 构建三维透视表（组织 + 部门 + 平台） ----
-            pivot = df_pivot.pivot_table(
-                index=['org_name', 'dept', 'platform'],
-                values=['net_amount', 'ship_amount', 'return_amount'],
+            # ---- 构建透视表：行为组织+部门，列为平台，值为净销售额 ----
+            pivot_net = df_pivot.pivot_table(
+                index=['org_name', 'dept'],
+                columns='platform',
+                values='net_amount',
                 aggfunc='sum',
                 fill_value=0
-            ).reset_index()
+            ).reset_index().rename_axis(None, axis=1)
             
-            # 计算退货率
-            pivot['退货率'] = (pivot['return_amount'] / pivot['ship_amount'] * 100).round(2).fillna(0)
-            pivot['退货率'] = pivot['退货率'].map(lambda x: f"{x:.2f}%")
+            # 同样构建发货额和退货额（可选）
+            pivot_ship = df_pivot.pivot_table(
+                index=['org_name', 'dept'],
+                columns='platform',
+                values='ship_amount',
+                aggfunc='sum',
+                fill_value=0
+            ).reset_index().rename_axis(None, axis=1)
             
-            # 重命名列
-            pivot.columns = ['组织', '部门', '平台', '净销售额', '发货额', '退货额', '退货率']
+            pivot_return = df_pivot.pivot_table(
+                index=['org_name', 'dept'],
+                columns='platform',
+                values='return_amount',
+                aggfunc='sum',
+                fill_value=0
+            ).reset_index().rename_axis(None, axis=1)
+            
+            # 合并：将发货和退货也作为列（但为了简洁，只展示净销售额+退货率）
+            # 我们构建一个综合表格：组织、部门、各平台净销售额、总净额、退货率
+            pivot = pivot_net.copy()
+            # 计算总净额
+            platform_cols = [col for col in pivot.columns if col not in ['org_name', 'dept']]
+            pivot['总净销售额'] = pivot[platform_cols].sum(axis=1)
+            
+            # 添加发货额和退货额（可选，可以再合并）
+            # 为了简洁，这里只展示净销售额，如需更多指标可扩展
+            
+            # 重命名平台列（加前缀）
+            pivot.columns = ['组织', '部门'] + [f'{col}净额' for col in platform_cols] + ['总净销售额']
             
             # 排序
-            pivot = pivot.sort_values(['组织', '部门', '平台', '净销售额'], ascending=[True, True, True, False])
+            pivot = pivot.sort_values(['组织', '部门'], ascending=[True, True])
             
-            # 显示表格
             st.dataframe(pivot, use_container_width=True, hide_index=True)
 
-            # ---- 导出当前筛选后的数据 ----
+            # ---- 导出 ----
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
                 pivot.to_excel(writer, index=False)
@@ -3398,7 +3402,7 @@ if idx_org is not None:
                 key="export_org_dept_pivot"
             )
         else:
-            st.info("当前筛选条件下无数据，请调整筛选条件或日期范围。")
+            st.info("当前筛选条件下无数据，请调整部门选择或日期范围。")
 # ========== 调试 ==========
 if idx_debug is not None:
     with tabs[idx_debug]:
