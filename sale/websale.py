@@ -3166,11 +3166,16 @@ if idx_org is not None:
             if prod_df.empty:
                 st.warning("暂无商品数据，请先上传订单文件。")
                 st.stop()
-            if 'org_name' not in prod_df.columns or 'dept' not in prod_df.columns:
-                st.error("当前数据源缺少组织/部门信息，请确保在「全部数据」源下使用。")
+            # 检查必备列
+            required_cols = ['ship_amount', 'return_amount', 'org_name', 'dept']
+            missing = [c for c in required_cols if c not in prod_df.columns]
+            if missing:
+                st.error(f"数据缺少必要列：{missing}，请检查数据源是否为「全部数据」。")
                 st.stop()
 
-                # ---- 日期选择（快捷按钮 + 手动输入） ----
+        # ---- 日期选择（快捷按钮 + 手动输入） ----
+        min_date = prod_df["sale_date"].min().date()
+        max_date = prod_df["sale_date"].max().date()
         st.markdown("#### 📅 日期范围")
         # 初始化 session_state 日期值
         if 'org_start_date' not in st.session_state:
@@ -3186,14 +3191,13 @@ if idx_org is not None:
                 st.rerun()
         with col_btn2:
             if st.button("📆 最新完整周", key="org_date_week"):
-                weekday = max_date.weekday()  # Monday=0, Sunday=6
-                if weekday == 6:  # Sunday
+                weekday = max_date.weekday()
+                if weekday == 6:
                     start_of_week = max_date - timedelta(days=6)
                     end_of_week = max_date
                 else:
                     start_of_week = max_date - timedelta(days=weekday + 7)
                     end_of_week = start_of_week + timedelta(days=6)
-                    # 确保 end_of_week 不超过 max_date（上周日一定 <= max_date）
                 st.session_state['org_start_date'] = start_of_week
                 st.session_state['org_end_date'] = end_of_week
                 st.rerun()
@@ -3210,7 +3214,6 @@ if idx_org is not None:
                 st.session_state['org_end_date'] = end_of_month
                 st.rerun()
 
-        # 手动日期输入框（使用独立 key，与 session_state 双向绑定）
         col_date1, col_date2 = st.columns(2)
         with col_date1:
             start_date = st.date_input(
@@ -3228,7 +3231,6 @@ if idx_org is not None:
                 max_value=max_date,
                 key="org_end_date_input"
             )
-        # 将手动输入的值同步回 session_state（以便按钮下次可用）
         st.session_state['org_start_date'] = start_date
         st.session_state['org_end_date'] = end_date
 
@@ -3236,7 +3238,13 @@ if idx_org is not None:
             st.error("开始日期不能晚于结束日期")
             st.stop()
 
-        # ---- 模块 A：核心 KPI ----
+        mask = (prod_df["sale_date"] >= pd.to_datetime(start_date)) & (prod_df["sale_date"] <= pd.to_datetime(end_date))
+        df = prod_df[mask].copy()
+        if df.empty:
+            st.warning("所选日期范围内无数据")
+            st.stop()
+
+        # ---- 模块 A：总览 KPI（净额重新计算） ----
         st.markdown("---")
         st.markdown("#### 📊 核心大盘 KPI")
         total_ship = df['ship_amount'].sum()
@@ -3288,28 +3296,7 @@ if idx_org is not None:
             else:
                 st.info("无部门数据")
 
-        # 退货率警告线
-        st.markdown("#### 退货率警告线")
-        dept_return = df.groupby('dept').agg(
-            ship=('ship_amount', 'sum'),
-            return_amt=('return_amount', 'sum')
-        ).reset_index()
-        dept_return['退货率'] = (dept_return['return_amt'] / (dept_return['ship'] + 1e-5) * 100).round(2)
-        dept_return = dept_return[dept_return['ship'] > 0]
-        if not dept_return.empty:
-            top10 = dept_return.sort_values('退货率', ascending=False).head(10)
-            fig_return = px.bar(top10, x='dept', y='退货率',
-                                title='退货率 TOP10 部门（红色 > 50%，橙色 > 30%）',
-                                labels={'dept': '部门', '退货率': '退货率 (%)'},
-                                color=top10['退货率'],
-                                color_continuous_scale='RdYlGn_r')
-            fig_return.add_hline(y=50, line_dash="dash", line_color="red", annotation_text="警戒线 50%")
-            fig_return.add_hline(y=30, line_dash="dash", line_color="orange", annotation_text="注意线 30%")
-            st.plotly_chart(fig_return, use_container_width=True)
-        else:
-            st.info("无有效部门数据")
-
-                # ---- 模块 C：多维数据透视与穿透（使用 AgGrid 树形展示） ----
+               # ---- 模块 C：多维数据透视与穿透（AgGrid 树形展示） ----
         st.markdown("---")
         st.markdown("#### 🔍 多维数据透视与穿透")
 
@@ -3358,7 +3345,6 @@ if idx_org is not None:
             grid_df.columns = ['组织', '平台', '店铺', '发货额', '退货额', '净销售额', '退货率']
 
             # ---- 配置 AgGrid（确保分组生效） ----
-            # 直接构建 grid_options，确保分组列正确配置
             grid_options = {
                 'rowGroupPanelShow': 'always',
                 'groupDefaultExpanded': 0,
@@ -3387,7 +3373,6 @@ if idx_org is not None:
                 ]
             }
 
-            # 渲染 AgGrid
             from st_aggrid import AgGrid
             AgGrid(grid_df, gridOptions=grid_options, theme='streamlit', height=400, fit_columns_on_grid_load=True)
 
