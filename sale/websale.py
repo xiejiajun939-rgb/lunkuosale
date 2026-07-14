@@ -3311,12 +3311,26 @@ if idx_org is not None:
         else:
             st.info("无部门数据")
 
-                # ---------- 3. 维度透视表（支持部门筛选） ----------
-        st.markdown("#### 组织-部门 维度透视表")
+                        # ---------- 3. 维度透视表（支持部门筛选 + 平台筛选 + 平台拆分） ----------
+        st.markdown("#### 组织-部门-平台 维度透视表")
         
-        # 获取所有部门列表
+        # ---- 识别平台 ----
+        def get_platform(shop_name):
+            if shop_name.startswith('天猫'):
+                return '天猫'
+            elif shop_name.startswith('小红书'):
+                return '小红书'
+            elif shop_name.startswith('抖音'):
+                return '抖音'
+            elif shop_name.startswith('视频号'):
+                return '视频号'
+            else:
+                return '其他'
+        
+        df_filtered['platform'] = df_filtered['shop_name'].apply(get_platform)
+        
+        # ---- 部门多选筛选器 ----
         all_depts = sorted(df_filtered['dept'].unique())
-        # 部门多选筛选器
         selected_depts = st.multiselect(
             "选择要查看的部门（留空则显示全部）",
             options=all_depts,
@@ -3324,40 +3338,67 @@ if idx_org is not None:
             key="org_dept_filter_pivot"
         )
         
-        # 根据筛选条件过滤数据
-        if selected_depts:
-            df_pivot = df_filtered[df_filtered['dept'].isin(selected_depts)]
-            st.caption(f"当前筛选了 {len(selected_depts)} 个部门：{', '.join(selected_depts)}")
-        else:
-            df_pivot = df_filtered
-            st.caption("显示全部部门")
+        # ---- 平台多选筛选器 ----
+        all_platforms = sorted(df_filtered['platform'].unique())
+        selected_platforms = st.multiselect(
+            "选择要查看的平台（留空则显示全部）",
+            options=all_platforms,
+            default=[],
+            key="org_platform_filter_pivot"
+        )
         
-        # 构建透视表
+        # 应用筛选
+        df_pivot = df_filtered.copy()
+        if selected_depts:
+            df_pivot = df_pivot[df_pivot['dept'].isin(selected_depts)]
+        if selected_platforms:
+            df_pivot = df_pivot[df_pivot['platform'].isin(selected_platforms)]
+        
+        # 显示当前筛选状态
+        filter_status = []
+        if selected_depts:
+            filter_status.append(f"部门: {', '.join(selected_depts)}")
+        if selected_platforms:
+            filter_status.append(f"平台: {', '.join(selected_platforms)}")
+        if filter_status:
+            st.caption(f"当前筛选：{' | '.join(filter_status)}")
+        else:
+            st.caption("显示全部数据")
+        
         if not df_pivot.empty:
+            # ---- 构建三维透视表（组织 + 部门 + 平台） ----
             pivot = df_pivot.pivot_table(
-                index=['org_name', 'dept'],
+                index=['org_name', 'dept', 'platform'],
                 values=['net_amount', 'ship_amount', 'return_amount'],
                 aggfunc='sum',
                 fill_value=0
             ).reset_index()
+            
+            # 计算退货率
             pivot['退货率'] = (pivot['return_amount'] / pivot['ship_amount'] * 100).round(2).fillna(0)
             pivot['退货率'] = pivot['退货率'].map(lambda x: f"{x:.2f}%")
-            pivot.columns = ['组织', '部门', '净销售额', '发货额', '退货额', '退货率']
-            pivot = pivot.sort_values(['组织', '净销售额'], ascending=[True, False])
+            
+            # 重命名列
+            pivot.columns = ['组织', '部门', '平台', '净销售额', '发货额', '退货额', '退货率']
+            
+            # 排序
+            pivot = pivot.sort_values(['组织', '部门', '平台', '净销售额'], ascending=[True, True, True, False])
+            
+            # 显示表格
             st.dataframe(pivot, use_container_width=True, hide_index=True)
 
-            # 导出功能（导出当前筛选后的数据）
+            # ---- 导出当前筛选后的数据 ----
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
                 pivot.to_excel(writer, index=False)
             st.download_button(
                 "💾 导出当前透视表 (Excel)",
                 data=output.getvalue(),
-                file_name=f"组织部门透视表_{start_date}_{end_date}.xlsx",
+                file_name=f"组织部门平台透视表_{start_date}_{end_date}.xlsx",
                 key="export_org_dept_pivot"
             )
         else:
-            st.info("当前筛选条件下无数据，请调整部门选择或日期范围。")
+            st.info("当前筛选条件下无数据，请调整筛选条件或日期范围。")
 # ========== 调试 ==========
 if idx_debug is not None:
     with tabs[idx_debug]:
