@@ -3266,7 +3266,7 @@ if idx_org is not None:
                 <div style="color: #ffffff; font-size: 48px; font-weight: 700; letter-spacing: -1px;">
                     ¥{total_net:,.2f}
                 </div>
-                <div style="color: #94a3b8; font-size: 14px; margin-top: 8px;">
+                <div style="color: #94a3b8; font-size: 24px; margin-top: 8px;">
                     发货额 ¥{total_ship:,.2f} &nbsp;|&nbsp; 退货额 ¥{total_return:,.2f} &nbsp;|&nbsp; 综合退货率 {return_rate:.2f}%
                 </div>
             </div>
@@ -3274,14 +3274,7 @@ if idx_org is not None:
             unsafe_allow_html=True
         )
 
-        # 第二行：三个辅助指标（使用 st.metric）
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("总发货额", f"¥{total_ship:,.2f}")
-        with col2:
-            st.metric("总退货额", f"¥{total_return:,.2f}")
-        with col3:
-            st.metric("综合退货率", f"{return_rate:.2f}%", delta="需关注" if return_rate > 50 else "正常")
+    
 
         # ---- 模块 B：组织与部门赛马 ----
         st.markdown("---")
