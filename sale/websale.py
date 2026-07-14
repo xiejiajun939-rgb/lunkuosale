@@ -3158,7 +3158,7 @@ if idx_alert is not None:
 if idx_org is not None:
     with tabs[idx_org]:
         st.subheader("🏢 组织与部门分析")
-        st.info("该板块基于「全部数据」源，按组织/部门维度展示经营状。")
+        st.info("该板块基于「全部数据」源，按组织/部门维度展示经营状况，供销售总监决策参考。")
 
         with st.spinner("加载组织/部门数据..."):
             prod_df = load_product_sales(st.session_state.table_suffix)
@@ -3181,19 +3181,18 @@ if idx_org is not None:
             st.error("开始日期不能晚于结束日期")
             st.stop()
 
-        # 日期过滤
         mask = (prod_df["sale_date"] >= pd.to_datetime(start_date)) & (prod_df["sale_date"] <= pd.to_datetime(end_date))
         df = prod_df[mask].copy()
         if df.empty:
             st.warning("所选日期范围内无数据")
             st.stop()
 
-        # ---- 模块 A：总览 KPI ----
+        # ---- 模块 A：核心 KPI ----
         st.markdown("---")
         st.markdown("#### 📊 核心大盘 KPI")
         total_ship = df['ship_amount'].sum()
         total_return = df['return_amount'].sum()
-        total_net = df['net_amount'].sum()
+        total_net = total_ship - total_return
         return_rate = total_return / (total_ship + 1e-5) * 100
 
         col1, col2, col3, col4 = st.columns(4)
@@ -3213,10 +3212,11 @@ if idx_org is not None:
         col_b1, col_b2 = st.columns(2)
 
         with col_b1:
-            org_net = df.groupby('org_name')['net_amount'].sum().reset_index()
-            org_net = org_net[org_net['net_amount'] != 0]
+            org_agg = df.groupby('org_name').agg(ship=('ship_amount', 'sum'), return_amt=('return_amount', 'sum')).reset_index()
+            org_agg['net'] = org_agg['ship'] - org_agg['return_amt']
+            org_net = org_agg[org_agg['net'] != 0]
             if not org_net.empty:
-                fig_org = px.pie(org_net, names='org_name', values='net_amount',
+                fig_org = px.pie(org_net, names='org_name', values='net',
                                  title='各组织净销售额占比', hole=0.4,
                                  color_discrete_sequence=px.colors.qualitative.Pastel)
                 fig_org.update_traces(textposition='inside', textinfo='percent+label')
@@ -3225,14 +3225,15 @@ if idx_org is not None:
                 st.info("无组织数据")
 
         with col_b2:
-            dept_net = df.groupby('dept')['net_amount'].sum().reset_index()
-            dept_net = dept_net[dept_net['net_amount'] != 0].sort_values('net_amount', ascending=True)
+            dept_agg = df.groupby('dept').agg(ship=('ship_amount', 'sum'), return_amt=('return_amount', 'sum')).reset_index()
+            dept_agg['net'] = dept_agg['ship'] - dept_agg['return_amt']
+            dept_net = dept_agg[dept_agg['net'] != 0].sort_values('net', ascending=True)
             if not dept_net.empty:
                 top15 = dept_net.tail(15)
-                fig_dept = px.bar(top15, x='net_amount', y='dept', orientation='h',
+                fig_dept = px.bar(top15, x='net', y='dept', orientation='h',
                                   title='各部门净销售额排行（TOP15）',
-                                  labels={'net_amount': '净销售额', 'dept': '部门'},
-                                  color='net_amount', color_continuous_scale='Blues')
+                                  labels={'net': '净销售额', 'dept': '部门'},
+                                  color='net', color_continuous_scale='Blues')
                 fig_dept.update_layout(yaxis={'categoryorder': 'total ascending'})
                 st.plotly_chart(fig_dept, use_container_width=True)
             else:
@@ -3259,7 +3260,7 @@ if idx_org is not None:
         else:
             st.info("无有效部门数据")
 
-        # ---- 模块 C：多维透视表 ----
+        # ---- 模块 C：多维透视表（修正列对应） ----
         st.markdown("---")
         st.markdown("#### 🔍 多维数据透视与穿透")
 
@@ -3276,14 +3277,18 @@ if idx_org is not None:
             df_pivot = df
 
         if not df_pivot.empty:
+            # 只聚合发货和退货，再计算净额，完全避开 net_amount 列
             pivot_df = df_pivot.pivot_table(
                 index=['org_name', 'dept', 'shop_name'],
-                values=['ship_amount', 'return_amount', 'net_amount'],
+                values=['ship_amount', 'return_amount'],
                 aggfunc='sum',
                 fill_value=0
             ).reset_index()
+            pivot_df['净销售额'] = pivot_df['ship_amount'] - pivot_df['return_amount']
             pivot_df['退货率'] = (pivot_df['return_amount'] / (pivot_df['ship_amount'] + 1e-5) * 100).round(2)
             pivot_df['退货率'] = pivot_df['退货率'].map(lambda x: f"{x:.2f}%")
+            # 明确列顺序，避免重命名错乱
+            pivot_df = pivot_df[['org_name', 'dept', 'shop_name', 'ship_amount', 'return_amount', '净销售额', '退货率']]
             pivot_df.columns = ['组织', '部门', '店铺', '发货额', '退货额', '净销售额', '退货率']
             pivot_df = pivot_df.sort_values(['组织', '部门', '净销售额'], ascending=[True, True, False])
 
@@ -3306,10 +3311,10 @@ if idx_org is not None:
         st.markdown("#### ⚠️ 异常决策预警")
 
         alert_df = df.groupby(['org_name', 'dept', 'shop_name']).agg(
-            net=('net_amount', 'sum'),
             ship=('ship_amount', 'sum'),
             return_amt=('return_amount', 'sum')
         ).reset_index()
+        alert_df['net'] = alert_df['ship'] - alert_df['return_amt']
         alert_df['退货率'] = (alert_df['return_amt'] / (alert_df['ship'] + 1e-5) * 100)
         alert_negative = alert_df[alert_df['net'] < 0]
         alert_high_return = alert_df[alert_df['退货率'] > 65]
