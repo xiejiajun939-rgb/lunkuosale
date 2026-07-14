@@ -128,16 +128,13 @@ def load_mapping() -> pd.DataFrame:
             df = pd.DataFrame(resp.data)
             df['anchor_name'] = df['anchor_name'].fillna('NONE')
             df['shop_name'] = df['shop_name'].fillna('')
-            return df
-        else:
-            return pd.DataFrame()
-    except Exception as e:
-        st.error(f"加载映射表失败: {e}")
-        return pd.DataFrame()
-        if resp.data:
-            df = pd.DataFrame(resp.data)
-            df['anchor_name'] = df['anchor_name'].fillna('NONE')
-            df['shop_name'] = df['shop_name'].fillna('')
+            # ========== 关键修改：为每个 shop_name 只保留一条默认映射 ==========
+            # 优先保留 anchor_name = 'NONE' 的记录，如果没有则保留第一条
+            df = df.sort_values(
+                ['shop_name', 'anchor_name'],
+                key=lambda x: x == 'NONE',
+                ascending=[True, False]
+            ).drop_duplicates(subset='shop_name', keep='first')
             return df
         else:
             return pd.DataFrame()
