@@ -3276,7 +3276,7 @@ if idx_org is not None:
 
     
 
-        # ---- 模块 B：组织与部门赛马 ----
+                # ---- 模块 B：组织与部门赛马 ----
         st.markdown("---")
         st.markdown("#### 🏆 组织与部门赛马红黑榜")
 
@@ -3284,47 +3284,45 @@ if idx_org is not None:
 
         with col_b1:
             # ---- 组织饼图（处理负数） ----
-        org_agg = df.groupby('org_name').agg(ship=('ship_amount', 'sum'), return_amt=('return_amount', 'sum')).reset_index()
-        org_agg['net'] = org_agg['ship'] - org_agg['return_amt']
-        
-        # 分离正数和负数
-        positive = org_agg[org_agg['net'] > 0].copy()
-        negative = org_agg[org_agg['net'] < 0].copy()
-        negative_total = negative['net'].sum() if not negative.empty else 0
-        
-        # 构建饼图数据
-        if not positive.empty:
-            # 如果有负数，添加一个“亏损组织”类别
-            if not negative.empty:
-                # 创建一个汇总行
-                neg_row = pd.DataFrame({
-                    'org_name': ['⚠️ 亏损组织合计'],
-                    'net': [negative_total]
-                })
-                pie_data = pd.concat([positive, neg_row], ignore_index=True)
-                # 饼图颜色自定义，给亏损组织一个特殊颜色
-                color_map = {org: px.colors.qualitative.Pastel[i % len(px.colors.qualitative.Pastel)] 
-                             for i, org in enumerate(positive['org_name'])}
-                color_map['⚠️ 亏损组织合计'] = '#e74c3c'  # 红色警示
-                fig_org = px.pie(pie_data, names='org_name', values='net',
-                                 title=f'各组织净销售额占比（正数组织；亏损合计 ¥{negative_total:,.2f}）',
-                                 hole=0.4,
-                                 color='org_name',
-                                 color_discrete_map=color_map)
+            org_agg = df.groupby('org_name').agg(ship=('ship_amount', 'sum'), return_amt=('return_amount', 'sum')).reset_index()
+            org_agg['net'] = org_agg['ship'] - org_agg['return_amt']
+
+            # 分离正数和负数
+            positive = org_agg[org_agg['net'] > 0].copy()
+            negative = org_agg[org_agg['net'] < 0].copy()
+            negative_total = negative['net'].sum() if not negative.empty else 0
+
+            # 构建饼图数据
+            if not positive.empty:
+                if not negative.empty:
+                    neg_row = pd.DataFrame({
+                        'org_name': ['⚠️ 亏损组织合计'],
+                        'net': [negative_total]
+                    })
+                    pie_data = pd.concat([positive, neg_row], ignore_index=True)
+                    color_map = {org: px.colors.qualitative.Pastel[i % len(px.colors.qualitative.Pastel)] 
+                                 for i, org in enumerate(positive['org_name'])}
+                    color_map['⚠️ 亏损组织合计'] = '#e74c3c'
+                    fig_org = px.pie(pie_data, names='org_name', values='net',
+                                     title=f'各组织净销售额占比（亏损合计 ¥{negative_total:,.2f}）',
+                                     hole=0.4,
+                                     color='org_name',
+                                     color_discrete_map=color_map)
+                else:
+                    fig_org = px.pie(positive, names='org_name', values='net',
+                                     title='各组织净销售额占比',
+                                     hole=0.4,
+                                     color_discrete_sequence=px.colors.qualitative.Pastel)
+                fig_org.update_traces(textposition='inside', textinfo='percent+label')
+                st.plotly_chart(fig_org, use_container_width=True)
             else:
-                fig_org = px.pie(positive, names='org_name', values='net',
-                                 title='各组织净销售额占比',
-                                 hole=0.4,
-                                 color_discrete_sequence=px.colors.qualitative.Pastel)
-            fig_org.update_traces(textposition='inside', textinfo='percent+label')
-            st.plotly_chart(fig_org, use_container_width=True)
-        else:
-            st.warning("没有正净销售额的组织，无法绘制饼图。")
-        # 如果存在亏损组织，在旁边显示一条提示
-        if negative_total < 0:
-            st.caption(f"⚠️ 注意：共有 {len(negative)} 个组织净销售额为负，合计亏损 ¥{negative_total:,.2f}，已在饼图中汇总为「亏损组织合计」。")
+                st.warning("没有正净销售额的组织，无法绘制饼图。")
+            
+            if negative_total < 0:
+                st.caption(f"⚠️ 注意：共有 {len(negative)} 个组织净销售额为负，合计亏损 ¥{negative_total:,.2f}，已在饼图中汇总为「亏损组织合计」。")
 
         with col_b2:
+            # ---- 部门业绩排行（不变） ----
             dept_agg = df.groupby('dept').agg(ship=('ship_amount', 'sum'), return_amt=('return_amount', 'sum')).reset_index()
             dept_agg['net'] = dept_agg['ship'] - dept_agg['return_amt']
             dept_net = dept_agg[dept_agg['net'] != 0].sort_values('net', ascending=True)
@@ -3338,7 +3336,6 @@ if idx_org is not None:
                 st.plotly_chart(fig_dept, use_container_width=True)
             else:
                 st.info("无部门数据")
-
                 # ---- 模块 C：多维数据透视与穿透（原生 expander 树形） ----
         st.markdown("---")
         st.markdown("#### 🔍 多维数据透视与穿透")
