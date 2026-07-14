@@ -3244,7 +3244,7 @@ if idx_org is not None:
             st.warning("所选日期范围内无数据")
             st.stop()
 
-        # ---- 模块 A：总览 KPI（净额重新计算） ----
+                # ---- 模块 A：总览 KPI（突出总净销售额） ----
         st.markdown("---")
         st.markdown("#### 📊 核心大盘 KPI")
         total_ship = df['ship_amount'].sum()
@@ -3252,14 +3252,35 @@ if idx_org is not None:
         total_net = total_ship - total_return
         return_rate = total_return / (total_ship + 1e-5) * 100
 
-        col1, col2, col3, col4 = st.columns(4)
+        # 第一行：总净销售额（大号展示）
+        st.markdown(
+            f"""
+            <div style="background: linear-gradient(135deg, #1e293b, #0f172a); 
+                        border-radius: 16px; 
+                        padding: 24px 32px; 
+                        margin-bottom: 16px;
+                        box-shadow: 0 8px 24px rgba(0,0,0,0.12);">
+                <div style="color: #94a3b8; font-size: 14px; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px;">
+                    总净销售额
+                </div>
+                <div style="color: #ffffff; font-size: 48px; font-weight: 700; letter-spacing: -1px;">
+                    ¥{total_net:,.2f}
+                </div>
+                <div style="color: #94a3b8; font-size: 14px; margin-top: 8px;">
+                    发货额 ¥{total_ship:,.2f} &nbsp;|&nbsp; 退货额 ¥{total_return:,.2f} &nbsp;|&nbsp; 综合退货率 {return_rate:.2f}%
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+        # 第二行：三个辅助指标（使用 st.metric）
+        col1, col2, col3 = st.columns(3)
         with col1:
             st.metric("总发货额", f"¥{total_ship:,.2f}")
         with col2:
             st.metric("总退货额", f"¥{total_return:,.2f}")
         with col3:
-            st.metric("总净销售额", f"¥{total_net:,.2f}")
-        with col4:
             st.metric("综合退货率", f"{return_rate:.2f}%", delta="需关注" if return_rate > 50 else "正常")
 
         # ---- 模块 B：组织与部门赛马 ----
