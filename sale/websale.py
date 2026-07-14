@@ -3178,8 +3178,9 @@ if idx_org is not None:
         max_date = prod_df["sale_date"].max().date()
         st.markdown("#### 📅 日期范围")
 
+        # 【修改】默认显示最新日（开始=结束=max_date）
         if 'org_start_date' not in st.session_state:
-            st.session_state['org_start_date'] = min_date
+            st.session_state['org_start_date'] = max_date
         if 'org_end_date' not in st.session_state:
             st.session_state['org_end_date'] = max_date
 
@@ -3280,45 +3281,24 @@ if idx_org is not None:
         col_b1, col_b2 = st.columns(2)
 
         with col_b1:
-            # 组织饼图（处理负数）
+            # 【修改】组织饼图：仅显示正净销售额的组织，亏损组织不显示
             org_agg = df.groupby('org_name').agg(ship=('ship_amount', 'sum'), return_amt=('return_amount', 'sum')).reset_index()
             org_agg['net'] = org_agg['ship'] - org_agg['return_amt']
-
+            # 只保留净额 > 0 的组织
             positive = org_agg[org_agg['net'] > 0].copy()
-            negative = org_agg[org_agg['net'] < 0].copy()
-            negative_total = negative['net'].sum() if not negative.empty else 0
 
             if not positive.empty:
-                pie_data = positive.copy()
-                if not negative.empty:
-                    neg_row = pd.DataFrame({
-                        'org_name': ['⚠️ 亏损组织合计'],
-                        'net': [abs(negative_total)]
-                    })
-                    pie_data = pd.concat([pie_data, neg_row], ignore_index=True)
-                    color_map = {org: px.colors.qualitative.Pastel[i % len(px.colors.qualitative.Pastel)]
-                                 for i, org in enumerate(positive['org_name'])}
-                    color_map['⚠️ 亏损组织合计'] = '#e74c3c'
-                    fig_org = px.pie(pie_data, names='org_name', values='net',
-                                     title=f'各组织净销售额占比（亏损合计 ¥{negative_total:,.2f}）',
-                                     hole=0.4,
-                                     color='org_name',
-                                     color_discrete_map=color_map)
-                else:
-                    fig_org = px.pie(pie_data, names='org_name', values='net',
-                                     title='各组织净销售额占比',
-                                     hole=0.4,
-                                     color_discrete_sequence=px.colors.qualitative.Pastel)
+                fig_org = px.pie(positive, names='org_name', values='net',
+                                 title='各组织净销售额占比（仅显示盈利组织）',
+                                 hole=0.4,
+                                 color_discrete_sequence=px.colors.qualitative.Pastel)
                 fig_org.update_traces(textposition='inside', textinfo='percent+label')
                 st.plotly_chart(fig_org, use_container_width=True)
             else:
-                st.warning("当前所选日期范围内没有正净销售额的组织，无法绘制饼图。")
-
-            if negative_total < 0:
-                st.caption(f"⚠️ 注意：共有 {len(negative)} 个组织净销售额为负，合计亏损 ¥{negative_total:,.2f}，饼图中以绝对值显示为「亏损组织合计」。")
+                st.warning("当前所选日期范围内没有盈利的组织，无法绘制饼图。")
 
         with col_b2:
-            # 部门排行
+            # 部门排行（保持不变）
             dept_agg = df.groupby('dept').agg(ship=('ship_amount', 'sum'), return_amt=('return_amount', 'sum')).reset_index()
             dept_agg['net'] = dept_agg['ship'] - dept_agg['return_amt']
             dept_net = dept_agg[dept_agg['net'] != 0].sort_values('net', ascending=True)
