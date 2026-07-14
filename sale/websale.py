@@ -1310,17 +1310,10 @@ if idx_dashboard is not None:
         with st.spinner("加载数据..."):
             daily_df = load_daily_sales(st.session_state.table_suffix)
             prod_df = load_product_sales(st.session_state.table_suffix)
-
-        if df.empty:
-            st.warning("所选日期范围内无数据")
+        
+        if daily_df.empty or prod_df.empty:
+            st.info("📌 暂无数据，请先上传订单文件。")
             st.stop()
-
-        # ===== 新增：确保 dept 和 org_name 列存在 =====
-        if 'dept' not in df.columns:
-            df['dept'] = '未分配部门'
-        if 'org_name' not in df.columns:
-            df['org_name'] = '未分配组织'
-        # ===== 补丁结束 =====
 
         latest_date = daily_df["sale_date"].max().date()
         st.caption(f"📅 数据更新至：{latest_date.strftime('%Y年%m月%d日')}")
