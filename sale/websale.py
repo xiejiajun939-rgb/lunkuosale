@@ -3296,11 +3296,11 @@ if idx_org is not None:
             else:
                 st.info("无部门数据")
 
-               # ---- 模块 C：多维数据透视与穿透（AgGrid 树形展示） ----
+                # ---- 模块 C：多维数据透视与穿透（原生 expander 树形） ----
         st.markdown("---")
         st.markdown("#### 🔍 多维数据透视与穿透")
 
-        # 生成平台列（根据店铺名前缀）
+        # 生成平台列
         def get_platform(shop_name):
             if shop_name.startswith('天猫'):
                 return '天猫'
@@ -3321,7 +3321,7 @@ if idx_org is not None:
             "选择要查看的部门（留空则显示全部）",
             options=all_depts,
             default=[],
-            key="org_pivot_dept_filter_aggrid"
+            key="org_pivot_dept_filter_expander"
         )
         if selected_depts:
             df_pivot = df[df['dept'].isin(selected_depts)]
@@ -3340,68 +3340,51 @@ if idx_org is not None:
             grouped['退货率'] = (grouped['return_amt'] / (grouped['ship'] + 1e-5) * 100).round(2)
             grouped['退货率'] = grouped['退货率'].map(lambda x: f"{x:.2f}%")
 
-            # 准备展示数据
-            grid_df = grouped[['org_name', 'platform', 'shop_name', 'ship', 'return_amt', 'net', '退货率']]
-            grid_df.columns = ['组织', '平台', '店铺', '发货额', '退货额', '净销售额', '退货率']
+            # 按组织分组
+            for org in sorted(grouped['org_name'].unique()):
+                with st.expander(f"🏢 {org}"):
+                    org_data = grouped[grouped['org_name'] == org]
+                    # 按平台分组
+                    for plat in sorted(org_data['platform'].unique()):
+                        plat_data = org_data[org_data['platform'] == plat]
+                        plat_net = plat_data['net'].sum()
+                        plat_ship = plat_data['ship'].sum()
+                        plat_return = plat_data['return_amt'].sum()
+                        with st.expander(f"📱 {plat}  净额 ¥{plat_net:,.2f}（发货 ¥{plat_ship:,.2f} / 退货 ¥{plat_return:,.2f}）"):
+                            # 展示该平台下的店铺明细
+                            display_df = plat_data[['shop_name', 'ship', 'return_amt', 'net', '退货率']]
+                            display_df.columns = ['店铺', '发货额', '退货额', '净销售额', '退货率']
+                            st.dataframe(display_df, hide_index=True, use_container_width=True)
+                    # 展示该组织合计
+                    total_net = org_data['net'].sum()
+                    total_ship = org_data['ship'].sum()
+                    total_return = org_data['return_amt'].sum()
+                    st.caption(f"📌 组织合计：净额 ¥{total_net:,.2f} | 发货 ¥{total_ship:,.2f} | 退货 ¥{total_return:,.2f}")
 
-            # ---- 配置 AgGrid（确保分组生效） ----
-            grid_options = {
-                'rowGroupPanelShow': 'always',
-                'groupDefaultExpanded': 0,
-                'groupSelectsChildren': True,
-                'groupIncludeTotalFooter': True,
-                'suppressRowGroupHidesColumns': True,
-                'animateRows': True,
-                'pagination': True,
-                'paginationAutoPageSize': True,
-                'rowGroupColumns': ['组织', '平台'],
-                'autoGroupColumnDef': {
-                    'headerName': '组织 / 平台 / 店铺',
-                    'field': '组织',
-                    'cellRendererParams': {
-                        'suppressCount': False,
-                    }
-                },
-                'columnDefs': [
-                    {'headerName': '组织', 'field': '组织', 'rowGroup': True, 'hide': True},
-                    {'headerName': '平台', 'field': '平台', 'rowGroup': True, 'hide': True},
-                    {'headerName': '店铺', 'field': '店铺', 'width': 200},
-                    {'headerName': '发货额', 'field': '发货额', 'type': 'numericColumn', 'valueFormatter': "'¥' + value.toFixed(2)"},
-                    {'headerName': '退货额', 'field': '退货额', 'type': 'numericColumn', 'valueFormatter': "'¥' + value.toFixed(2)"},
-                    {'headerName': '净销售额', 'field': '净销售额', 'type': 'numericColumn', 'valueFormatter': "'¥' + value.toFixed(2)"},
-                    {'headerName': '退货率', 'field': '退货率', 'width': 100},
-                ]
-            }
-
-            from st_aggrid import AgGrid
-            AgGrid(grid_df, gridOptions=grid_options, theme='streamlit', height=400, fit_columns_on_grid_load=True)
-
-            # ---- 导出功能 ----
+            # 导出功能（与之前一致）
             st.markdown("#### 导出数据")
-            col_export1, col_export2 = st.columns([1, 3])
-            with col_export1:
-                export_format = st.radio("导出格式", ["明细数据", "汇总（组织+平台）"], key="export_format_aggrid")
-            with col_export2:
-                if st.button("💾 导出数据", key="export_aggrid"):
-                    if export_format == "明细数据":
-                        export_df = grid_df.copy()
-                    else:
-                        export_df = grid_df.groupby(['组织', '平台'], as_index=False).agg({
-                            '发货额': 'sum',
-                            '退货额': 'sum',
-                            '净销售额': 'sum'
-                        })
-                        export_df['退货率'] = (export_df['退货额'] / (export_df['发货额'] + 1e-5) * 100).round(2).map(lambda x: f"{x:.2f}%")
-                    output = io.BytesIO()
-                    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                        export_df.to_excel(writer, index=False, sheet_name='数据')
-                    st.download_button(
-                        label="📥 点击下载 Excel",
-                        data=output.getvalue(),
-                        file_name=f"组织部门明细_{start_date}_{end_date}.xlsx",
-                        key="download_aggrid"
-                    )
-
+            export_format = st.radio("导出格式", ["明细数据", "汇总（组织+平台）"], key="export_format_expander")
+            if st.button("💾 导出数据", key="export_expander"):
+                grid_df = grouped[['org_name', 'platform', 'shop_name', 'ship', 'return_amt', 'net', '退货率']]
+                grid_df.columns = ['组织', '平台', '店铺', '发货额', '退货额', '净销售额', '退货率']
+                if export_format == "明细数据":
+                    export_df = grid_df.copy()
+                else:
+                    export_df = grid_df.groupby(['组织', '平台'], as_index=False).agg({
+                        '发货额': 'sum',
+                        '退货额': 'sum',
+                        '净销售额': 'sum'
+                    })
+                    export_df['退货率'] = (export_df['退货额'] / (export_df['发货额'] + 1e-5) * 100).round(2).map(lambda x: f"{x:.2f}%")
+                output = io.BytesIO()
+                with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                    export_df.to_excel(writer, index=False, sheet_name='数据')
+                st.download_button(
+                    label="📥 点击下载 Excel",
+                    data=output.getvalue(),
+                    file_name=f"组织部门明细_{start_date}_{end_date}.xlsx",
+                    key="download_expander"
+                )
         # ---- 模块 D：异常预警 ----
         st.markdown("---")
         st.markdown("#### ⚠️ 异常决策预警")
