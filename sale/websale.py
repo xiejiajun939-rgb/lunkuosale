@@ -3276,22 +3276,29 @@ if idx_org is not None:
         # ---- 加载数据 ----
         with st.spinner("加载组织/部门数据..."):
             prod_df = load_product_sales(st.session_state.table_suffix)
+            
+            # 如果数据为空，直接提示并停止
             if prod_df.empty:
-                st.warning("暂无商品数据，请先上传订单文件。")
+                st.warning("暂无商品数据，请先上传订单文件或线下收入数据。")
                 st.stop()
-            # 检查必备列
+            
+            # 检查必备列，如果缺少则尝试补全或提示
             required_cols = ['ship_amount', 'return_amount', 'org_name', 'dept']
             missing = [c for c in required_cols if c not in prod_df.columns]
             if missing:
-                st.error(f"数据缺少必要列：{missing}，请确保当前数据源为「全部数据」且数据完整。")
-                st.stop()
+                # 尝试补全缺失列（如果列不存在，则填充默认值）
+                for col in missing:
+                    if col in ['org_name', 'dept']:
+                        prod_df[col] = '未分配' if col == 'org_name' else '未分配部门'
+                    else:
+                        prod_df[col] = 0
+                st.warning(f"数据缺少部分列：{missing}，已自动补全默认值。")
 
         # ---- 日期选择 ----
         min_date = prod_df["sale_date"].min().date()
         max_date = prod_df["sale_date"].max().date()
         st.markdown("#### 📅 日期范围")
 
-        # 【修改】默认显示最新日（开始=结束=max_date）
         if 'org_start_date' not in st.session_state:
             st.session_state['org_start_date'] = max_date
         if 'org_end_date' not in st.session_state:
@@ -3345,7 +3352,8 @@ if idx_org is not None:
 
         # ---- 过滤日期 ----
         mask = (prod_df["sale_date"] >= pd.to_datetime(start_date)) & (prod_df["sale_date"] <= pd.to_datetime(end_date))
-        df = prod_df[mask].copy()
+        df = prod_df[mask].copy()  # 确保 df 被定义
+
         if df.empty:
             st.warning("所选日期范围内无数据")
             st.stop()
@@ -3394,10 +3402,8 @@ if idx_org is not None:
         col_b1, col_b2 = st.columns(2)
 
         with col_b1:
-            # 【修改】组织饼图：仅显示正净销售额的组织，亏损组织不显示
             org_agg = df.groupby('org_name').agg(ship=('ship_amount', 'sum'), return_amt=('return_amount', 'sum')).reset_index()
             org_agg['net'] = org_agg['ship'] - org_agg['return_amt']
-            # 只保留净额 > 0 的组织
             positive = org_agg[org_agg['net'] > 0].copy()
 
             if not positive.empty:
@@ -3411,7 +3417,6 @@ if idx_org is not None:
                 st.warning("当前所选日期范围内没有盈利的组织，无法绘制饼图。")
 
         with col_b2:
-            # 部门排行（保持不变）
             dept_agg = df.groupby('dept').agg(ship=('ship_amount', 'sum'), return_amt=('return_amount', 'sum')).reset_index()
             dept_agg['net'] = dept_agg['ship'] - dept_agg['return_amt']
             dept_net = dept_agg[dept_agg['net'] != 0].sort_values('net', ascending=True)
