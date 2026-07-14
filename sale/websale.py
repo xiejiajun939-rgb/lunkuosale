@@ -745,7 +745,8 @@ def load_product_sales(suffix=None, apply_filter=True):
                 df["org_name"] = None
                 df["dept"] = None
             # ========== 维度关联结束 ==========
-                        # ========== 合并线下收入数据（仅全部数据） ==========
+            
+            # ========== 合并线下收入数据（仅全部数据） ==========
             if suffix == "_all":
                 try:
                     offline_resp = supabase.table("offline_sales_all").select("*").execute()
@@ -779,6 +780,22 @@ def load_product_sales(suffix=None, apply_filter=True):
                     # 线下数据加载失败不影响主流程
                     pass
             # ========== 合并结束 ==========
+            
+            # ========== 为线下数据（以及任何未分配组织的数据）补全组织/部门 ==========
+            if suffix == "_all":
+                if not mapping_df.empty:
+                    # 构建 shop_name -> (org_name, dept) 的映射（仅限 anchor_name='NONE'）
+                    map_shop = mapping_df[mapping_df['anchor_name'] == 'NONE'].set_index('shop_name')[['org_name', 'dept']].to_dict('index')
+                    # 找出 org_name 为空的行
+                    mask = df['org_name'].isna()
+                    if mask.any():
+                        df.loc[mask, 'org_name'] = df.loc[mask, 'shop_name'].map(lambda s: map_shop.get(s, {}).get('org_name'))
+                        df.loc[mask, 'dept'] = df.loc[mask, 'shop_name'].map(lambda s: map_shop.get(s, {}).get('dept'))
+                        # 填充默认值
+                        df['org_name'] = df['org_name'].fillna('未分配组织')
+                        df['dept'] = df['dept'].fillna('未分配部门')
+            # ========== 补全结束 ==========
+
             if apply_filter:
                 df = apply_data_permission(df)
             return df
