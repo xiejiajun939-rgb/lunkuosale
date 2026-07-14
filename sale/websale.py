@@ -3215,27 +3215,28 @@ if idx_org is not None:
                 st.session_state['org_end_date'] = end_of_month
                 st.rerun()
 
+        # 日期输入框：通过 key 绑定 session_state，无需手动赋值
         col_date1, col_date2 = st.columns(2)
         with col_date1:
-            start_date = st.date_input(
+            st.date_input(
                 "开始日期",
                 value=st.session_state['org_start_date'],
                 min_value=min_date,
                 max_value=max_date,
-                key="org_start_date"   # 统一 key
+                key="org_start_date"
             )
         with col_date2:
-            end_date = st.date_input(
+            st.date_input(
                 "结束日期",
                 value=st.session_state['org_end_date'],
                 min_value=min_date,
                 max_value=max_date,
-                key="org_end_date"     # 统一 key
+                key="org_end_date"
             )
 
-        # 如果用户手动修改了日期，同步到 session_state
-        st.session_state['org_start_date'] = start_date
-        st.session_state['org_end_date'] = end_date
+        # 从 session_state 读取当前日期
+        start_date = st.session_state['org_start_date']
+        end_date = st.session_state['org_end_date']
 
         if start_date > end_date:
             st.error("开始日期不能晚于结束日期")
