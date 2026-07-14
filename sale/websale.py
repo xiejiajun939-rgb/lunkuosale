@@ -3173,11 +3173,12 @@ if idx_org is not None:
                 st.error(f"数据缺少必要列：{missing}，请检查数据源是否为「全部数据」。")
                 st.stop()
 
-        # ---- 日期选择（快捷按钮 + 手动输入） ----
+                # ---- 日期选择（快捷按钮 + 手动输入） ----
         min_date = prod_df["sale_date"].min().date()
         max_date = prod_df["sale_date"].max().date()
         st.markdown("#### 📅 日期范围")
-        # 初始化 session_state 日期值
+
+        # 初始化 session_state（若不存在）
         if 'org_start_date' not in st.session_state:
             st.session_state['org_start_date'] = min_date
         if 'org_end_date' not in st.session_state:
@@ -3221,7 +3222,7 @@ if idx_org is not None:
                 value=st.session_state['org_start_date'],
                 min_value=min_date,
                 max_value=max_date,
-                key="org_start_date_input"
+                key="org_start_date"   # 统一 key
             )
         with col_date2:
             end_date = st.date_input(
@@ -3229,19 +3230,15 @@ if idx_org is not None:
                 value=st.session_state['org_end_date'],
                 min_value=min_date,
                 max_value=max_date,
-                key="org_end_date_input"
+                key="org_end_date"     # 统一 key
             )
+
+        # 如果用户手动修改了日期，同步到 session_state
         st.session_state['org_start_date'] = start_date
         st.session_state['org_end_date'] = end_date
 
         if start_date > end_date:
             st.error("开始日期不能晚于结束日期")
-            st.stop()
-
-        mask = (prod_df["sale_date"] >= pd.to_datetime(start_date)) & (prod_df["sale_date"] <= pd.to_datetime(end_date))
-        df = prod_df[mask].copy()
-        if df.empty:
-            st.warning("所选日期范围内无数据")
             st.stop()
 
                 # ---- 模块 A：总览 KPI（突出总净销售额） ----
@@ -3287,19 +3284,18 @@ if idx_org is not None:
             org_agg = df.groupby('org_name').agg(ship=('ship_amount', 'sum'), return_amt=('return_amount', 'sum')).reset_index()
             org_agg['net'] = org_agg['ship'] - org_agg['return_amt']
 
-            # 分离正数和负数
             positive = org_agg[org_agg['net'] > 0].copy()
             negative = org_agg[org_agg['net'] < 0].copy()
             negative_total = negative['net'].sum() if not negative.empty else 0
 
-            # 构建饼图数据
             if not positive.empty:
+                pie_data = positive.copy()
                 if not negative.empty:
                     neg_row = pd.DataFrame({
                         'org_name': ['⚠️ 亏损组织合计'],
-                        'net': [negative_total]
+                        'net': [abs(negative_total)]
                     })
-                    pie_data = pd.concat([positive, neg_row], ignore_index=True)
+                    pie_data = pd.concat([pie_data, neg_row], ignore_index=True)
                     color_map = {org: px.colors.qualitative.Pastel[i % len(px.colors.qualitative.Pastel)] 
                                  for i, org in enumerate(positive['org_name'])}
                     color_map['⚠️ 亏损组织合计'] = '#e74c3c'
@@ -3309,17 +3305,17 @@ if idx_org is not None:
                                      color='org_name',
                                      color_discrete_map=color_map)
                 else:
-                    fig_org = px.pie(positive, names='org_name', values='net',
+                    fig_org = px.pie(pie_data, names='org_name', values='net',
                                      title='各组织净销售额占比',
                                      hole=0.4,
                                      color_discrete_sequence=px.colors.qualitative.Pastel)
                 fig_org.update_traces(textposition='inside', textinfo='percent+label')
                 st.plotly_chart(fig_org, use_container_width=True)
             else:
-                st.warning("没有正净销售额的组织，无法绘制饼图。")
-            
+                st.warning("当前所选日期范围内没有正净销售额的组织，无法绘制饼图。")
+
             if negative_total < 0:
-                st.caption(f"⚠️ 注意：共有 {len(negative)} 个组织净销售额为负，合计亏损 ¥{negative_total:,.2f}，已在饼图中汇总为「亏损组织合计」。")
+                st.caption(f"⚠️ 注意：共有 {len(negative)} 个组织净销售额为负，合计亏损 ¥{negative_total:,.2f}，饼图中以绝对值显示为「亏损组织合计」。")
 
         with col_b2:
             # ---- 部门业绩排行（不变） ----
