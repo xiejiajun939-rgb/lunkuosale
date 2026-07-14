@@ -3424,9 +3424,13 @@ if idx_org is not None:
             else:
                 st.info("无部门数据")
 
-        # ---- 模块 C：多维透视（原生 expander） ----
+                # ---- 模块 C：多维透视（原生 expander） ----
         st.markdown("---")
         st.markdown("#### 🔍 多维数据透视与穿透")
+
+        # 确保 dept 和 org_name 是字符串类型（防止 TypeError）
+        df['dept'] = df['dept'].astype(str).fillna('未分配部门')
+        df['org_name'] = df['org_name'].astype(str).fillna('未分配组织')
 
         def get_platform(shop_name):
             if shop_name.startswith('天猫'):
@@ -3509,7 +3513,10 @@ if idx_org is not None:
                     file_name=f"组织部门明细_{start_date}_{end_date}.xlsx",
                     key="download_expander"
                 )
-
+        # 确保分组列是字符串
+        df['org_name'] = df['org_name'].astype(str)
+        df['dept'] = df['dept'].astype(str)
+        df['shop_name'] = df['shop_name'].astype(str)
         # ---- 模块 D：异常预警 ----
         st.markdown("---")
         st.markdown("#### ⚠️ 异常决策预警")
