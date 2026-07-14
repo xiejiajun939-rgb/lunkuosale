@@ -3155,12 +3155,12 @@ if idx_alert is not None:
                 worst_prod = return_spike.iloc[0]
                 st.metric("⚠️ 退货率激增最严重商品", worst_prod["style_code"], delta=f"{worst_prod['退货率变化']:.2f} 百分点", delta_color="inverse")
 
-# ========== 新增：组织与部门分析 Tab ==========
 if idx_org is not None:
     with tabs[idx_org]:
         st.subheader("🏢 组织与部门分析")
         st.info("该板块基于「全部数据」源，按组织/部门维度展示经营状况，供销售总监决策参考。")
 
+        # ---- 加载数据 ----
         with st.spinner("加载组织/部门数据..."):
             prod_df = load_product_sales(st.session_state.table_suffix)
             if prod_df.empty:
@@ -3170,21 +3170,20 @@ if idx_org is not None:
             required_cols = ['ship_amount', 'return_amount', 'org_name', 'dept']
             missing = [c for c in required_cols if c not in prod_df.columns]
             if missing:
-                st.error(f"数据缺少必要列：{missing}，请检查数据源是否为「全部数据」。")
+                st.error(f"数据缺少必要列：{missing}，请确保当前数据源为「全部数据」且数据完整。")
                 st.stop()
 
-                # ---- 日期选择（快捷按钮 + 手动输入） ----
+        # ---- 日期选择 ----
         min_date = prod_df["sale_date"].min().date()
         max_date = prod_df["sale_date"].max().date()
         st.markdown("#### 📅 日期范围")
 
-        # 初始化 session_state（若不存在）
         if 'org_start_date' not in st.session_state:
             st.session_state['org_start_date'] = min_date
         if 'org_end_date' not in st.session_state:
             st.session_state['org_end_date'] = max_date
 
-        col_btn1, col_btn2, col_btn3, col_spacer = st.columns([1, 1, 1, 3])
+        col_btn1, col_btn2, col_btn3, _ = st.columns([1, 1, 1, 3])
         with col_btn1:
             if st.button("📅 最新日", key="org_date_latest"):
                 st.session_state['org_start_date'] = max_date
@@ -3215,26 +3214,14 @@ if idx_org is not None:
                 st.session_state['org_end_date'] = end_of_month
                 st.rerun()
 
-        # 日期输入框：通过 key 绑定 session_state，无需手动赋值
         col_date1, col_date2 = st.columns(2)
         with col_date1:
-            st.date_input(
-                "开始日期",
-                value=st.session_state['org_start_date'],
-                min_value=min_date,
-                max_value=max_date,
-                key="org_start_date"
-            )
+            st.date_input("开始日期", value=st.session_state['org_start_date'],
+                          min_value=min_date, max_value=max_date, key="org_start_date")
         with col_date2:
-            st.date_input(
-                "结束日期",
-                value=st.session_state['org_end_date'],
-                min_value=min_date,
-                max_value=max_date,
-                key="org_end_date"
-            )
+            st.date_input("结束日期", value=st.session_state['org_end_date'],
+                          min_value=min_date, max_value=max_date, key="org_end_date")
 
-        # 从 session_state 读取当前日期
         start_date = st.session_state['org_start_date']
         end_date = st.session_state['org_end_date']
 
@@ -3242,7 +3229,14 @@ if idx_org is not None:
             st.error("开始日期不能晚于结束日期")
             st.stop()
 
-                # ---- 模块 A：总览 KPI（突出总净销售额） ----
+        # ---- 过滤日期 ----
+        mask = (prod_df["sale_date"] >= pd.to_datetime(start_date)) & (prod_df["sale_date"] <= pd.to_datetime(end_date))
+        df = prod_df[mask].copy()
+        if df.empty:
+            st.warning("所选日期范围内无数据")
+            st.stop()
+
+        # ---- 模块 A：核心 KPI ----
         st.markdown("---")
         st.markdown("#### 📊 核心大盘 KPI")
         total_ship = df['ship_amount'].sum()
@@ -3250,7 +3244,6 @@ if idx_org is not None:
         total_net = total_ship - total_return
         return_rate = total_return / (total_ship + 1e-5) * 100
 
-        # 第一行：总净销售额（大号展示）
         st.markdown(
             f"""
             <div style="background: linear-gradient(135deg, #1e293b, #0f172a); 
@@ -3264,7 +3257,7 @@ if idx_org is not None:
                 <div style="color: #ffffff; font-size: 48px; font-weight: 700; letter-spacing: -1px;">
                     ¥{total_net:,.2f}
                 </div>
-                <div style="color: #94a3b8; font-size: 24px; margin-top: 8px;">
+                <div style="color: #94a3b8; font-size: 14px; margin-top: 8px;">
                     发货额 ¥{total_ship:,.2f} &nbsp;|&nbsp; 退货额 ¥{total_return:,.2f} &nbsp;|&nbsp; 综合退货率 {return_rate:.2f}%
                 </div>
             </div>
@@ -3272,16 +3265,22 @@ if idx_org is not None:
             unsafe_allow_html=True
         )
 
-    
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("总发货额", f"¥{total_ship:,.2f}")
+        with col2:
+            st.metric("总退货额", f"¥{total_return:,.2f}")
+        with col3:
+            st.metric("综合退货率", f"{return_rate:.2f}%", delta="需关注" if return_rate > 50 else "正常")
 
-                # ---- 模块 B：组织与部门赛马 ----
+        # ---- 模块 B：组织与部门赛马 ----
         st.markdown("---")
         st.markdown("#### 🏆 组织与部门赛马红黑榜")
 
         col_b1, col_b2 = st.columns(2)
 
         with col_b1:
-            # ---- 组织饼图（处理负数） ----
+            # 组织饼图（处理负数）
             org_agg = df.groupby('org_name').agg(ship=('ship_amount', 'sum'), return_amt=('return_amount', 'sum')).reset_index()
             org_agg['net'] = org_agg['ship'] - org_agg['return_amt']
 
@@ -3297,7 +3296,7 @@ if idx_org is not None:
                         'net': [abs(negative_total)]
                     })
                     pie_data = pd.concat([pie_data, neg_row], ignore_index=True)
-                    color_map = {org: px.colors.qualitative.Pastel[i % len(px.colors.qualitative.Pastel)] 
+                    color_map = {org: px.colors.qualitative.Pastel[i % len(px.colors.qualitative.Pastel)]
                                  for i, org in enumerate(positive['org_name'])}
                     color_map['⚠️ 亏损组织合计'] = '#e74c3c'
                     fig_org = px.pie(pie_data, names='org_name', values='net',
@@ -3319,7 +3318,7 @@ if idx_org is not None:
                 st.caption(f"⚠️ 注意：共有 {len(negative)} 个组织净销售额为负，合计亏损 ¥{negative_total:,.2f}，饼图中以绝对值显示为「亏损组织合计」。")
 
         with col_b2:
-            # ---- 部门业绩排行（不变） ----
+            # 部门排行
             dept_agg = df.groupby('dept').agg(ship=('ship_amount', 'sum'), return_amt=('return_amount', 'sum')).reset_index()
             dept_agg['net'] = dept_agg['ship'] - dept_agg['return_amt']
             dept_net = dept_agg[dept_agg['net'] != 0].sort_values('net', ascending=True)
@@ -3333,11 +3332,11 @@ if idx_org is not None:
                 st.plotly_chart(fig_dept, use_container_width=True)
             else:
                 st.info("无部门数据")
-                # ---- 模块 C：多维数据透视与穿透（原生 expander 树形） ----
+
+        # ---- 模块 C：多维透视（原生 expander） ----
         st.markdown("---")
         st.markdown("#### 🔍 多维数据透视与穿透")
 
-        # 生成平台列
         def get_platform(shop_name):
             if shop_name.startswith('天猫'):
                 return '天猫'
@@ -3352,7 +3351,6 @@ if idx_org is not None:
 
         df['platform'] = df['shop_name'].apply(get_platform)
 
-        # 部门筛选器
         all_depts = sorted(df['dept'].unique())
         selected_depts = st.multiselect(
             "选择要查看的部门（留空则显示全部）",
@@ -3368,7 +3366,6 @@ if idx_org is not None:
         if df_pivot.empty:
             st.info("当前筛选条件下无数据")
         else:
-            # 聚合数据：组织、平台、店铺
             grouped = df_pivot.groupby(['org_name', 'platform', 'shop_name']).agg(
                 ship=('ship_amount', 'sum'),
                 return_amt=('return_amount', 'sum')
@@ -3377,18 +3374,14 @@ if idx_org is not None:
             grouped['退货率'] = (grouped['return_amt'] / (grouped['ship'] + 1e-5) * 100).round(2)
             grouped['退货率'] = grouped['退货率'].map(lambda x: f"{x:.2f}%")
 
-            # ========== 新增：按组织净销售额从高到低排序 ==========
             org_order = grouped.groupby('org_name')['net'].sum().sort_values(ascending=False).index
 
-            # 按组织分组，组织汇总直接显示在标题中
             for org in org_order:
                 org_data = grouped[grouped['org_name'] == org]
                 org_net = org_data['net'].sum()
                 org_ship = org_data['ship'].sum()
                 org_return = org_data['return_amt'].sum()
-                # 标题显示：🏢 组织名称 | 净额 ¥xxx | 发货 ¥xxx | 退货 ¥xxx
                 with st.expander(f"🏢 {org}  | 净额 ¥{org_net:,.2f} | 发货 ¥{org_ship:,.2f} | 退货 ¥{org_return:,.2f}"):
-                    # 按平台分组（平台也按净额排序，让数据更清晰）
                     platform_order = org_data.groupby('platform')['net'].sum().sort_values(ascending=False).index
                     for plat in platform_order:
                         plat_data = org_data[org_data['platform'] == plat]
@@ -3396,13 +3389,12 @@ if idx_org is not None:
                         plat_ship = plat_data['ship'].sum()
                         plat_return = plat_data['return_amt'].sum()
                         with st.expander(f"📱 {plat}  净额 ¥{plat_net:,.2f}（发货 ¥{plat_ship:,.2f} / 退货 ¥{plat_return:,.2f}）"):
-                            # 展示该平台下的店铺明细（店铺也按净额排序）
                             display_df = plat_data[['shop_name', 'ship', 'return_amt', 'net', '退货率']]
                             display_df.columns = ['店铺', '发货额', '退货额', '净销售额', '退货率']
                             display_df = display_df.sort_values('净销售额', ascending=False)
                             st.dataframe(display_df, hide_index=True, use_container_width=True)
 
-            # 导出功能
+            # 导出
             st.markdown("#### 导出数据")
             export_format = st.radio("导出格式", ["明细数据", "汇总（组织+平台）"], key="export_format_expander")
             if st.button("💾 导出数据", key="export_expander"):
@@ -3426,6 +3418,7 @@ if idx_org is not None:
                     file_name=f"组织部门明细_{start_date}_{end_date}.xlsx",
                     key="download_expander"
                 )
+
         # ---- 模块 D：异常预警 ----
         st.markdown("---")
         st.markdown("#### ⚠️ 异常决策预警")
@@ -3447,7 +3440,6 @@ if idx_org is not None:
                 st.warning(f"⚠️ 退货率异常偏高（>{65}%）：{row['org_name']} -> {row['dept']} -> {row['shop_name']}，退货率 {row['退货率']:.1f}%")
         if alert_negative.empty and alert_high_return.empty:
             st.success("🎉 所有部门/店铺运营正常，无重大异常。")
-
 # ========== 调试 ==========
 if idx_debug is not None:
     with tabs[idx_debug]:
