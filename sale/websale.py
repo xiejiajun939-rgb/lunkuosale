@@ -3170,22 +3170,70 @@ if idx_org is not None:
                 st.error("当前数据源缺少组织/部门信息，请确保在「全部数据」源下使用。")
                 st.stop()
 
-        # 独立的日期选择
-        min_date = prod_df["sale_date"].min().date()
-        max_date = prod_df["sale_date"].max().date()
+                # ---- 日期选择（快捷按钮 + 手动输入） ----
+        st.markdown("#### 📅 日期范围")
+        # 初始化 session_state 日期值
+        if 'org_start_date' not in st.session_state:
+            st.session_state['org_start_date'] = min_date
+        if 'org_end_date' not in st.session_state:
+            st.session_state['org_end_date'] = max_date
+
+        col_btn1, col_btn2, col_btn3, col_spacer = st.columns([1, 1, 1, 3])
+        with col_btn1:
+            if st.button("📅 最新日", key="org_date_latest"):
+                st.session_state['org_start_date'] = max_date
+                st.session_state['org_end_date'] = max_date
+                st.rerun()
+        with col_btn2:
+            if st.button("📆 最新完整周", key="org_date_week"):
+                weekday = max_date.weekday()  # Monday=0, Sunday=6
+                if weekday == 6:  # Sunday
+                    start_of_week = max_date - timedelta(days=6)
+                    end_of_week = max_date
+                else:
+                    start_of_week = max_date - timedelta(days=weekday + 7)
+                    end_of_week = start_of_week + timedelta(days=6)
+                    # 确保 end_of_week 不超过 max_date（上周日一定 <= max_date）
+                st.session_state['org_start_date'] = start_of_week
+                st.session_state['org_end_date'] = end_of_week
+                st.rerun()
+        with col_btn3:
+            if st.button("📆 当月", key="org_date_month"):
+                start_of_month = max_date.replace(day=1)
+                if max_date.month == 12:
+                    end_of_month = max_date.replace(year=max_date.year+1, month=1, day=1) - timedelta(days=1)
+                else:
+                    end_of_month = max_date.replace(month=max_date.month+1, day=1) - timedelta(days=1)
+                if end_of_month > max_date:
+                    end_of_month = max_date
+                st.session_state['org_start_date'] = start_of_month
+                st.session_state['org_end_date'] = end_of_month
+                st.rerun()
+
+        # 手动日期输入框（使用独立 key，与 session_state 双向绑定）
         col_date1, col_date2 = st.columns(2)
         with col_date1:
-            start_date = st.date_input("开始日期", value=min_date, min_value=min_date, max_value=max_date, key="org_start_date")
+            start_date = st.date_input(
+                "开始日期",
+                value=st.session_state['org_start_date'],
+                min_value=min_date,
+                max_value=max_date,
+                key="org_start_date_input"
+            )
         with col_date2:
-            end_date = st.date_input("结束日期", value=max_date, min_value=min_date, max_value=max_date, key="org_end_date")
+            end_date = st.date_input(
+                "结束日期",
+                value=st.session_state['org_end_date'],
+                min_value=min_date,
+                max_value=max_date,
+                key="org_end_date_input"
+            )
+        # 将手动输入的值同步回 session_state（以便按钮下次可用）
+        st.session_state['org_start_date'] = start_date
+        st.session_state['org_end_date'] = end_date
+
         if start_date > end_date:
             st.error("开始日期不能晚于结束日期")
-            st.stop()
-
-        mask = (prod_df["sale_date"] >= pd.to_datetime(start_date)) & (prod_df["sale_date"] <= pd.to_datetime(end_date))
-        df = prod_df[mask].copy()
-        if df.empty:
-            st.warning("所选日期范围内无数据")
             st.stop()
 
         # ---- 模块 A：核心 KPI ----
@@ -3309,33 +3357,38 @@ if idx_org is not None:
             grid_df = grouped[['org_name', 'platform', 'shop_name', 'ship', 'return_amt', 'net', '退货率']]
             grid_df.columns = ['组织', '平台', '店铺', '发货额', '退货额', '净销售额', '退货率']
 
-            # ---- 配置 AgGrid（兼容新版 API） ----
-            gb = GridOptionsBuilder.from_dataframe(grid_df)
-            gb.configure_pagination(paginationAutoPageSize=True)
+            # ---- 配置 AgGrid（确保分组生效） ----
+            # 直接构建 grid_options，确保分组列正确配置
+            grid_options = {
+                'rowGroupPanelShow': 'always',
+                'groupDefaultExpanded': 0,
+                'groupSelectsChildren': True,
+                'groupIncludeTotalFooter': True,
+                'suppressRowGroupHidesColumns': True,
+                'animateRows': True,
+                'pagination': True,
+                'paginationAutoPageSize': True,
+                'rowGroupColumns': ['组织', '平台'],
+                'autoGroupColumnDef': {
+                    'headerName': '组织 / 平台 / 店铺',
+                    'field': '组织',
+                    'cellRendererParams': {
+                        'suppressCount': False,
+                    }
+                },
+                'columnDefs': [
+                    {'headerName': '组织', 'field': '组织', 'rowGroup': True, 'hide': True},
+                    {'headerName': '平台', 'field': '平台', 'rowGroup': True, 'hide': True},
+                    {'headerName': '店铺', 'field': '店铺', 'width': 200},
+                    {'headerName': '发货额', 'field': '发货额', 'type': 'numericColumn', 'valueFormatter': "'¥' + value.toFixed(2)"},
+                    {'headerName': '退货额', 'field': '退货额', 'type': 'numericColumn', 'valueFormatter': "'¥' + value.toFixed(2)"},
+                    {'headerName': '净销售额', 'field': '净销售额', 'type': 'numericColumn', 'valueFormatter': "'¥' + value.toFixed(2)"},
+                    {'headerName': '退货率', 'field': '退货率', 'width': 100},
+                ]
+            }
 
-            # 设置分组面板与默认展开层级
-            gb.configure_grid_options(
-                rowGroupPanelShow='always',          # 显示分组面板
-                groupDefaultExpanded=0,              # 默认全部折叠
-                groupSelectsChildren=True,           # 勾选分组时选中子项
-                groupIncludeTotalFooter=True,        # 分组汇总行
-                suppressRowGroupHidesColumns=True,   # 不隐藏分组列
-                animateRows=True                     # 动画展开
-            )
-
-            # 指定分组列（组织 -> 平台）
-            gb.configure_column('组织', rowGroup=True, hide=True)
-            gb.configure_column('平台', rowGroup=True, hide=True)
-
-            # 配置数值列格式
-            gb.configure_column('发货额', type=['numericColumn'], valueFormatter="'¥' + value.toFixed(2)")
-            gb.configure_column('退货额', type=['numericColumn'], valueFormatter="'¥' + value.toFixed(2)")
-            gb.configure_column('净销售额', type=['numericColumn'], valueFormatter="'¥' + value.toFixed(2)")
-            gb.configure_column('退货率', width=100)
-
-            grid_options = gb.build()
-
-            # ---- 渲染 AgGrid ----
+            # 渲染 AgGrid
+            from st_aggrid import AgGrid
             AgGrid(grid_df, gridOptions=grid_options, theme='streamlit', height=400, fit_columns_on_grid_load=True)
 
             # ---- 导出功能 ----
