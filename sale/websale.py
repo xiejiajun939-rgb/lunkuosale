@@ -660,6 +660,34 @@ def save_product_sales(df_orders, suffix=None):
             batch = records[i:i+batch_size]
             supabase.table(table_name).upsert(batch, on_conflict="remark").execute()
 
+def save_offline_sales(df_orders):
+    """专门处理线下收入数据，写入 offline_sales_all 表"""
+    if supabase is None or df_orders.empty:
+        return
+
+    df = df_orders.copy()
+    df['sale_date'] = pd.to_datetime(df['日期']).dt.strftime('%Y-%m-%d')
+    df['shop_name'] = df['组织名称'].astype(str).str.strip()
+    df['net_amount'] = pd.to_numeric(df['金额/时间'], errors='coerce').fillna(0)
+    df['remark'] = df['备注'].astype(str).str.strip()
+
+    records = df[['sale_date', 'shop_name', 'net_amount', 'remark']].to_dict(orient='records')
+    if not records:
+        return
+
+    table_name = "offline_sales_all"
+    batch_size = 500
+    for i in range(0, len(records), batch_size):
+        batch = records[i:i+batch_size]
+        for attempt in range(3):
+            try:
+                supabase.table(table_name).insert(batch).execute()
+                break
+            except Exception as e:
+                if attempt == 2:
+                    raise e
+                time.sleep(2 ** attempt)
+
 # ========== 核心修改：load_product_sales（仅对 _all 增加维度关联） ==========
 @st.cache_data(ttl=300)
 def load_product_sales(suffix=None, apply_filter=True):
@@ -717,7 +745,40 @@ def load_product_sales(suffix=None, apply_filter=True):
                 df["org_name"] = None
                 df["dept"] = None
             # ========== 维度关联结束 ==========
-
+                        # ========== 合并线下收入数据（仅全部数据） ==========
+            if suffix == "_all":
+                try:
+                    offline_resp = supabase.table("offline_sales_all").select("*").execute()
+                    if offline_resp.data:
+                        offline_df = pd.DataFrame(offline_resp.data)
+                        offline_df["sale_date"] = pd.to_datetime(offline_df["sale_date"])
+                        # 补全列（使结构与 df 一致）
+                        offline_df["ship_amount"] = 0
+                        offline_df["return_amount"] = 0
+                        offline_df["product_code"] = None
+                        offline_df["style_code"] = None
+                        offline_df["brand"] = None
+                        offline_df["year"] = None
+                        offline_df["season"] = None
+                        offline_df["product_category"] = None
+                        offline_df["style"] = None
+                        offline_df["color_code"] = None
+                        offline_df["size_code"] = None
+                        offline_df["image_url"] = None
+                        offline_df["master_category"] = None
+                        offline_df["remark"] = offline_df["remark"].fillna("线下收入")
+                        offline_df["anchor"] = "NONE"
+                        # 确保列顺序与 df 一致
+                        for col in df.columns:
+                            if col not in offline_df.columns:
+                                offline_df[col] = None
+                        offline_df = offline_df[df.columns]
+                        # 合并
+                        df = pd.concat([df, offline_df], ignore_index=True)
+                except Exception as e:
+                    # 线下数据加载失败不影响主流程
+                    pass
+            # ========== 合并结束 ==========
             if apply_filter:
                 df = apply_data_permission(df)
             return df
@@ -1013,6 +1074,27 @@ with st.sidebar:
             target_file = st.file_uploader("选择目标文件 (Excel)", type=["xlsx", "xls"], key="target_upload_all_final")
             if st.button("📤 确认上传目标", key="confirm_target_all_final"):
                 handle_upload(target_file, "_all", "target")
+                # --- 线下收入上传（仅全部数据） ---
+                # --- 线下收入上传（仅全部数据） ---
+            st.markdown("---")
+            st.subheader("🏷️ 线下收入上传")
+            uploaded_offline = st.file_uploader("选择线下收入文件 (Excel)", type=["xlsx", "xls"], key="offline_uploader")
+            if uploaded_offline is not None:
+                if st.button("📤 上传线下收入", key="upload_offline"):
+                    try:
+                        # 您的文件表头在第2行（序号那一行）
+                        df = pd.read_excel(uploaded_offline, header=1)
+                        required_cols = ["日期", "金额/时间", "备注", "组织名称"]
+                        if not all(col in df.columns for col in required_cols):
+                            st.error(f"文件必须包含列：{', '.join(required_cols)}")
+                        else:
+                            save_offline_sales(df)
+                            st.success(f"✅ 成功上传 {len(df)} 条线下收入记录")
+                            st.cache_data.clear()
+                            time.sleep(0.5)
+                            st.rerun()
+                    except Exception as e:
+                        st.error(f"上传失败：{e}")           
         st.markdown("---")
         st.header("⚙️ 工具")
         template_df = pd.DataFrame({"店铺名称": ["示例店铺A", "示例店铺B"], "目标金额": [100000, 200000]})
