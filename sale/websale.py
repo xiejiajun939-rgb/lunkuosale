@@ -119,11 +119,21 @@ def get_table_name(base_name, suffix=None):
 
 # ========== 映射表加载与关联（向量化） ==========
 @st.cache_data(ttl=600)
-def load_mapping(supabase_client) -> pd.DataFrame:
-    if supabase_client is None:
+def load_mapping() -> pd.DataFrame:
+    if supabase is None:
         return pd.DataFrame()
     try:
-        resp = supabase_client.table("mapping").select("*").execute()
+        resp = supabase.table("mapping").select("*").execute()
+        if resp.data:
+            df = pd.DataFrame(resp.data)
+            df['anchor_name'] = df['anchor_name'].fillna('NONE')
+            df['shop_name'] = df['shop_name'].fillna('')
+            return df
+        else:
+            return pd.DataFrame()
+    except Exception as e:
+        st.error(f"加载映射表失败: {e}")
+        return pd.DataFrame()
         if resp.data:
             df = pd.DataFrame(resp.data)
             df['anchor_name'] = df['anchor_name'].fillna('NONE')
@@ -379,7 +389,7 @@ if "monthly_actual" not in st.session_state:
 if "processing_upload" not in st.session_state:
     st.session_state.processing_upload = False
 if "mapping_df" not in st.session_state:
-    st.session_state.mapping_df = load_mapping(supabase)
+    st.session_state.mapping_df = load_mapping()
 
 # ========== 数据权限过滤 ==========
 def apply_data_permission(df, username=None, role=None):
