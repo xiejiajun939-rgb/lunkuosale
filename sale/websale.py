@@ -3309,23 +3309,25 @@ if idx_org is not None:
             grid_df = grouped[['org_name', 'platform', 'shop_name', 'ship', 'return_amt', 'net', '退货率']]
             grid_df.columns = ['组织', '平台', '店铺', '发货额', '退货额', '净销售额', '退货率']
 
-            # 配置 AgGrid
+            # ---- 配置 AgGrid（兼容新版 API） ----
             gb = GridOptionsBuilder.from_dataframe(grid_df)
             gb.configure_pagination(paginationAutoPageSize=True)
-            gb.configure_grouping(
-                groupSelectsChildren=True,
-                groupIncludeTotalFooter=True
-            )
+
+            # 设置分组面板与默认展开层级
             gb.configure_grid_options(
-                groupDefaultExpanded=0,          # 默认全部折叠
-                rowGroupPanelShow='always',       # 显示分组面板
-                suppressRowGroupHidesColumns=True
+                rowGroupPanelShow='always',          # 显示分组面板
+                groupDefaultExpanded=0,              # 默认全部折叠
+                groupSelectsChildren=True,           # 勾选分组时选中子项
+                groupIncludeTotalFooter=True,        # 分组汇总行
+                suppressRowGroupHidesColumns=True,   # 不隐藏分组列
+                animateRows=True                     # 动画展开
             )
-            # 设置分组列（组织 → 平台）
+
+            # 指定分组列（组织 -> 平台）
             gb.configure_column('组织', rowGroup=True, hide=True)
             gb.configure_column('平台', rowGroup=True, hide=True)
-            # 其他列显示
-            gb.configure_column('店铺', width=200)
+
+            # 配置数值列格式
             gb.configure_column('发货额', type=['numericColumn'], valueFormatter="'¥' + value.toFixed(2)")
             gb.configure_column('退货额', type=['numericColumn'], valueFormatter="'¥' + value.toFixed(2)")
             gb.configure_column('净销售额', type=['numericColumn'], valueFormatter="'¥' + value.toFixed(2)")
@@ -3333,7 +3335,7 @@ if idx_org is not None:
 
             grid_options = gb.build()
 
-            # 渲染表格
+            # ---- 渲染 AgGrid ----
             AgGrid(grid_df, gridOptions=grid_options, theme='streamlit', height=400, fit_columns_on_grid_load=True)
 
             # ---- 导出功能 ----
