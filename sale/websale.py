@@ -3243,6 +3243,7 @@ if idx_org is not None:
             df_today = fetch_sales_summary(latest_date, latest_date, suffix)
             df_mtd = fetch_sales_summary(month_start, latest_date, suffix)
 
+        # KPI 指标计算
         today_ship = df_today['total_ship'].sum() if not df_today.empty else 0
         today_return = df_today['total_return'].sum() if not df_today.empty else 0
         today_net = today_ship - today_return
@@ -3277,7 +3278,7 @@ if idx_org is not None:
 
         # 2.1 汇总统计表格
         st.markdown("##### 汇总统计")
-        if not df_7d.empty:
+        if not df_7d.empty and 'total_net' in df_7d.columns:
             total_7d = df_7d['total_net'].sum()
             total_prev = df_prev['total_net'].sum() if not df_prev.empty else 0
             change = ((total_7d - total_prev) / (total_prev + 1e-5) * 100) if total_prev != 0 else 0
@@ -3290,13 +3291,18 @@ if idx_org is not None:
         else:
             st.info("近7天无数据，无法统计。")
 
-        # 2.2 双曲线趋势图（重叠对比：X轴为近7天日期，前7天日期偏移+7天）
+        # 2.2 双曲线趋势图（重叠对比）
         st.markdown("##### 每日趋势对比（近7天 vs 前7天同期）")
-        if not df_7d.empty and not df_prev.empty:
+        if (not df_7d.empty and 'sale_date' in df_7d.columns and 
+            not df_prev.empty and 'sale_date' in df_prev.columns):
+            # 按日期汇总每日总净额
             df_7d_daily = df_7d.groupby('sale_date')['total_net'].sum().reset_index()
             df_prev_daily = df_prev.groupby('sale_date')['total_net'].sum().reset_index()
 
+            # 确保日期列为 datetime 类型
+            df_7d_daily['sale_date'] = pd.to_datetime(df_7d_daily['sale_date'])
             df_prev_daily['sale_date'] = pd.to_datetime(df_prev_daily['sale_date'])
+            # 前7天日期加7天对齐
             df_prev_daily['sale_date_aligned'] = df_prev_daily['sale_date'] + pd.Timedelta(days=7)
 
             fig = go.Figure()
@@ -3332,7 +3338,7 @@ if idx_org is not None:
         else:
             st.info("无足够数据绘制趋势图（需同时拥有近7天和前7天数据）。")
 
-        # ======================== 3. 组织与部门拆解（含独立切换，增加“最新日”选项） ========================
+        # ======================== 3. 组织与部门拆解（含独立切换） ========================
         st.markdown("---")
         st.markdown("#### 🏆 组织与部门业绩拆解")
 
@@ -3341,7 +3347,7 @@ if idx_org is not None:
         time_mode_main = st.radio(
             "查看周期",
             options=["最新日", "近7天", "月累计"],
-            index=1,  # 默认“近7天”
+            index=1,
             horizontal=True,
             key="org_dept_main_mode"
         )
@@ -3353,7 +3359,7 @@ if idx_org is not None:
             start_date = last_date - timedelta(days=6)
             end_date = last_date
             period_label = "近7天"
-        else:  # 月累计
+        else:
             start_date = last_date.replace(day=1)
             end_date = last_date
             period_label = f"月累计（{last_date.strftime('%Y-%m')}）"
@@ -3540,6 +3546,7 @@ if idx_org is not None:
         selected_model = model_options[selected_model_name]
 
         if st.button("🚀 生成智能总结", key="org_generate_ai_summary"):
+            # 使用月累计 + 近7天变化作为上下文
             total_net = mtd_net
             return_rate = mtd_return_rate
             if not df_7d.empty and not df_prev.empty:
