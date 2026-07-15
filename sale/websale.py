@@ -3306,7 +3306,7 @@ if idx_org is not None:
             st.warning("所选日期范围内无数据")
             st.stop()
 
-        # ---- 模块 A：核心 KPI ----
+                # ---- 模块 A：核心 KPI ----
         st.markdown("---")
         st.markdown("#### 📊 核心大盘 KPI")
         total_ship = df_summary['total_ship'].sum()
@@ -3314,59 +3314,27 @@ if idx_org is not None:
         total_net = total_ship - total_return
         return_rate = total_return / (total_ship + 1e-5) * 100
 
-        # ========== 趋势分析模块 (请替换该部分) ==========
-        # 假设 start_date 和 end_date 已经定义（例如近7天）
-        # 假设 prev_start 和 prev_end 是前7天的时间范围
+        # ---- 近7天与前7天净额（用于趋势对比） ----
+        # 注意：这里使用数据中的最大日期 max_date（即最近一天）
+        last_date = max_date
+        # 近7天范围：last_date 往前推6天
+        period_start = last_date - timedelta(days=6)
+        period_end = last_date
+        # 前7天范围：近7天再往前推7天
+        prev_start = period_start - timedelta(days=7)
+        prev_end = period_start - timedelta(days=1)
         
-        st.subheader("📊 每日净销售额趋势对比")
-        
-        # 1. 获取近7天和前7天的数据
-        df_7d = fetch_sales_summary(start_date, end_date, st.session_state.table_suffix)
-        df_prev = fetch_sales_summary(prev_start, prev_end, st.session_state.table_suffix)
-        
-        # 2. 数据准备与清洗
-        if (df_7d is not None and not df_7d.empty) or (df_prev is not None and not df_prev.empty):
-            
-            # 统一处理逻辑：确保有数据才能绘图
-            plot_data = []
-            
-            if df_7d is not None and not df_7d.empty:
-                df_7d = df_7d.groupby('sale_date')['total_net'].sum().reset_index()
-                df_7d['周期'] = '近7天'
-                # 转换为字符串以便 X 轴对齐
-                df_7d['相对日期'] = df_7d['sale_date'].apply(lambda x: pd.to_datetime(x).strftime('%m-%d'))
-                plot_data.append(df_7d)
-                
-            if df_prev is not None and not df_prev.empty:
-                df_prev = df_prev.groupby('sale_date')['total_net'].sum().reset_index()
-                df_prev['周期'] = '前7天'
-                # 转换为字符串以便 X 轴对齐
-                df_prev['相对日期'] = df_prev['sale_date'].apply(lambda x: pd.to_datetime(x).strftime('%m-%d'))
-                plot_data.append(df_prev)
-        
-            if plot_data:
-                df_combined = pd.concat(plot_data)
-                
-                # 3. 绘制对比折线图
-                fig = px.line(
-                    df_combined, 
-                    x='相对日期', 
-                    y='total_net', 
-                    color='周期', 
-                    markers=True,
-                    title='近7天 vs 前7天 每日净销售额趋势对比',
-                    labels={'total_net': '净销售额 (元)', '相对日期': '日期'}
-                )
-                
-                # 优化显示：统一悬浮提示，线型美化
-                fig.update_layout(hovermode="x unified", legend_title_text='时间周期')
-                fig.update_traces(line_width=3)
-                
-                st.plotly_chart(fig, use_container_width=True)
-            else:
-                st.warning("暂无对应日期的销售数据。")
+        # 获取两个周期的聚合数据（只取日期汇总）
+        with st.spinner("计算近7天趋势..."):
+            df_7d = fetch_sales_summary(period_start, period_end, suffix)
+            net_7d = df_7d['total_net'].sum() if not df_7d.empty else 0
+            df_prev = fetch_sales_summary(prev_start, prev_end, suffix)
+            net_prev = df_prev['total_net'].sum() if not df_prev.empty else 0
+
+        if net_prev != 0:
+            change_7d = ((net_7d - net_prev) / net_prev) * 100
         else:
-            st.info("请选择合适的日期范围以显示趋势对比。")
+            change_7d = 0
 
         # ---- 总净额大卡片 ----
         st.markdown(
@@ -3411,24 +3379,32 @@ if idx_org is not None:
             </div>
             """, unsafe_allow_html=True)
 
-        # ---- 趋势对比图 ----
+        # ---- 趋势对比图（两条曲线） ----
         st.markdown("---")
         st.markdown("#### 📈 近7天 vs 前7天 每日净销售额趋势")
 
+        # 准备每日数据
         if not df_7d.empty:
             df_7d_daily = df_7d.groupby('sale_date')['total_net'].sum().reset_index()
+            df_7d_daily['周期'] = '近7天'
+            # 转为相对日期便于 X 轴对齐（同一天对比）
+            df_7d_daily['日期标签'] = df_7d_daily['sale_date'].apply(lambda x: pd.to_datetime(x).strftime('%m-%d'))
         else:
             df_7d_daily = pd.DataFrame()
+
         if not df_prev.empty:
             df_prev_daily = df_prev.groupby('sale_date')['total_net'].sum().reset_index()
+            df_prev_daily['周期'] = '前7天'
+            df_prev_daily['日期标签'] = df_prev_daily['sale_date'].apply(lambda x: pd.to_datetime(x).strftime('%m-%d'))
         else:
             df_prev_daily = pd.DataFrame()
 
         if not df_7d_daily.empty or not df_prev_daily.empty:
-            fig_trend = go.Figure()
+            import plotly.graph_objects as go
+            fig = go.Figure()
             if not df_7d_daily.empty:
-                fig_trend.add_trace(go.Scatter(
-                    x=df_7d_daily['sale_date'],
+                fig.add_trace(go.Scatter(
+                    x=df_7d_daily['日期标签'],
                     y=df_7d_daily['total_net'],
                     mode='lines+markers',
                     name='近7天',
@@ -3436,23 +3412,23 @@ if idx_org is not None:
                     marker=dict(size=6)
                 ))
             if not df_prev_daily.empty:
-                fig_trend.add_trace(go.Scatter(
-                    x=df_prev_daily['sale_date'],
+                fig.add_trace(go.Scatter(
+                    x=df_prev_daily['日期标签'],
                     y=df_prev_daily['total_net'],
                     mode='lines+markers',
                     name='前7天',
                     line=dict(color='#3b82f6', width=2.5, dash='dash'),
                     marker=dict(size=6)
                 ))
-            fig_trend.update_layout(
-                height=280,
+            fig.update_layout(
+                height=300,
                 margin=dict(l=0, r=0, t=10, b=0),
                 hovermode='x unified',
                 legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1),
                 yaxis_title='净销售额 (¥)',
                 xaxis_title='日期'
             )
-            st.plotly_chart(fig_trend, use_container_width=True)
+            st.plotly_chart(fig, use_container_width=True)
         else:
             st.info("无数据可绘制趋势图")
 
