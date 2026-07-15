@@ -726,7 +726,7 @@ def load_product_sales(suffix=None, apply_filter=True):
             for col in ["ship_amount", "return_amount", "net_amount"]:
                 if col in df.columns:
                     df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
-            if suffix in ["_live", "_all"] and "anchor" not in df.columns:
+            if suffix == "_all" and "anchor" not in df.columns:
                 df["anchor"] = df["remark"].apply(extract_anchor)
             
             # ========== 维度关联逻辑（仅当 suffix == "_all"） ==========
@@ -1006,25 +1006,24 @@ if st.session_state.target_dict == {}:
 with st.sidebar:
     st.header("📂 数据加载")
     st.subheader("🔄 数据源切换")
-    suffix_names = {"": "非直播数据", "_live": "直播数据", "_all": "全部数据"}
+    suffix_names = {"": "非直播数据", "_all": "全部数据"}
     current_source_name = suffix_names.get(st.session_state.table_suffix, "未知")
     st.info(f"📌 当前正在查看：**{current_source_name}**")
 
     if st.session_state.role == "admin":
-        available_suffixes = {"非直播数据": "", "直播数据": "_live", "全部数据": "_all"}
+        available_suffixes = {"非直播数据": "", "全部数据": "_all"}
     else:
         user_info = st.session_state.sub_users.get(st.session_state.username, {})
         default_suffix = user_info.get("default_suffix", "")
         perms = user_info.get("permissions", {})
         available = {}
-        for name, suf in [("非直播数据", ""), ("直播数据", "_live"), ("全部数据", "_all")]:
+        for name, suf in [("非直播数据", ""), ("全部数据", "_all")]:
             if suf in perms and perms[suf]:
                 available[name] = suf
         if not available:
-            available = {suffix_names.get(default_suffix, "非直播数据"): default_suffix}
+            # 若没有权限，默认展示非直播
+            available = {"非直播数据": ""}
         available_suffixes = available
-
-    options = list(available_suffixes.keys())
     if current_source_name in options:
         default_index = options.index(current_source_name)
     else:
@@ -3035,7 +3034,7 @@ if idx_system is not None:
                         
                         # 默认数据源
                         current_default = info.get("default_suffix", "")
-                        default_options = {"非直播数据": "", "直播数据": "_live", "全部数据": "_all"}
+                        default_options = {"非直播数据": "", "全部数据": "_all"}
                         default_display = [k for k, v in default_options.items() if v == current_default]
                         default_display = default_display[0] if default_display else "非直播数据"
                         new_default_display = st.selectbox(
@@ -3119,8 +3118,8 @@ if idx_system is not None:
                 new_username = st.text_input("用户名", key="new_username_sys")
                 new_password = st.text_input("密码", type="password", key="new_password_sys")
             with col2:
-                default_suffix = st.selectbox("默认数据源", ["非直播数据", "直播数据", "全部数据"], key="new_default_suffix_sys")
-                suffix_map = {"非直播数据": "", "直播_data": "_live", "全部数据": "_all"}
+                default_suffix = st.selectbox("默认数据源", ["非直播数据", "全部数据"], key="new_default_suffix_sys")
+                suffix_map = {"非直播数据": "", "全部数据": "_all"}
                 default_perms = {}
                 for suf in ["", "_live", "_all"]:
                     if suf == "_all":
