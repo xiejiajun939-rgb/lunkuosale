@@ -3199,8 +3199,6 @@ if idx_org is not None:
         st.info("该板块基于「全部数据」源，按组织/部门维度展示经营状况，供销售总监决策参考。")
 
         # ======================== 独立日期选择器 ========================
-        # 默认值为数据中的最大日期（含线下），但保留用户可调
-        # 我们使用 get_date_range 获取最大日期作为默认值
         @st.cache_data(ttl=600)
         def get_date_range(suffix):
             if supabase is None:
@@ -3235,7 +3233,6 @@ if idx_org is not None:
             st.stop()
 
         st.markdown("#### 📅 日期选择")
-        # 用户选择基准日期，默认最大日期
         base_date = st.date_input(
             "选择分析基准日期",
             value=max_date,
@@ -3248,7 +3245,6 @@ if idx_org is not None:
         # ======================== 1. 核心大盘 KPI（最新日 vs 月累计） ========================
         st.markdown("---")
         st.markdown("#### 📊 核心大盘 KPI")
-        # 最新日 = 用户选择的日期
         latest_date = base_date
         month_start = latest_date.replace(day=1)
 
@@ -3256,26 +3252,22 @@ if idx_org is not None:
             df_today = fetch_sales_summary(latest_date, latest_date, suffix)
             df_mtd = fetch_sales_summary(month_start, latest_date, suffix)
 
-        # 如果最新日无数据，尝试取该日期后最近有数据的日期（提示用户）
         if df_today.empty:
-            # 尝试从月累计中找该日期所在月的数据，若没有则提示
-            if df_mtd.empty:
-                st.warning(f"所选日期 {latest_date} 及其所在月均无数据，请选择其他日期。")
-            else:
-                # 月累计有数据，但当日没有，可显示月累计数据，但最新日设为无数据
-                today_ship = 0
-                today_return = 0
-                today_net = 0
-                st.info(f"所选日期 {latest_date} 无销售数据，以下显示月累计数据。")
+            st.warning(f"所选日期 {latest_date} 无销售数据，以下显示月累计数据。")
+            today_ship = 0
+            today_return = 0
+            today_net = 0
         else:
+            # ✅ 修正点：直接使用 total_net 汇总，不再使用 ship - return
             today_ship = df_today['total_ship'].sum()
             today_return = df_today['total_return'].sum()
-            today_net = today_ship - today_return
+            today_net = df_today['total_net'].sum()
 
         if not df_mtd.empty:
+            # ✅ 修正点：直接使用 total_net
             mtd_ship = df_mtd['total_ship'].sum()
             mtd_return = df_mtd['total_return'].sum()
-            mtd_net = mtd_ship - mtd_return
+            mtd_net = df_mtd['total_net'].sum()
             mtd_return_rate = (mtd_return / (mtd_ship + 1e-5) * 100) if mtd_ship > 0 else 0
         else:
             mtd_ship = 0
@@ -3295,15 +3287,11 @@ if idx_org is not None:
             st.markdown(f"**📆 月累计（{latest_date.strftime('%Y-%m')}）**")
             st.metric("净销售额", f"¥{mtd_net:,.2f}",
                       delta=f"发货 ¥{mtd_ship:,.2f} | 退货 ¥{mtd_return:,.2f} | 退货率 {mtd_return_rate:.2f}%")
-        st.write(df_today.head(30))
 
-        # ======================== 2. 趋势分析（近7天 vs 前7天，重叠显示） ========================
+        # ======================== 2. 趋势分析（近7天 vs 前7天） ========================
         st.markdown("---")
         st.markdown("#### 📈 趋势分析：近7天 vs 前7天")
 
-        # 基于用户选择的基准日期计算两个周期
-        # 近7天：从 base_date-6 到 base_date
-        # 前7天：从 base_date-13 到 base_date-7
         period_start = base_date - timedelta(days=6)
         prev_period_start = base_date - timedelta(days=13)
         prev_period_end = base_date - timedelta(days=7)
@@ -3312,7 +3300,6 @@ if idx_org is not None:
             df_7d = fetch_sales_summary(period_start, base_date, suffix)
             df_prev = fetch_sales_summary(prev_period_start, prev_period_end, suffix)
 
-        # 2.1 汇总统计表格
         st.markdown("##### 汇总统计")
         if not df_7d.empty and 'total_net' in df_7d.columns:
             total_7d = df_7d['total_net'].sum()
@@ -3327,18 +3314,14 @@ if idx_org is not None:
         else:
             st.info("近7天无数据，无法统计。")
 
-        # 2.2 双曲线趋势图（重叠对比）
         st.markdown("##### 每日趋势对比（近7天 vs 前7天同期）")
         if (not df_7d.empty and 'sale_date' in df_7d.columns and 
             not df_prev.empty and 'sale_date' in df_prev.columns):
-            # 按日期汇总每日总净额
             df_7d_daily = df_7d.groupby('sale_date')['total_net'].sum().reset_index()
             df_prev_daily = df_prev.groupby('sale_date')['total_net'].sum().reset_index()
 
-            # 确保日期列为 datetime 类型
             df_7d_daily['sale_date'] = pd.to_datetime(df_7d_daily['sale_date'])
             df_prev_daily['sale_date'] = pd.to_datetime(df_prev_daily['sale_date'])
-            # 前7天日期加7天对齐到近7天日期
             df_prev_daily['sale_date_aligned'] = df_prev_daily['sale_date'] + pd.Timedelta(days=7)
 
             fig = go.Figure()
@@ -3374,11 +3357,11 @@ if idx_org is not None:
         else:
             st.info("无足够数据绘制趋势图（需同时拥有近7天和前7天数据）。")
 
-        # ======================== 3. 组织与部门拆解（含独立切换） ========================
+        # ======================== 3. 组织与部门拆解 ========================
         st.markdown("---")
         st.markdown("#### 🏆 组织与部门业绩拆解")
 
-        # ---------- 3.1 组织饼图 + 部门排行（共用切换） ----------
+        # ---------- 3.1 组织饼图 + 部门排行 ----------
         st.markdown("##### 组织与部门分布")
         time_mode_main = st.radio(
             "查看周期",
@@ -3429,7 +3412,7 @@ if idx_org is not None:
         else:
             st.warning(f"{period_label} 无数据，无法显示组织/部门分布。")
 
-        # ---------- 3.2 退货率警告线（独立切换） ----------
+        # ---------- 3.2 退货率警告线 ----------
         st.markdown("#### 退货率警告线")
         time_mode_return = st.radio(
             "查看周期",
@@ -3472,7 +3455,7 @@ if idx_org is not None:
         else:
             st.warning(f"{period_label_r} 无数据，无法显示退货率。")
 
-        # ---------- 3.3 多维透视（独立切换） ----------
+        # ---------- 3.3 多维透视 ----------
         st.markdown("#### 🔍 多维透视（组织 → 平台 → 店铺）")
         time_mode_pivot = st.radio(
             "查看周期",
@@ -3570,7 +3553,6 @@ if idx_org is not None:
         selected_model = model_options[selected_model_name]
 
         if st.button("🚀 生成智能总结", key="org_generate_ai_summary"):
-            # 使用月累计 + 近7天变化作为上下文
             total_net = mtd_net if not df_mtd.empty else 0
             return_rate = mtd_return_rate if not df_mtd.empty else 0
             if not df_7d.empty and not df_prev.empty:
