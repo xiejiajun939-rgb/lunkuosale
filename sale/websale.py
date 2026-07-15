@@ -1201,6 +1201,7 @@ with st.sidebar:
 # ========== 动态创建选项卡 ==========
 base_tabs = [
     "📊 经营驾驶舱",
+    "📋 每日明细",           # 新增 Tab，替代原“店铺分析”
     "📦 商品分析",
     "🎤 主播分析",
     "📂 数据管理",
@@ -1241,18 +1242,20 @@ def get_tab_index(label):
     return tab_labels.index(label) if label in tab_labels else None
 
 idx_dashboard = get_tab_index("📊 经营驾驶舱")
+idx_daily = get_tab_index("📋 每日明细")          # 新 Tab 索引
 idx_product = get_tab_index("📦 商品分析")
 idx_anchor = get_tab_index("🎤 主播分析")
 idx_data = get_tab_index("📂 数据管理")
 idx_distribution = get_tab_index("📈 销售分布与品牌")
 idx_alert = get_tab_index("⚠️ 异常预警")
-idx_org = get_tab_index("🏢 组织与部门分析")  # 新 Tab
+idx_org = get_tab_index("🏢 组织与部门分析")      # 新 Tab
 idx_debug = get_tab_index("🔧 调试")
 idx_export = get_tab_index("📚 商品库导出")
 idx_system = get_tab_index("⚙️ 系统设置")
 
-# 兼容旧变量
-idx_latest = idx_shop
+# 兼容旧变量（指向新 Tab）
+idx_latest = idx_daily          # 原“最新日明细”现在在“每日明细”中
+idx_query = idx_daily           # 原“日期查询”也在“每日明细”中
 idx_ship_return = idx_data
 idx_history = idx_data
 idx_anchor_compare = idx_anchor
@@ -1421,7 +1424,6 @@ if idx_dashboard is not None:
         col1, col2, col3, col4 = st.columns(4)
 
         with col1:
-            # 判断前日销售额情况
             if prev_sales < 0:
                 abs_increase = latest_sales - prev_sales
                 change_text = f"▲ 由负转正 (+{abs_increase:,.0f})"
@@ -1698,12 +1700,19 @@ if idx_dashboard is not None:
             """, unsafe_allow_html=True)
         else:
             st.info("点击上方按钮生成 AI 智能总结。")
-# ========== 最新日明细 ==========
-if idx_latest is not None:
-    with tabs[idx_latest]:
+
+# ========== 每日明细（合并“最新日明细”和“日期查询”） ==========
+if idx_daily is not None:
+    with tabs[idx_daily]:
+        st.subheader("📋 每日明细查询")
+        st.info("此处展示最新日销售明细，并支持按日期查询任意一天的销售情况。")
+
+        # ---------- 第一部分：最新日明细 ----------
+        st.markdown("#### 📅 最新日明细")
         source_names = {"": "非直播数据", "_live": "直播数据", "_all": "全部数据"}
         current_source = source_names.get(st.session_state.table_suffix, "未知")
-        st.info(f"📌 当前查看的数据源：**{current_source}**")
+        st.caption(f"当前数据源：**{current_source}**")
+
         if st.session_state.table_suffix == "_all":
             df_daily_all = st.session_state.df_all_daily
             all_entities = df_daily_all["店铺名称"].unique().tolist() if df_daily_all is not None and not df_daily_all.empty else []
@@ -1716,10 +1725,12 @@ if idx_latest is not None:
             target_entities = list(st.session_state.target_dict.keys())
             all_entities = list(set(all_entities + target_entities))
             col_name = "店铺名称"
+
         if st.session_state.get("df_all_daily") is not None and not st.session_state.df_all_daily.empty:
             latest_date_global = st.session_state.df_all_daily["日期"].max()
         else:
             latest_date_global = None
+
         if latest_date_global is not None:
             month_start = latest_date_global.replace(day=1)
             df_latest_existing = st.session_state.df_all_daily[st.session_state.df_all_daily["日期"] == latest_date_global].copy()
@@ -1737,11 +1748,13 @@ if idx_latest is not None:
                 col_name = "主播名称"
         else:
             df = pd.DataFrame(columns=["日期", col_name, "当日金额", "月累计金额"])
+
         if not df.empty:
             df["目标金额"] = df[col_name].map(st.session_state.target_dict).fillna(0).round(2)
             df["达成率"] = df.apply(lambda r: f"{(r['月累计金额']/r['目标金额']*100):.2f}%" if r['目标金额']!=0 else "-", axis=1)
             cols = ["日期", col_name, "当日金额", "月累计金额", "目标金额", "达成率"]
             st.dataframe(df[cols], use_container_width=True, hide_index=True)
+
             if st.session_state.table_suffix == "_all":
                 total_cum = df["月累计金额"].sum()
                 total_target = sum(st.session_state.target_dict.values())
@@ -1770,16 +1783,56 @@ if idx_latest is not None:
                 with col3:
                     st.metric(label="📊 总业绩合计", value=f"当日: {df['当日金额'].sum():,.2f}", delta=f"月累: {total_cum:,.2f}")
                     st.caption(f"📈 月完成率: {total_rate}")
+
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
                 df[cols].to_excel(writer, index=False)
-            st.download_button("💾 导出 Excel", data=output.getvalue(), file_name="最新日明细.xlsx", key="export_latest_detail")
+            st.download_button("💾 导出最新日明细", data=output.getvalue(), file_name="最新日明细.xlsx", key="export_latest_detail")
         else:
             st.info("暂无店铺业绩数据，请先上传订单文件")
 
+        st.markdown("---")
 
-
-
+        # ---------- 第二部分：日期查询 ----------
+        st.markdown("#### 🔍 日期查询")
+        if st.session_state.get("df_all_daily") is not None and not st.session_state.df_all_daily.empty:
+            if st.button("📅 今日", key="query_today_daily"):
+                st.session_state["query_date_daily"] = date.today()
+                st.rerun()
+            query_date = st.date_input("查询日期",
+                                       value=st.session_state.get("query_date_daily", date.today()),
+                                       key="query_date_daily")
+            if st.button("查询", key="query_btn_daily"):
+                res = st.session_state.df_all_daily[st.session_state.df_all_daily["日期"] == pd.to_datetime(query_date)].copy()
+                if res.empty:
+                    st.warning("该日期无数据")
+                else:
+                    res = res.sort_values("店铺名称")
+                    res["当日金额"] = res["当日金额"].round(2)
+                    res["月累计金额"] = res["月累计金额"].round(2)
+                    col_name_q = "主播名称" if st.session_state.table_suffix == "_all" else "店铺名称"
+                    cols_q = ["日期", col_name_q, "当日金额", "月累计金额"]
+                    if st.session_state.table_suffix == "_all":
+                        res = res.rename(columns={"店铺名称": "主播名称"})
+                    st.dataframe(res[cols_q], use_container_width=True, hide_index=True)
+                    if st.session_state.table_suffix == "_all":
+                        st.metric("📊 总业绩合计", f"当日: {res['当日金额'].sum():,.2f}", delta=f"月累: {res['月累计金额'].sum():,.2f}")
+                    else:
+                        douyin_df = res[res["店铺名称"].str.contains("抖音", case=False, na=False)]
+                        video_df = res[res["店铺名称"].str.contains("视频号", case=False, na=False)]
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            st.metric("📱 抖音合计", f"当日: {douyin_df['当日金额'].sum():,.2f}", delta=f"月累: {douyin_df['月累计金额'].sum():,.2f}")
+                        with col2:
+                            st.metric("📺 视频号合计", f"当日: {video_df['当日金额'].sum():,.2f}", delta=f"月累: {video_df['月累计金额'].sum():,.2f}")
+                        with col3:
+                            st.metric("📊 总业绩合计", f"当日: {res['当日金额'].sum():,.2f}", delta=f"月累: {res['月累计金额'].sum():,.2f}")
+                    output_q = io.BytesIO()
+                    with pd.ExcelWriter(output_q, engine='openpyxl') as writer:
+                        res[cols_q].to_excel(writer, index=False)
+                    st.download_button("💾 导出查询结果", data=output_q.getvalue(), file_name=f"查询_{query_date}.xlsx", key="export_query_result_daily")
+        else:
+            st.info("暂无数据，请先上传订单文件")
 
 # ========== 发货退货明细 ==========
 if idx_ship_return is not None:
@@ -2918,168 +2971,18 @@ if idx_distribution is not None:
                 else:
                     st.info("当前筛选条件下无首单礼金商品")
 
-# ========== 系统设置 ==========
-if idx_system is not None:
-    with tabs[idx_system]:
-        st.subheader("👥 账号管理与权限设置（按数据源分别设置）")
-        st.info("对每个子账号，可分别配置其在“非直播数据”、“直播数据”、“全部数据”下能看到的选项卡。")
+# ========== 异常预警 ==========
+if idx_alert is not None:
+    with tabs[idx_alert]:
+        st.subheader("⚠️ 异常预警")
+        st.info("展示销售下滑、退货率飙升、目标完成率过低等异常。")
+        # 这里可复用经营驾驶舱中的告警逻辑，但为简洁，目前留空，后续可扩展。
 
-        if st.button("🔄 重新从数据库加载账号"):
-            st.session_state.sub_users = load_sub_accounts_from_db()
-            st.success("已重新加载")
-            st.rerun()
-
-        if st.session_state.sub_users:
-            for username, info in list(st.session_state.sub_users.items()):
-                with st.expander(f"账号：{username}"):
-                    st.markdown(f"**{username}** 的权限配置")
-                    perms = info.get("permissions", {})
-                    for suf in ["", "_live", "_all"]:
-                        if suf not in perms:
-                            perms[suf] = []
-                    
-                    suffix_display = {"": "非直播数据", "_live": "直播数据", "_all": "全部数据"}
-                    
-                    # ---- 使用 st.form 包裹配置，防止即时刷新 ----
-                    with st.form(key=f"form_{username}"):
-                        new_perms = {}
-                        for suf, display_name in suffix_display.items():
-                            # 构建选项列表：全部数据时额外添加“组织与部门分析”
-                            if suf == "_all":
-                                all_options = base_tabs + ["🏢 组织与部门分析"]
-                            else:
-                                all_options = base_tabs
-                            # 默认选中当前权限
-                            default_val = [tab for tab in perms.get(suf, []) if tab in all_options]
-                            selected = st.multiselect(
-                                f"{display_name} 允许的选项卡",
-                                options=all_options,
-                                default=default_val,
-                                key=f"perm_{username}_{suf}"
-                            )
-                            new_perms[suf] = selected
-                        
-                        # 默认数据源
-                        current_default = info.get("default_suffix", "")
-                        default_options = {"非直播数据": "", "全部数据": "_all"}
-                        default_display = [k for k, v in default_options.items() if v == current_default]
-                        default_display = default_display[0] if default_display else "非直播数据"
-                        new_default_display = st.selectbox(
-                            "默认数据源",
-                            options=list(default_options.keys()),
-                            index=list(default_options.keys()).index(default_display),
-                            key=f"default_suffix_{username}"
-                        )
-                        new_default = default_options[new_default_display]
-
-                        # 数据过滤权限
-                        st.markdown("**数据过滤权限**")
-                        platform_options = ["all", "抖音", "视频号"]
-                        current_platform = info.get("filter_platform", "all")
-                        new_platform = st.selectbox(
-                            "限制平台（all=全部）",
-                            options=platform_options,
-                            index=platform_options.index(current_platform) if current_platform in platform_options else 0,
-                            key=f"platform_{username}"
-                        )
-                        
-                        # 获取所有店铺/主播名称（用于过滤）
-                        @st.cache_data(ttl=600)
-                        def get_all_shop_names():
-                            df = load_product_sales(apply_filter=False)
-                            if df.empty:
-                                return []
-                            if st.session_state.table_suffix == "_all":
-                                if "anchor" in df.columns:
-                                    return sorted(df["anchor"].dropna().unique().tolist())
-                                else:
-                                    return []
-                            else:
-                                if "shop_name" in df.columns:
-                                    return sorted(df["shop_name"].dropna().unique().tolist())
-                                else:
-                                    return []
-                        all_shop_names = get_all_shop_names()
-                        current_shop_names = info.get("filter_shop_names", [])
-                        current_shop_names = [name for name in current_shop_names if name in all_shop_names]
-                        new_shop_names = st.multiselect(
-                            "限制店铺/主播（空表示全部）",
-                            options=all_shop_names,
-                            default=current_shop_names,
-                            key=f"shops_{username}"
-                        )
-
-                        # 提交按钮：保存所有权限
-                        submitted = st.form_submit_button("💾 保存全部权限")
-                        if submitted:
-                            # 从 session_state 读取当前值（因为 multiselect 的值已绑定到 session_state）
-                            # 但我们也可以直接从 new_perms 获取，因为它是用 selected 赋值的
-                            # 但 selected 的值在提交时已经是最新的，直接使用 new_perms
-                            # 同时，new_default, new_platform, new_shop_names 也是最新的
-                            st.session_state.sub_users[username]["permissions"] = new_perms
-                            st.session_state.sub_users[username]["default_suffix"] = new_default
-                            st.session_state.sub_users[username]["filter_platform"] = new_platform
-                            st.session_state.sub_users[username]["filter_shop_names"] = new_shop_names
-                            ok, msg = save_sub_account_to_db(username, st.session_state.sub_users[username])
-                            if ok:
-                                st.success(f"权限已保存到数据库")
-                                # 不需要 rerun，因为表单提交后会自动刷新
-                            else:
-                                st.error(f"保存失败：{msg}")
-                    
-                    # 删除按钮（放在表单外部，单独操作）
-                    if st.button(f"删除账号", key=f"del_{username}"):
-                        ok, msg = delete_sub_account_from_db(username)
-                        if ok:
-                            del st.session_state.sub_users[username]
-                            st.success(f"账号 {username} 已删除")
-                            st.rerun()
-                        else:
-                            st.error(f"删除失败：{msg}")
-        else:
-            st.info("暂无子账号")
-        
-        with st.expander("➕ 创建新子账号"):
-            col1, col2 = st.columns(2)
-            with col1:
-                new_username = st.text_input("用户名", key="new_username_sys")
-                new_password = st.text_input("密码", type="password", key="new_password_sys")
-            with col2:
-                default_suffix = st.selectbox("默认数据源", ["非直播数据", "全部数据"], key="new_default_suffix_sys")
-                suffix_map = {"非直播数据": "", "全部数据": "_all"}
-                default_perms = {}
-                for suf in ["", "_live", "_all"]:
-                    if suf == "_all":
-                        default_perms[suf] = base_tabs + ["🏢 组织与部门分析"]
-                    else:
-                        default_perms[suf] = base_tabs
-                default_platform = "all"
-            if st.button("创建子账号", key="create_sys"):
-                if new_username and new_password:
-                    if new_username in st.session_state.sub_users:
-                        st.error("用户名已存在")
-                    else:
-                        new_info = {
-                            "password": new_password,
-                            "role": "viewer",
-                            "default_suffix": suffix_map[default_suffix],
-                            "permissions": default_perms,
-                            "filter_platform": default_platform,
-                            "filter_shop_names": []
-                        }
-                        ok, msg = save_sub_account_to_db(new_username, new_info)
-                        if ok:
-                            st.session_state.sub_users[new_username] = new_info
-                            st.success(f"子账号 {new_username} 创建成功（已保存到数据库）")
-                            st.rerun()
-                        else:
-                            st.error(f"创建失败：{msg}")
-                else:
-                    st.error("请填写用户名和密码")
-
+# ========== 组织与部门分析（仅 _all） ==========
 if idx_org is not None:
     with tabs[idx_org]:
-       
+        st.subheader("🏢 组织与部门分析")
+        st.info("该板块基于「全部数据」源，按组织/部门维度展示经营状况，供销售总监决策参考。")
 
         # ======================== 独立日期选择器 ========================
         @st.cache_data(ttl=600)
@@ -3125,7 +3028,7 @@ if idx_org is not None:
         )
         st.caption(f"当前数据日期范围：{min_date} ~ {max_date}，您可以选择任意日期查看对应数据。")
 
-        # ======================== 1. 核心大盘 KPI（最新日 vs 月累计） ========================
+        # ======================== 1. 核心大盘 KPI ========================
         st.markdown("---")
         st.markdown("#### 📊 营销中心整体销售")
         latest_date = base_date
@@ -3141,13 +3044,11 @@ if idx_org is not None:
             today_return = 0
             today_net = 0
         else:
-            # ✅ 修正点：直接使用 total_net 汇总，不再使用 ship - return
             today_ship = df_today['total_ship'].sum()
             today_return = df_today['total_return'].sum()
             today_net = df_today['total_net'].sum()
 
         if not df_mtd.empty:
-            # ✅ 修正点：直接使用 total_net
             mtd_ship = df_mtd['total_ship'].sum()
             mtd_return = df_mtd['total_return'].sum()
             mtd_net = df_mtd['total_net'].sum()
@@ -3497,6 +3398,170 @@ if idx_org is not None:
         else:
             st.info("点击上方按钮生成 AI 智能总结。")
 
+# ========== 系统设置 ==========
+if idx_system is not None:
+    with tabs[idx_system]:
+        st.subheader("👥 账号管理与权限设置（按数据源分别设置）")
+        st.info("对每个子账号，可分别配置其在“非直播数据”、“直播数据”、“全部数据”下能看到的选项卡。")
+
+        if st.button("🔄 重新从数据库加载账号"):
+            st.session_state.sub_users = load_sub_accounts_from_db()
+            st.success("已重新加载")
+            st.rerun()
+
+        if st.session_state.sub_users:
+            for username, info in list(st.session_state.sub_users.items()):
+                with st.expander(f"账号：{username}"):
+                    st.markdown(f"**{username}** 的权限配置")
+                    perms = info.get("permissions", {})
+                    for suf in ["", "_live", "_all"]:
+                        if suf not in perms:
+                            perms[suf] = []
+                    
+                    suffix_display = {"": "非直播数据", "_live": "直播数据", "_all": "全部数据"}
+                    
+                    # ---- 使用 st.form 包裹配置，防止即时刷新 ----
+                    with st.form(key=f"form_{username}"):
+                        new_perms = {}
+                        for suf, display_name in suffix_display.items():
+                            # 构建选项列表：全部数据时额外添加“组织与部门分析”
+                            if suf == "_all":
+                                all_options = base_tabs + ["🏢 组织与部门分析"]
+                            else:
+                                all_options = base_tabs
+                            # 默认选中当前权限
+                            default_val = [tab for tab in perms.get(suf, []) if tab in all_options]
+                            selected = st.multiselect(
+                                f"{display_name} 允许的选项卡",
+                                options=all_options,
+                                default=default_val,
+                                key=f"perm_{username}_{suf}"
+                            )
+                            new_perms[suf] = selected
+                        
+                        # 默认数据源
+                        current_default = info.get("default_suffix", "")
+                        default_options = {"非直播数据": "", "全部数据": "_all"}
+                        default_display = [k for k, v in default_options.items() if v == current_default]
+                        default_display = default_display[0] if default_display else "非直播数据"
+                        new_default_display = st.selectbox(
+                            "默认数据源",
+                            options=list(default_options.keys()),
+                            index=list(default_options.keys()).index(default_display),
+                            key=f"default_suffix_{username}"
+                        )
+                        new_default = default_options[new_default_display]
+
+                        # 数据过滤权限
+                        st.markdown("**数据过滤权限**")
+                        platform_options = ["all", "抖音", "视频号"]
+                        current_platform = info.get("filter_platform", "all")
+                        new_platform = st.selectbox(
+                            "限制平台（all=全部）",
+                            options=platform_options,
+                            index=platform_options.index(current_platform) if current_platform in platform_options else 0,
+                            key=f"platform_{username}"
+                        )
+                        
+                        # 获取所有店铺/主播名称（用于过滤）
+                        @st.cache_data(ttl=600)
+                        def get_all_shop_names():
+                            df = load_product_sales(apply_filter=False)
+                            if df.empty:
+                                return []
+                            if st.session_state.table_suffix == "_all":
+                                if "anchor" in df.columns:
+                                    return sorted(df["anchor"].dropna().unique().tolist())
+                                else:
+                                    return []
+                            else:
+                                if "shop_name" in df.columns:
+                                    return sorted(df["shop_name"].dropna().unique().tolist())
+                                else:
+                                    return []
+                        all_shop_names = get_all_shop_names()
+                        current_shop_names = info.get("filter_shop_names", [])
+                        current_shop_names = [name for name in current_shop_names if name in all_shop_names]
+                        new_shop_names = st.multiselect(
+                            "限制店铺/主播（空表示全部）",
+                            options=all_shop_names,
+                            default=current_shop_names,
+                            key=f"shops_{username}"
+                        )
+
+                        # 提交按钮：保存所有权限
+                        submitted = st.form_submit_button("💾 保存全部权限")
+                        if submitted:
+                            st.session_state.sub_users[username]["permissions"] = new_perms
+                            st.session_state.sub_users[username]["default_suffix"] = new_default
+                            st.session_state.sub_users[username]["filter_platform"] = new_platform
+                            st.session_state.sub_users[username]["filter_shop_names"] = new_shop_names
+                            ok, msg = save_sub_account_to_db(username, st.session_state.sub_users[username])
+                            if ok:
+                                st.success(f"权限已保存到数据库")
+                            else:
+                                st.error(f"保存失败：{msg}")
+                    
+                    # 删除按钮（放在表单外部，单独操作）
+                    if st.button(f"删除账号", key=f"del_{username}"):
+                        ok, msg = delete_sub_account_from_db(username)
+                        if ok:
+                            del st.session_state.sub_users[username]
+                            st.success(f"账号 {username} 已删除")
+                            st.rerun()
+                        else:
+                            st.error(f"删除失败：{msg}")
+        else:
+            st.info("暂无子账号")
+        
+        with st.expander("➕ 创建新子账号"):
+            col1, col2 = st.columns(2)
+            with col1:
+                new_username = st.text_input("用户名", key="new_username_sys")
+                new_password = st.text_input("密码", type="password", key="new_password_sys")
+            with col2:
+                default_suffix = st.selectbox("默认数据源", ["非直播数据", "全部数据"], key="new_default_suffix_sys")
+                suffix_map = {"非直播数据": "", "全部数据": "_all"}
+                default_perms = {}
+                for suf in ["", "_live", "_all"]:
+                    if suf == "_all":
+                        default_perms[suf] = base_tabs + ["🏢 组织与部门分析"]
+                    else:
+                        default_perms[suf] = base_tabs
+                default_platform = "all"
+            if st.button("创建子账号", key="create_sys"):
+                if new_username and new_password:
+                    if new_username in st.session_state.sub_users:
+                        st.error("用户名已存在")
+                    else:
+                        new_info = {
+                            "password": new_password,
+                            "role": "viewer",
+                            "default_suffix": suffix_map[default_suffix],
+                            "permissions": default_perms,
+                            "filter_platform": default_platform,
+                            "filter_shop_names": []
+                        }
+                        ok, msg = save_sub_account_to_db(new_username, new_info)
+                        if ok:
+                            st.session_state.sub_users[new_username] = new_info
+                            st.success(f"子账号 {new_username} 创建成功（已保存到数据库）")
+                            st.rerun()
+                        else:
+                            st.error(f"创建失败：{msg}")
+                else:
+                    st.error("请填写用户名和密码")
+
+# ========== 调试 ==========
+if idx_debug is not None:
+    with tabs[idx_debug]:
+        st.subheader("🔧 调试信息")
+        st.json({
+            "当前数据源后缀": st.session_state.table_suffix,
+            "每日业绩数据行数": len(st.session_state.df_all_daily) if st.session_state.df_all_daily is not None else 0,
+            "目标字典": st.session_state.target_dict,
+            "子账号数": len(st.session_state.sub_users)
+        })
 
 # ========== 商品库导出 ==========
 if idx_export is not None:
