@@ -1252,7 +1252,6 @@ idx_export = get_tab_index("📚 商品库导出")
 idx_system = get_tab_index("⚙️ 系统设置")
 
 # 兼容旧变量
-idx_latest = idx_shop
 idx_ship_return = idx_data
 idx_history = idx_data
 idx_anchor_compare = idx_anchor
