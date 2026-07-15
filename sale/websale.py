@@ -3295,6 +3295,7 @@ if idx_org is not None:
             st.markdown(f"**📆 月累计（{latest_date.strftime('%Y-%m')}）**")
             st.metric("净销售额", f"¥{mtd_net:,.2f}",
                       delta=f"发货 ¥{mtd_ship:,.2f} | 退货 ¥{mtd_return:,.2f} | 退货率 {mtd_return_rate:.2f}%")
+        st.write(df_today.head(10))
 
         # ======================== 2. 趋势分析（近7天 vs 前7天，重叠显示） ========================
         st.markdown("---")
