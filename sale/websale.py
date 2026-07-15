@@ -3243,7 +3243,6 @@ if idx_org is not None:
             df_today = fetch_sales_summary(latest_date, latest_date, suffix)
             df_mtd = fetch_sales_summary(month_start, latest_date, suffix)
 
-        # KPI 指标计算
         today_ship = df_today['total_ship'].sum() if not df_today.empty else 0
         today_return = df_today['total_return'].sum() if not df_today.empty else 0
         today_net = today_ship - today_return
@@ -3366,6 +3365,9 @@ if idx_org is not None:
 
         with st.spinner(f"加载 {period_label} 数据..."):
             df_period_main = fetch_sales_summary(start_date, end_date, suffix)
+
+        # 调试：检查线下数据是否进入
+        # st.write("调试：df_period_main 包含线下店铺？", df_period_main[df_period_main['shop_name'].str.contains('分销加盟部|唯品会|常州晋陵店|南京J6|南通崇川|无锡中山|芜湖古城|扬州广陵|宜兴八佰伴', case=False, na=False)])
 
         if not df_period_main.empty:
             col_org, col_dept = st.columns(2)
