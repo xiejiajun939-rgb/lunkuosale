@@ -3196,8 +3196,7 @@ if idx_system is not None:
 
 if idx_org is not None:
     with tabs[idx_org]:
-        st.subheader("🏢 组织与部门分析")
-        st.info("该板块基于「全部数据」源，按组织/部门维度展示经营状况，供销售总监决策参考。")
+    
 
         # ---- 获取数据日期范围（仅用于确定默认值） ----
         @st.cache_data(ttl=600)
@@ -3297,8 +3296,9 @@ if idx_org is not None:
             df_7d_daily = df_7d.groupby('sale_date')['total_net'].sum().reset_index()
             df_prev_daily = df_prev.groupby('sale_date')['total_net'].sum().reset_index()
 
-            # 将前7天的日期加7天，使其与近7天日期对齐
-            df_prev_daily['sale_date_aligned'] = df_prev_daily['sale_date'] + timedelta(days=7)
+            # 确保日期列为 datetime 类型，然后加7天
+            df_prev_daily['sale_date'] = pd.to_datetime(df_prev_daily['sale_date'])
+            df_prev_daily['sale_date_aligned'] = df_prev_daily['sale_date'] + pd.Timedelta(days=7)
 
             # 绘制重叠曲线
             fig = go.Figure()
