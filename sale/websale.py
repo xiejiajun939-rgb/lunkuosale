@@ -1255,7 +1255,6 @@ idx_system = get_tab_index("⚙️ 系统设置")
 
 # 兼容旧变量
 idx_latest = idx_shop
-idx_range = idx_trend
 idx_query = idx_shop
 idx_ship_return = idx_data
 idx_history = idx_data
