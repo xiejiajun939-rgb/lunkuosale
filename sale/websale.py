@@ -392,7 +392,35 @@ def extract_anchor(remark):
         return None
     match = re.search(r'主播[：:]([^_]+)', remark)
     return match.group(1).strip() if match else None
+# ========== 新增：RPC 聚合与刷新函数 ==========
+@st.cache_data(ttl=300)
+def fetch_sales_summary(start_date, end_date, suffix=""):
+    """从数据库聚合函数获取汇总数据"""
+    if supabase is None:
+        return pd.DataFrame()
+    try:
+        response = supabase.rpc('get_sales_summary', {
+            'start_date': start_date.isoformat(),
+            'end_date': end_date.isoformat(),
+            'table_suffix': suffix
+        }).execute()
+        if response.data:
+            return pd.DataFrame(response.data)
+        else:
+            return pd.DataFrame()
+    except Exception as e:
+        st.error(f"聚合数据加载失败：{e}")
+        return pd.DataFrame()
 
+def refresh_materialized_view(suffix=""):
+    """刷新物化视图"""
+    if supabase is None:
+        return
+    try:
+        supabase.rpc('refresh_mv', {'suffix': suffix}).execute()
+    except Exception as e:
+        st.warning(f"物化视图刷新失败（不影响数据入库）：{e}")
+# ========== 新增结束 ==========
 # ========== 数据加载函数 ==========
 @st.cache_data(ttl=300)
 def load_daily_sales(suffix=None, apply_filter=True):
@@ -670,11 +698,9 @@ def save_offline_sales(df_orders):
     df['shop_name'] = df['组织名称'].astype(str).str.strip()
     df['amount'] = pd.to_numeric(df['金额/时间'], errors='coerce').fillna(0)
     
-    # 拆分发货和退货（正数为发货，负数为退货）
-    df['ship_amount'] = df['amount'].clip(lower=0)   # 正数部分
-    df['return_amount'] = (-df['amount']).clip(lower=0)  # 负数取正
-    df['net_amount'] = df['amount']  # 净额即为原金额
-    
+    df['ship_amount'] = df['amount'].clip(lower=0)
+    df['return_amount'] = (-df['amount']).clip(lower=0)
+    df['net_amount'] = df['amount']
     df['remark'] = df['备注'].astype(str).str.strip()
 
     records = df[['sale_date', 'shop_name', 'ship_amount', 'return_amount', 'net_amount', 'remark']].to_dict(orient='records')
@@ -693,6 +719,9 @@ def save_offline_sales(df_orders):
                 if attempt == 2:
                     raise e
                 time.sleep(2 ** attempt)
+    # ========== 新增：刷新物化视图（仅全部数据） ==========
+    refresh_materialized_view("_all")
+    # ========== 新增结束 ==========
 def refresh_materialized_view(suffix=""):
     """刷新对应的物化视图（异步）"""
     if supabase is None:
@@ -891,6 +920,9 @@ def process_uploaded_file(uploaded_file, suffix):
             rebuild_daily_data(suffix)
             st.session_state.target_dict = load_targets(suffix)
         latest_date = merged["日期"].max().strftime('%Y-%m-%d') if not merged.empty else "无数据"
+        # ========== 新增：刷新物化视图 ==========
+        refresh_materialized_view(suffix)
+        # ========== 新增结束 ==========
         return True, f"处理完成！最新日期：{latest_date}"
     except Exception as e:
         return False, f"未预料的错误：{str(e)}"
