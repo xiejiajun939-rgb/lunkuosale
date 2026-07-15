@@ -3201,42 +3201,36 @@ if idx_org is not None:
 
         # ---- 日期范围获取（仅查询边界，轻量级） ----
         @st.cache_data(ttl=600)
-    def get_date_range(suffix):
-        """查询数据的最小和最大日期（支持多个表）"""
-        if supabase is None:
-            return None, None
-        try:
-            min_dates = []
-            max_dates = []
-            
-            # 1. 查询 product_sales（根据后缀）
-            table_name = get_table_name("product_sales", suffix)
-            resp = supabase.table(table_name).select("sale_date").order("sale_date", ascending=True).limit(1).execute()
-            if resp.data:
-                min_dates.append(pd.to_datetime(resp.data[0]["sale_date"]).date())
-            resp = supabase.table(table_name).select("sale_date").order("sale_date", ascending=False).limit(1).execute()
-            if resp.data:
-                max_dates.append(pd.to_datetime(resp.data[0]["sale_date"]).date())
-            
-            # 2. 如果是全部数据，额外查询 offline_sales_all
-            if suffix == "_all":
-                # 如果 product_sales_all 没数据，但 offline 有数据，也要纳入
-                offline_resp = supabase.table("offline_sales_all").select("sale_date").order("sale_date", ascending=True).limit(1).execute()
-                if offline_resp.data:
-                    min_dates.append(pd.to_datetime(offline_resp.data[0]["sale_date"]).date())
-                offline_resp = supabase.table("offline_sales_all").select("sale_date").order("sale_date", ascending=False).limit(1).execute()
-                if offline_resp.data:
-                    max_dates.append(pd.to_datetime(offline_resp.data[0]["sale_date"]).date())
-            
-            if min_dates and max_dates:
-                return min(min_dates), max(max_dates)
-            else:
+        def get_date_range(suffix):
+            """查询数据的最小和最大日期（支持多个表）"""
+            if supabase is None:
                 return None, None
-    except Exception as e:
-        # 可临时取消注释查看错误
-        # st.error(f"日期查询错误: {e}")
-        return None, None
+            try:
+                min_dates = []
+                max_dates = []
+                # 1. 查询 product_sales
+                table_name = get_table_name("product_sales", suffix)
+                resp = supabase.table(table_name).select("sale_date").order("sale_date", ascending=True).limit(1).execute()
+                if resp.data:
+                    min_dates.append(pd.to_datetime(resp.data[0]["sale_date"]).date())
+                resp = supabase.table(table_name).select("sale_date").order("sale_date", ascending=False).limit(1).execute()
+                if resp.data:
+                    max_dates.append(pd.to_datetime(resp.data[0]["sale_date"]).date())
+                # 2. 如果是全部数据，额外查询 offline_sales_all
+                if suffix == "_all":
+                    offline_resp = supabase.table("offline_sales_all").select("sale_date").order("sale_date", ascending=True).limit(1).execute()
+                    if offline_resp.data:
+                        min_dates.append(pd.to_datetime(offline_resp.data[0]["sale_date"]).date())
+                    offline_resp = supabase.table("offline_sales_all").select("sale_date").order("sale_date", ascending=False).limit(1).execute()
+                    if offline_resp.data:
+                        max_dates.append(pd.to_datetime(offline_resp.data[0]["sale_date"]).date())
+                if min_dates and max_dates:
+                    return min(min_dates), max(max_dates)
+                return None, None
+            except Exception:
+                return None, None
 
+        # 获取日期范围
         suffix = st.session_state.table_suffix
         min_date, max_date = get_date_range(suffix)
         if min_date is None or max_date is None:
