@@ -3196,7 +3196,8 @@ if idx_system is not None:
 
 if idx_org is not None:
     with tabs[idx_org]:
-    
+        st.subheader("🏢 组织与部门分析")
+        st.info("该板块基于「全部数据」源，按组织/部门维度展示经营状况，供销售总监决策参考。")
 
         # ---- 获取数据日期范围（仅用于确定默认值） ----
         @st.cache_data(ttl=600)
@@ -3292,17 +3293,13 @@ if idx_org is not None:
         # 2.2 双曲线趋势图（重叠对比：X轴为近7天日期，前7天日期偏移+7天）
         st.markdown("##### 每日趋势对比（近7天 vs 前7天同期）")
         if not df_7d.empty and not df_prev.empty:
-            # 按日期聚合每日净额
             df_7d_daily = df_7d.groupby('sale_date')['total_net'].sum().reset_index()
             df_prev_daily = df_prev.groupby('sale_date')['total_net'].sum().reset_index()
 
-            # 确保日期列为 datetime 类型，然后加7天
             df_prev_daily['sale_date'] = pd.to_datetime(df_prev_daily['sale_date'])
             df_prev_daily['sale_date_aligned'] = df_prev_daily['sale_date'] + pd.Timedelta(days=7)
 
-            # 绘制重叠曲线
             fig = go.Figure()
-            # 近7天（实线）
             fig.add_trace(go.Scatter(
                 x=df_7d_daily['sale_date'],
                 y=df_7d_daily['total_net'],
@@ -3311,7 +3308,6 @@ if idx_org is not None:
                 line=dict(color='#22c55e', width=2.5),
                 marker=dict(size=6)
             ))
-            # 前7天（虚线），使用对齐后的日期
             fig.add_trace(go.Scatter(
                 x=df_prev_daily['sale_date_aligned'],
                 y=df_prev_daily['total_net'],
@@ -3336,7 +3332,7 @@ if idx_org is not None:
         else:
             st.info("无足够数据绘制趋势图（需同时拥有近7天和前7天数据）。")
 
-        # ======================== 3. 组织与部门拆解（含独立切换） ========================
+        # ======================== 3. 组织与部门拆解（含独立切换，增加“最新日”选项） ========================
         st.markdown("---")
         st.markdown("#### 🏆 组织与部门业绩拆解")
 
@@ -3344,16 +3340,20 @@ if idx_org is not None:
         st.markdown("##### 组织与部门分布")
         time_mode_main = st.radio(
             "查看周期",
-            options=["近7天", "月累计"],
-            index=0,
+            options=["最新日", "近7天", "月累计"],
+            index=1,  # 默认“近7天”
             horizontal=True,
             key="org_dept_main_mode"
         )
-        if time_mode_main == "近7天":
+        if time_mode_main == "最新日":
+            start_date = latest_date
+            end_date = latest_date
+            period_label = "最新日"
+        elif time_mode_main == "近7天":
             start_date = last_date - timedelta(days=6)
             end_date = last_date
             period_label = "近7天"
-        else:
+        else:  # 月累计
             start_date = last_date.replace(day=1)
             end_date = last_date
             period_label = f"月累计（{last_date.strftime('%Y-%m')}）"
@@ -3395,13 +3395,17 @@ if idx_org is not None:
         st.markdown("#### 退货率警告线")
         time_mode_return = st.radio(
             "查看周期",
-            options=["近7天", "月累计"],
-            index=0,
+            options=["最新日", "近7天", "月累计"],
+            index=1,
             horizontal=True,
             key="org_dept_return_mode",
             label_visibility="collapsed"
         )
-        if time_mode_return == "近7天":
+        if time_mode_return == "最新日":
+            start_date_r = latest_date
+            end_date_r = latest_date
+            period_label_r = "最新日"
+        elif time_mode_return == "近7天":
             start_date_r = last_date - timedelta(days=6)
             end_date_r = last_date
             period_label_r = "近7天"
@@ -3438,13 +3442,17 @@ if idx_org is not None:
         st.markdown("#### 🔍 多维透视（组织 → 平台 → 店铺）")
         time_mode_pivot = st.radio(
             "查看周期",
-            options=["近7天", "月累计"],
-            index=0,
+            options=["最新日", "近7天", "月累计"],
+            index=1,
             horizontal=True,
             key="org_dept_pivot_mode",
             label_visibility="collapsed"
         )
-        if time_mode_pivot == "近7天":
+        if time_mode_pivot == "最新日":
+            start_date_p = latest_date
+            end_date_p = latest_date
+            period_label_p = "最新日"
+        elif time_mode_pivot == "近7天":
             start_date_p = last_date - timedelta(days=6)
             end_date_p = last_date
             period_label_p = "近7天"
@@ -3532,7 +3540,6 @@ if idx_org is not None:
         selected_model = model_options[selected_model_name]
 
         if st.button("🚀 生成智能总结", key="org_generate_ai_summary"):
-            # 使用月累计 + 近7天变化作为上下文
             total_net = mtd_net
             return_rate = mtd_return_rate
             if not df_7d.empty and not df_prev.empty:
