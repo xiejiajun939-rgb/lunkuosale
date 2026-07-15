@@ -1204,7 +1204,6 @@ base_tabs = [
     "🏪 店铺分析",
     "📦 商品分析",
     "🎤 主播分析",
-    "📈 趋势分析",
     "📂 数据管理",
     "📈 销售分布与品牌",
     "⚠️ 异常预警"
@@ -1214,9 +1213,9 @@ admin_extra_tabs = [ "🔧 调试", "📚 商品库导出", "⚙️ 系统设置
 # ---------- 动态插入“组织与部门分析” Tab（仅 _all） ----------
 if st.session_state.table_suffix == "_all":
     base_tabs_with_org = base_tabs.copy()
-    # 插入到“趋势分析”和“数据管理”之间
+    # 插入到“主播分析”和“数据管理”之间
     try:
-        pos = base_tabs_with_org.index("📈 趋势分析") + 1
+        pos = base_tabs_with_org.index("🎤 主播分析") + 1
     except ValueError:
         pos = len(base_tabs_with_org)
     base_tabs_with_org.insert(pos, "🏢 组织与部门分析")
@@ -1246,7 +1245,6 @@ idx_dashboard = get_tab_index("📊 经营驾驶舱")
 idx_shop = get_tab_index("🏪 店铺分析")
 idx_product = get_tab_index("📦 商品分析")
 idx_anchor = get_tab_index("🎤 主播分析")
-idx_trend = get_tab_index("📈 趋势分析")
 idx_data = get_tab_index("📂 数据管理")
 idx_distribution = get_tab_index("📈 销售分布与品牌")
 idx_alert = get_tab_index("⚠️ 异常预警")
@@ -3612,16 +3610,7 @@ if idx_org is not None:
             """, unsafe_allow_html=True)
         else:
             st.info("点击上方按钮生成 AI 智能总结。")
-# ========== 调试 ==========
-if idx_debug is not None:
-    with tabs[idx_debug]:
-        st.subheader("🔧 调试信息")
-        st.json({
-            "当前数据源后缀": st.session_state.table_suffix,
-            "每日业绩数据行数": len(st.session_state.df_all_daily) if st.session_state.df_all_daily is not None else 0,
-            "目标字典": st.session_state.target_dict,
-            "子账号数": len(st.session_state.sub_users)
-        })
+
 
 # ========== 商品库导出 ==========
 if idx_export is not None:
