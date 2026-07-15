@@ -3210,24 +3210,32 @@ if idx_org is not None:
                 max_dates = []
                 # 1. 查询 product_sales
                 table_name = get_table_name("product_sales", suffix)
-                resp = supabase.table(table_name).select("sale_date").order("sale_date", ascending=True).limit(1).execute()
+                
+                # 【修改点1】：Supabase 的排序参数是 desc=False/True，而不是 ascending
+                resp = supabase.table(table_name).select("sale_date").order("sale_date", desc=False).limit(1).execute()
                 if resp.data:
                     min_dates.append(pd.to_datetime(resp.data[0]["sale_date"]).date())
-                resp = supabase.table(table_name).select("sale_date").order("sale_date", ascending=False).limit(1).execute()
+                
+                resp = supabase.table(table_name).select("sale_date").order("sale_date", desc=True).limit(1).execute()
                 if resp.data:
                     max_dates.append(pd.to_datetime(resp.data[0]["sale_date"]).date())
+                
                 # 2. 如果是全部数据，额外查询 offline_sales_all
                 if suffix == "_all":
-                    offline_resp = supabase.table("offline_sales_all").select("sale_date").order("sale_date", ascending=True).limit(1).execute()
+                    offline_resp = supabase.table("offline_sales_all").select("sale_date").order("sale_date", desc=False).limit(1).execute()
                     if offline_resp.data:
                         min_dates.append(pd.to_datetime(offline_resp.data[0]["sale_date"]).date())
-                    offline_resp = supabase.table("offline_sales_all").select("sale_date").order("sale_date", ascending=False).limit(1).execute()
+                    
+                    offline_resp = supabase.table("offline_sales_all").select("sale_date").order("sale_date", desc=True).limit(1).execute()
                     if offline_resp.data:
                         max_dates.append(pd.to_datetime(offline_resp.data[0]["sale_date"]).date())
+                
                 if min_dates and max_dates:
                     return min(min_dates), max(max_dates)
                 return None, None
-            except Exception:
+            except Exception as e:
+                # 【修改点2】：将错误抛出到前端页面，避免“死得不明不白”
+                st.error(f"底层读取日期范围报错: {str(e)}")
                 return None, None
 
         # 获取日期范围
