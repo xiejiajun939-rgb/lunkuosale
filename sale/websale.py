@@ -3315,20 +3315,36 @@ if idx_org is not None:
         return_rate = total_return / (total_ship + 1e-5) * 100
 
         # ---- 近7天与前7天净额（用于趋势对比） ----
-        last_date = max_date
-        period_start = last_date - timedelta(days=6)
-        with st.spinner("计算近7天趋势..."):
-            df_7d = fetch_sales_summary(period_start, last_date, suffix)
-            net_7d = df_7d['total_net'].sum() if not df_7d.empty else 0
-            prev_period_start = last_date - timedelta(days=13)
-            prev_period_end = last_date - timedelta(days=7)
-            df_prev = fetch_sales_summary(prev_period_start, prev_period_end, suffix)
-            net_prev = df_prev['total_net'].sum() if not df_prev.empty else 0
+        # 1. 假设您已经分别获取了近7天和前7天的数据
+        # df_7d 为近7天数据，df_prev 为前7天数据
+        # 确保两个 DataFrame 都有 'sale_date' 和 'total_net' 列
+        
+        # 2. 给数据打标签
+        df_7d['周期'] = '近7天'
+        df_prev['周期'] = '前7天'
+        
+        # 3. 将日期转换为相对天数（例如：都是“周一”、“周二”或 1-7 天，这样才能在 X 轴对齐）
+        # 假设日期已经是 datetime 类型
+        df_7d['相对日期'] = df_7d['sale_date'].dt.strftime('%m-%d')
+        df_prev['相对日期'] = df_prev['sale_date'].dt.strftime('%m-%d')
+        
+        # 4. 合并数据
+        df_combined = pd.concat([df_7d, df_prev])
+        
+        # 5. 使用 Plotly 绘制对比图
+        fig = px.line(
+            df_combined, 
+            x='相对日期', 
+            y='total_net', 
+            color='周期',  # 关键：按周期自动生成两条颜色不同的线
+            markers=True,
+            title='近7天 vs 前7天 每日净销售额对比',
+            labels={'total_net': '净销售额', '相对日期': '日期'}
+        )
 
-        if net_prev != 0:
-            change_7d = ((net_7d - net_prev) / net_prev) * 100
-        else:
-            change_7d = 0
+        # 优化图表显示
+        fig.update_layout(hovermode="x unified") # 统一悬浮提示，方便比对
+        st.plotly_chart(fig, use_container_width=True)
 
         # ---- 总净额大卡片 ----
         st.markdown(
