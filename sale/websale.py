@@ -1201,7 +1201,6 @@ with st.sidebar:
 # ========== 动态创建选项卡 ==========
 base_tabs = [
     "📊 经营驾驶舱",
-    "🏪 店铺分析",
     "📦 商品分析",
     "🎤 主播分析",
     "📂 数据管理",
@@ -1242,7 +1241,6 @@ def get_tab_index(label):
     return tab_labels.index(label) if label in tab_labels else None
 
 idx_dashboard = get_tab_index("📊 经营驾驶舱")
-idx_shop = get_tab_index("🏪 店铺分析")
 idx_product = get_tab_index("📦 商品分析")
 idx_anchor = get_tab_index("🎤 主播分析")
 idx_data = get_tab_index("📂 数据管理")
@@ -1255,7 +1253,6 @@ idx_system = get_tab_index("⚙️ 系统设置")
 
 # 兼容旧变量
 idx_latest = idx_shop
-idx_query = idx_shop
 idx_ship_return = idx_data
 idx_history = idx_data
 idx_anchor_compare = idx_anchor
@@ -1782,47 +1779,7 @@ if idx_latest is not None:
 
 
 
-# ========== 日期查询 ==========
-if idx_query is not None:
-    with tabs[idx_query]:
-        if st.session_state.get("df_all_daily") is not None and not st.session_state.df_all_daily.empty:
-            if st.button("📅 今日", key="query_today"):
-                st.session_state["query_date_final"] = date.today()
-                st.rerun()
-            query_date = st.date_input("查询日期",
-                                       value=st.session_state.get("query_date_final", date.today()),
-                                       key="query_date_final")
-            if st.button("查询", key="query_btn_final"):
-                res = st.session_state.df_all_daily[st.session_state.df_all_daily["日期"] == pd.to_datetime(query_date)].copy()
-                if res.empty:
-                    st.warning("无数据")
-                else:
-                    res = res.sort_values("店铺名称")
-                    res["当日金额"] = res["当日金额"].round(2)
-                    res["月累计金额"] = res["月累计金额"].round(2)
-                    col_name = "主播名称" if st.session_state.table_suffix == "_all" else "店铺名称"
-                    cols = ["日期", col_name, "当日金额", "月累计金额"]
-                    if st.session_state.table_suffix == "_all":
-                        res = res.rename(columns={"店铺名称": "主播名称"})
-                    st.dataframe(res[cols], use_container_width=True, hide_index=True)
-                    if st.session_state.table_suffix == "_all":
-                        st.metric("📊 总业绩合计", f"当日: {res['当日金额'].sum():,.2f}", delta=f"月累: {res['月累计金额'].sum():,.2f}")
-                    else:
-                        douyin_df = res[res["店铺名称"].str.contains("抖音", case=False, na=False)]
-                        video_df = res[res["店铺名称"].str.contains("视频号", case=False, na=False)]
-                        col1, col2, col3 = st.columns(3)
-                        with col1:
-                            st.metric("📱 抖音合计", f"当日: {douyin_df['当日金额'].sum():,.2f}", delta=f"月累: {douyin_df['月累计金额'].sum():,.2f}")
-                        with col2:
-                            st.metric("📺 视频号合计", f"当日: {video_df['当日金额'].sum():,.2f}", delta=f"月累: {video_df['月累计金额'].sum():,.2f}")
-                        with col3:
-                            st.metric("📊 总业绩合计", f"当日: {res['当日金额'].sum():,.2f}", delta=f"月累: {res['月累计金额'].sum():,.2f}")
-                    output = io.BytesIO()
-                    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                        res[cols].to_excel(writer, index=False)
-                    st.download_button("💾 导出", data=output.getvalue(), file_name=f"查询_{query_date}.xlsx", key="export_query_result")
-        else:
-            st.info("暂无数据")
+
 
 # ========== 发货退货明细 ==========
 if idx_ship_return is not None:
