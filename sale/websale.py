@@ -1002,11 +1002,10 @@ rebuild_daily_data(st.session_state.table_suffix)
 if st.session_state.target_dict == {}:
     st.session_state.target_dict = load_targets(st.session_state.table_suffix)
 
-# ========== 侧边栏 ==========
 with st.sidebar:
     st.header("📂 数据加载")
     st.subheader("🔄 数据源切换")
-    suffix_names = {"": "非直播数据", "_all": "全部数据"}
+    suffix_names = {"": "非直播数据", "_all": "全部数据"}   # 已去掉 _live
     current_source_name = suffix_names.get(st.session_state.table_suffix, "未知")
     st.info(f"📌 当前正在查看：**{current_source_name}**")
 
@@ -1021,9 +1020,12 @@ with st.sidebar:
             if suf in perms and perms[suf]:
                 available[name] = suf
         if not available:
-            # 若没有权限，默认展示非直播
             available = {"非直播数据": ""}
         available_suffixes = available
+
+    # 关键行：定义 options
+    options = list(available_suffixes.keys())
+
     if current_source_name in options:
         default_index = options.index(current_source_name)
     else:
@@ -1036,6 +1038,7 @@ with st.sidebar:
             st.cache_data.clear()
             st.rerun()
     st.markdown("---")
+    # ... 其余代码 ...
 
     if st.session_state.role == "admin":
         current_display_suffix = st.session_state.table_suffix
