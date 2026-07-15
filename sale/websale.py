@@ -1465,6 +1465,8 @@ if idx_dashboard is not None:
             <div class="glass-card">
                 <div class="kpi-label">昨日销售</div>
                 <div class="kpi-number">¥{latest_sales:,.0f}</div>
+                <!-- 新增：月累计销售额 -->
+                <div style="font-size:16px; color:#475569; margin-top:4px;">月累计 ¥{month_sales:,.0f}</div>
                 <div style="margin-top:6px;">
                     <span class="{change_class}">{change_text}</span>
                     <span style="color:#64748b;font-size:13px;margin-left:8px;">前日 ¥{prev_sales:,.0f}</span>
@@ -1648,7 +1650,6 @@ if idx_dashboard is not None:
             st.markdown('<div class="section-title">📈 近7日销售趋势</div>', unsafe_allow_html=True)
             last_7 = daily_sales[daily_sales["日期"] >= (latest_date - timedelta(days=6))]
             trend = last_7.sort_values("日期").copy()
-            # ========== 修正：将日期列转换为 datetime 以便使用 .dt ==========
             trend["日期"] = pd.to_datetime(trend["日期"])
 
             if not trend.empty:
@@ -1708,6 +1709,7 @@ if idx_dashboard is not None:
             context = f"""
             部门：{selected_dept if selected_dept != '全部' else '全部'}
             昨日销售：¥{latest_sales:,.0f}
+            月累计：¥{month_sales:,.0f}
             前日销售：¥{prev_sales:,.0f}
             环比变化：{change:+.1f}%
             月目标完成率：{target_rate:.0f}%
