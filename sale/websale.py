@@ -3162,180 +3162,29 @@ if idx_system is not None:
                 else:
                     st.error("请填写用户名和密码")
 
-# ========== 异常预警 ==========
-if idx_alert is not None:
-    with tabs[idx_alert]:
-        st.subheader("⚠️ 异常预警监控")
-        st.info("监控近7天业绩下滑明显的店铺，以及退货率激增的商品。可调整敏感度阈值。")
-        
-        with st.spinner("加载数据..."):
-            daily_df = load_daily_sales(st.session_state.table_suffix)
-            prod_df = load_product_sales(st.session_state.table_suffix)
-        
-        if daily_df.empty or prod_df.empty:
-            st.warning("数据不足，请先上传订单文件。")
-        else:
-            if "shop_name" not in daily_df.columns or "amount" not in daily_df.columns:
-                st.error("daily_sales 表中缺少 shop_name 或 amount 列，请检查数据结构。")
-                st.stop()
-            
-            today = date.today()
-            end_date = today - timedelta(days=1)
-            start_date_recent = end_date - timedelta(days=6)
-            start_date_previous = start_date_recent - timedelta(days=7)
-            end_date_previous = start_date_recent - timedelta(days=1)
-            
-            min_data_date = daily_df["sale_date"].min().date()
-            max_data_date = daily_df["sale_date"].max().date()
-            if start_date_recent < min_data_date:
-                st.warning("数据不足以覆盖近7天，请检查数据日期范围。")
-                st.stop()
-            
-            # 业绩下滑店铺
-            st.markdown("### 📉 业绩下滑店铺（近7天 vs 前7天日均）")
-            col1, col2 = st.columns([2, 1])
-            with col1:
-                decline_threshold = st.slider("下滑幅度阈值（%）", min_value=0, max_value=100, value=20, key="decline_threshold")
-            with col2:
-                min_days = st.number_input("至少需要最近7天有销售天数", min_value=1, max_value=7, value=3, key="min_days")
-            
-            mask_recent = (daily_df["sale_date"] >= pd.to_datetime(start_date_recent)) & (daily_df["sale_date"] <= pd.to_datetime(end_date))
-            mask_previous = (daily_df["sale_date"] >= pd.to_datetime(start_date_previous)) & (daily_df["sale_date"] <= pd.to_datetime(end_date_previous))
-            
-            recent_data = daily_df[mask_recent].copy()
-            previous_data = daily_df[mask_previous].copy()
-            
-            recent_agg = recent_data.groupby("shop_name").agg(
-                近7天总额=("amount", "sum"),
-                近7天天数=("amount", "count")
-            ).reset_index()
-            previous_agg = previous_data.groupby("shop_name").agg(
-                前7天总额=("amount", "sum"),
-                前7天天数=("amount", "count")
-            ).reset_index()
-            
-            merged = pd.merge(recent_agg, previous_agg, on="shop_name", how="inner")
-            merged["近7天日均"] = merged["近7天总额"] / merged["近7天天数"]
-            merged["前7天日均"] = merged["前7天总额"] / merged["前7天天数"]
-            merged = merged[merged["近7天天数"] >= min_days]
-            merged["下滑幅度"] = ((merged["前7天日均"] - merged["近7天日均"]) / merged["前7天日均"] * 100).round(2)
-            decline_df = merged[merged["下滑幅度"] >= decline_threshold].sort_values("下滑幅度", ascending=False)
-            
-            if decline_df.empty:
-                st.success("🎉 近7天没有业绩下滑明显的店铺。")
-            else:
-                st.dataframe(
-                    decline_df[["shop_name", "近7天日均", "前7天日均", "下滑幅度"]],
-                    column_config={
-                        "shop_name": "店铺",
-                        "近7天日均": st.column_config.NumberColumn("近7天日均(¥)", format="%.2f"),
-                        "前7天日均": st.column_config.NumberColumn("前7天日均(¥)", format="%.2f"),
-                        "下滑幅度": st.column_config.NumberColumn("下滑幅度(%)", format="%.2f%%"),
-                    },
-                    use_container_width=True,
-                    hide_index=True
-                )
-                worst = decline_df.iloc[0]
-                st.metric("⚠️ 下滑最严重店铺", worst["shop_name"], delta=f"{worst['下滑幅度']:.2f}%", delta_color="inverse")
-            
-            # 退货率激增商品
-            st.markdown("### 📈 退货率激增商品（近7天 vs 前7天退货率）")
-            col3, col4 = st.columns(2)
-            with col3:
-                return_rate_threshold = st.slider("退货率上升阈值（百分点）", min_value=0, max_value=50, value=10, key="return_rate_threshold")
-            with col4:
-                min_ship_recent = st.number_input("近7天发货金额至少", min_value=0, value=1000, step=100, key="min_ship")
-            
-            prod_recent = prod_df[(prod_df["sale_date"] >= pd.to_datetime(start_date_recent)) & (prod_df["sale_date"] <= pd.to_datetime(end_date))]
-            prod_previous = prod_df[(prod_df["sale_date"] >= pd.to_datetime(start_date_previous)) & (prod_df["sale_date"] <= pd.to_datetime(end_date_previous))]
-            
-            def agg_ship_return(df):
-                return df.groupby("style_code").agg(
-                    发货金额=("ship_amount", "sum"),
-                    退货金额=("return_amount", "sum")
-                ).reset_index()
-            
-            recent_prod = agg_ship_return(prod_recent)
-            previous_prod = agg_ship_return(prod_previous)
-            
-            merged_prod = pd.merge(recent_prod, previous_prod, on="style_code", suffixes=("_近7天", "_前7天"), how="inner")
-            merged_prod = merged_prod[merged_prod["发货金额_近7天"] >= min_ship_recent]
-            merged_prod["退货率_近7天"] = (merged_prod["退货金额_近7天"] / merged_prod["发货金额_近7天"] * 100).round(2)
-            merged_prod["退货率_前7天"] = (merged_prod["退货金额_前7天"] / merged_prod["发货金额_前7天"] * 100).round(2)
-            merged_prod["退货率_前7天"] = merged_prod["退货率_前7天"].fillna(0)
-            merged_prod["退货率变化"] = (merged_prod["退货率_近7天"] - merged_prod["退货率_前7天"]).round(2)
-            return_spike = merged_prod[merged_prod["退货率变化"] >= return_rate_threshold].sort_values("退货率变化", ascending=False)
-            
-            if return_spike.empty:
-                st.success("🎉 近7天没有退货率激增的商品。")
-            else:
-                master_df = load_product_master()
-                if not master_df.empty and "style_code" in master_df.columns:
-                    master_df["style_code"] = master_df["style_code"].astype(str).str.strip().str.upper()
-                    return_spike = return_spike.merge(master_df[["style_code", "category"]], on="style_code", how="left")
-                    return_spike.rename(columns={"category": "分类"}, inplace=True)
-                else:
-                    return_spike["分类"] = "-"
-                
-                st.dataframe(
-                    return_spike[["style_code", "分类", "发货金额_近7天", "退货率_近7天", "退货率_前7天", "退货率变化"]],
-                    column_config={
-                        "style_code": "货号",
-                        "分类": "分类",
-                        "发货金额_近7天": st.column_config.NumberColumn("近7天发货(¥)", format="%.2f"),
-                        "退货率_近7天": st.column_config.NumberColumn("近7天退货率(%)", format="%.2f%%"),
-                        "退货率_前7天": st.column_config.NumberColumn("前7天退货率(%)", format="%.2f%%"),
-                        "退货率变化": st.column_config.NumberColumn("变化(百分点)", format="%.2f"),
-                    },
-                    use_container_width=True,
-                    hide_index=True
-                )
-                worst_prod = return_spike.iloc[0]
-                st.metric("⚠️ 退货率激增最严重商品", worst_prod["style_code"], delta=f"{worst_prod['退货率变化']:.2f} 百分点", delta_color="inverse")
-
 if idx_org is not None:
     with tabs[idx_org]:
         st.subheader("🏢 组织与部门分析")
         st.info("该板块基于「全部数据」源，按组织/部门维度展示经营状况，供销售总监决策参考。")
 
-        # ---- 日期选择 ----
-        # 先获取最小/最大日期（从数据库查询，但为了简化，这里我们假定调用 RPC 前先确定范围）
-        # 由于 RPC 需要日期，我们可以在界面上让用户选择，然后直接请求。
-        # 但我们需要知道数据的最小/最大日期来限定日期选择器范围。
-        # 可以临时加载少量数据获取日期边界，或者使用原来的 load_product_sales 只取日期列。
-        # 为了简单，这里我们沿用之前的逻辑：从 load_product_sales 获取 min/max 日期（但数据量大会慢）
-        # 改进：可以单独查询日期范围，但这里暂时保留原逻辑，但只取日期列。
-        with st.spinner("加载日期范围..."):
-            # 轻量级查询，仅获取日期列（不加载全部数据）
-            # 这里我们直接用 load_product_sales 但只取 sale_date，然后应用日期筛选
-            # 但为了性能，我们可以不在这里加载全部，而是直接让用户选，默认显示最大日期。
-            # 由于我们已经有原代码，此处沿用原日期选择逻辑（但尽量减少数据加载）
-            # 但为了快速实施，我们先用一个简单方法：从数据库中查询最大最小日期（单独查询）
-            # 这里因为改动量小，我们直接使用原有的 prod_df 仅读取日期列（但原 load_product_sales 会拉全量）
-            # 需要优化：单独查询日期范围
-            # 临时方案：使用之前从 load_product_sales 获取 min_date / max_date，但会加载全量。
-            # 建议：创建单独的日期查询函数，但限于篇幅，我在这里提供一个简单实现：
-        # 以下代码使用原方式（会加载全量，但仅此一次，且用于日期选择）
-        # 我们可以使用 st.cache_data 缓存日期范围
+        # ---- 日期范围获取（仅查询边界，轻量级） ----
         @st.cache_data(ttl=600)
         def get_date_range(suffix):
-            # 仅查询最小和最大日期
+            """仅查询数据的最小和最大日期"""
             if supabase is None:
                 return None, None
             try:
                 table_name = get_table_name("product_sales", suffix)
-                # 使用 select min/max 查询
+                # 最小日期
                 resp = supabase.table(table_name).select("sale_date").order("sale_date", ascending=True).limit(1).execute()
-                min_date = resp.data[0]["sale_date"] if resp.data else None
+                min_date = pd.to_datetime(resp.data[0]["sale_date"]).date() if resp.data else None
+                # 最大日期
                 resp = supabase.table(table_name).select("sale_date").order("sale_date", ascending=False).limit(1).execute()
-                max_date = resp.data[0]["sale_date"] if resp.data else None
-                if min_date and max_date:
-                    return pd.to_datetime(min_date).date(), pd.to_datetime(max_date).date()
-                return None, None
-            except:
+                max_date = pd.to_datetime(resp.data[0]["sale_date"]).date() if resp.data else None
+                return min_date, max_date
+            except Exception:
                 return None, None
 
-        # 获取日期范围（针对当前数据源）
         suffix = st.session_state.table_suffix
         min_date, max_date = get_date_range(suffix)
         if min_date is None or max_date is None:
@@ -3411,19 +3260,12 @@ if idx_org is not None:
         total_net = total_ship - total_return
         return_rate = total_return / (total_ship + 1e-5) * 100
 
-        # 近7天指标（基于数据最大日期）
+        # ---- 近7天与前7天净额（用于趋势对比） ----
         last_date = max_date
         period_start = last_date - timedelta(days=6)
-        # 由于我们已有聚合数据，但只包含所选日期的汇总，无法直接计算近7天。
-        # 近7天需要再次调用 RPC 获取近7天数据，但为了性能，我们可以另起一个查询。
-        # 但为了简化，我们在当前 Tab 中只展示所选日期范围的指标，并在 KPI 中增加近7天（如果所选范围正好是近7天）。
-        # 由于我们已经有日期选择器，默认是“最新日”，所以近7天可以另外获取。
-        # 方法：调用 fetch_sales_summary(period_start, last_date, suffix)
-        # 这里我们增加一个缓存，但为简化，我们直接再次调用（数据量小，可以接受）
-        with st.spinner("计算近7天..."):
+        with st.spinner("计算近7天趋势..."):
             df_7d = fetch_sales_summary(period_start, last_date, suffix)
             net_7d = df_7d['total_net'].sum() if not df_7d.empty else 0
-            # 前7天
             prev_period_start = last_date - timedelta(days=13)
             prev_period_end = last_date - timedelta(days=7)
             df_prev = fetch_sales_summary(prev_period_start, prev_period_end, suffix)
@@ -3434,7 +3276,7 @@ if idx_org is not None:
         else:
             change_7d = 0
 
-        # ---- 大卡片展示总净额 ----
+        # ---- 总净额大卡片 ----
         st.markdown(
             f"""
             <div style="background: linear-gradient(135deg, #1e293b, #0f172a); 
@@ -3477,11 +3319,10 @@ if idx_org is not None:
             </div>
             """, unsafe_allow_html=True)
 
-        # ---- 趋势对比图（近7天 vs 前7天） ----
+        # ---- 趋势对比图 ----
         st.markdown("---")
         st.markdown("#### 📈 近7天 vs 前7天 每日净销售额趋势")
 
-        # 获取近7天每日数据（按日期分组）
         if not df_7d.empty:
             df_7d_daily = df_7d.groupby('sale_date')['total_net'].sum().reset_index()
         else:
@@ -3530,7 +3371,6 @@ if idx_org is not None:
         col_b1, col_b2 = st.columns(2)
 
         with col_b1:
-            # 组织饼图（仅显示正净额）
             org_agg = df_summary.groupby('org_name')['total_net'].sum().reset_index()
             positive = org_agg[org_agg['total_net'] > 0].copy()
             if not positive.empty:
@@ -3544,7 +3384,6 @@ if idx_org is not None:
                 st.warning("当前所选日期范围内没有盈利的组织，无法绘制饼图。")
 
         with col_b2:
-            # 部门排行
             dept_agg = df_summary.groupby('dept')['total_net'].sum().reset_index()
             dept_net = dept_agg[dept_agg['total_net'] != 0].sort_values('total_net', ascending=True)
             if not dept_net.empty:
@@ -3579,11 +3418,10 @@ if idx_org is not None:
         else:
             st.info("无有效部门数据")
 
-        # ---- 模块 C：多维透视（原生 expander） ----
+        # ---- 模块 C：多维透视 ----
         st.markdown("---")
         st.markdown("#### 🔍 多维数据透视与穿透")
 
-        # 平台识别（根据 shop_name）
         def get_platform(shop_name):
             if shop_name.startswith('天猫'):
                 return '天猫'
@@ -3613,7 +3451,6 @@ if idx_org is not None:
         if df_pivot.empty:
             st.info("当前筛选条件下无数据")
         else:
-            # 组织-平台-店铺 分组
             grouped = df_pivot.groupby(['org_name', 'platform', 'shop_name']).agg(
                 ship=('total_ship', 'sum'),
                 return_amt=('total_return', 'sum'),
@@ -3689,7 +3526,7 @@ if idx_org is not None:
         if alert_negative.empty and alert_high_return.empty:
             st.success("🎉 所有部门/店铺运营正常，无重大异常。")
 
-        # ---- AI 智能分析 ----
+        # ---- AI 智能总结 ----
         st.markdown("---")
         st.markdown("#### 🤖 AI 智能总结")
 
@@ -3709,7 +3546,6 @@ if idx_org is not None:
         selected_model = model_options[selected_model_name]
 
         if st.button("🚀 生成智能总结", key="org_generate_ai_summary"):
-            # 准备上下文
             org_net = df_summary.groupby('org_name')['total_net'].sum().sort_values(ascending=False).head(3)
             org_text = "\n".join([f"{i+1}. {org}: ¥{amt:,.0f}" for i, (org, amt) in enumerate(org_net.items())]) if not org_net.empty else "暂无"
             dept_return = df_summary.groupby('dept').agg(ship=('total_ship', 'sum'), return_amt=('total_return', 'sum')).reset_index()
