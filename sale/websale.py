@@ -3233,16 +3233,54 @@ if idx_org is not None:
             st.warning("无法获取数据日期范围，请检查数据表是否存在。")
             st.stop()
 
-        # ======================== 1. 核心大盘 KPI（最新日 vs 月累计） ========================
+                # ======================== 1. 核心大盘 KPI（最新日 vs 月累计，含线下） ========================
         st.markdown("---")
         st.markdown("#### 📊 核心大盘 KPI")
-        latest_date = max_date
+        
+        # 获取含线下的最大日期（确保最新日包含线下数据）
+        def get_latest_including_offline(suffix):
+            if supabase is None:
+                return None
+            try:
+                max_dates = []
+                # 线上最大日期
+                table_name = get_table_name("product_sales", suffix)
+                resp = supabase.table(table_name).select("sale_date").order("sale_date", desc=True).limit(1).execute()
+                if resp.data:
+                    max_dates.append(pd.to_datetime(resp.data[0]["sale_date"]).date())
+                if suffix == "_all":
+                    # 线下最大日期
+                    offline_resp = supabase.table("offline_sales_all").select("sale_date").order("sale_date", desc=True).limit(1).execute()
+                    if offline_resp.data:
+                        max_dates.append(pd.to_datetime(offline_resp.data[0]["sale_date"]).date())
+                if max_dates:
+                    return max(max_dates)
+                return None
+            except:
+                return None
+
+        latest_date = get_latest_including_offline(suffix)
+        if latest_date is None:
+            st.warning("无法获取最新日期")
+            st.stop()
+            
         month_start = latest_date.replace(day=1)
 
-        with st.spinner("加载 KPI 数据..."):
+        with st.spinner(f"加载最新日（{latest_date}）及月累计数据..."):
             df_today = fetch_sales_summary(latest_date, latest_date, suffix)
             df_mtd = fetch_sales_summary(month_start, latest_date, suffix)
 
+        # 如果最新日无数据（可能线上有更晚日期但无线下，但我们已经取了最大日期，所以应该会有数据）
+        # 如果 df_today 为空，则回退到月累计中最近有数据的日期
+        if df_today.empty or df_today['total_net'].sum() == 0:
+            if not df_mtd.empty and 'sale_date' in df_mtd.columns:
+                available_dates = df_mtd['sale_date'].unique()
+                if len(available_dates) > 0:
+                    fallback_date = max(available_dates)
+                    latest_date = fallback_date
+                    df_today = fetch_sales_summary(latest_date, latest_date, suffix)
+
+        # 重新计算指标
         today_ship = df_today['total_ship'].sum() if not df_today.empty else 0
         today_return = df_today['total_return'].sum() if not df_today.empty else 0
         today_net = today_ship - today_return
@@ -3254,7 +3292,7 @@ if idx_org is not None:
 
         col1, col2 = st.columns(2)
         with col1:
-            st.markdown("**📅 最新日（T日）**")
+            st.markdown(f"**📅 最新日（{latest_date}）**")
             st.metric("净销售额", f"¥{today_net:,.2f}",
                       delta=f"发货 ¥{today_ship:,.2f} | 退货 ¥{today_return:,.2f}")
         with col2:
