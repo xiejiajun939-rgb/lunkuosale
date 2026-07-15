@@ -1780,77 +1780,7 @@ if idx_latest is not None:
         else:
             st.info("暂无店铺业绩数据，请先上传订单文件")
 
-# ========== 日期范围累计 ==========
-if idx_range is not None:
-    with tabs[idx_range]:
-        if st.session_state.get("df_all_daily") is not None and not st.session_state.df_all_daily.empty:
-            date_quick_buttons("range_start_final", "range_end_final",
-                               default_start=date.today().replace(day=1),
-                               default_end=date.today())
-            start = st.session_state.get("range_start_final", date.today().replace(day=1))
-            end = st.session_state.get("range_end_final", date.today())
 
-            with st.spinner("加载数据..."):
-                prod_df = load_product_sales(st.session_state.table_suffix)
-            if prod_df.empty:
-                st.warning("无商品数据，无法计算发货/退货")
-            else:
-                if st.session_state.table_suffix == "_all":
-                    if "anchor" not in prod_df.columns:
-                        prod_df["anchor"] = prod_df["remark"].astype(str).apply(extract_anchor)
-                    group_col = "anchor"
-                    name_col = "主播名称"
-                else:
-                    group_col = "shop_name"
-                    name_col = "店铺名称"
-                all_values = prod_df[group_col].dropna().unique().tolist()
-                all_values = sorted([v for v in all_values if v != "" and v is not None])
-                selected_values = st.multiselect(
-                    f"筛选 {name_col}（不选则显示全部）",
-                    options=all_values,
-                    default=[]
-                )
-                if st.button("计算累计", key="calc_range_final"):
-                    if start > end:
-                        st.error("开始日期不能晚于结束日期")
-                    else:
-                        mask = (prod_df["sale_date"] >= pd.to_datetime(start)) & (prod_df["sale_date"] <= pd.to_datetime(end))
-                        range_data = prod_df[mask].copy()
-                        if range_data.empty:
-                            st.warning("所选日期范围内无数据")
-                        else:
-                            if selected_values:
-                                range_data = range_data[range_data[group_col].isin(selected_values)]
-                            if range_data.empty:
-                                st.warning("所选维度在日期范围内无数据")
-                                summary = pd.DataFrame(columns=[name_col, "发货金额", "退货金额", "净销售金额"])
-                                st.dataframe(summary, use_container_width=True, hide_index=True)
-                            else:
-                                summary = range_data.groupby(group_col).agg(
-                                    发货金额=("ship_amount", "sum"),
-                                    退货金额=("return_amount", "sum"),
-                                    净销售金额=("net_amount", "sum")
-                                ).reset_index().rename(columns={group_col: name_col})
-                                summary["发货金额"] = summary["发货金额"].round(2)
-                                summary["退货金额"] = summary["退货金额"].round(2)
-                                summary["净销售金额"] = summary["净销售金额"].round(2)
-                                st.dataframe(summary, use_container_width=True, hide_index=True)
-                                total_ship = summary["发货金额"].sum()
-                                total_return = summary["退货金额"].sum()
-                                total_net = summary["净销售金额"].sum()
-                                col1, col2, col3 = st.columns(3)
-                                with col1:
-                                    st.metric("📦 总发货", f"{total_ship:,.2f}")
-                                with col2:
-                                    st.metric("📦 总退货", f"{total_return:,.2f}")
-                                with col3:
-                                    st.metric("📊 净销售额", f"{total_net:,.2f}")
-                                output = io.BytesIO()
-                                with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                                    summary.to_excel(writer, index=False)
-                                st.download_button("💾 导出", data=output.getvalue(), file_name=f"累计_{start}_{end}.xlsx", key="export_range_summary")
-        else:
-            st.info("暂无数据，请先上传订单文件")
 
 # ========== 日期查询 ==========
 if idx_query is not None:
