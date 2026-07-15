@@ -693,6 +693,14 @@ def save_offline_sales(df_orders):
                 if attempt == 2:
                     raise e
                 time.sleep(2 ** attempt)
+def refresh_materialized_view(suffix=""):
+    """刷新对应的物化视图（异步）"""
+    if supabase is None:
+        return
+    try:
+        supabase.rpc('refresh_mv', {'suffix': suffix}).execute()
+    except Exception as e:
+        st.warning(f"物化视图刷新失败（不影响数据入库）：{e}")
 
 # ========== 核心修改：load_product_sales（仅对 _all 增加维度关联） ==========
 @st.cache_data(ttl=300)
@@ -886,6 +894,7 @@ def process_uploaded_file(uploaded_file, suffix):
         return True, f"处理完成！最新日期：{latest_date}"
     except Exception as e:
         return False, f"未预料的错误：{str(e)}"
+refresh_materialized_view(suffix)        
 
 def load_target_file(uploaded_file, suffix):
     try:
@@ -3289,30 +3298,50 @@ if idx_org is not None:
         st.subheader("🏢 组织与部门分析")
         st.info("该板块基于「全部数据」源，按组织/部门维度展示经营状况，供销售总监决策参考。")
 
-        # ---- 加载数据 ----
-        with st.spinner("加载组织/部门数据..."):
-            prod_df = load_product_sales(st.session_state.table_suffix)
-            
-            # 如果数据为空，直接提示并停止
-            if prod_df.empty:
-                st.warning("暂无商品数据，请先上传订单文件或线下收入数据。")
-                st.stop()
-            
-            # 检查必备列，如果缺少则尝试补全或提示
-            required_cols = ['ship_amount', 'return_amount', 'org_name', 'dept']
-            missing = [c for c in required_cols if c not in prod_df.columns]
-            if missing:
-                # 尝试补全缺失列（如果列不存在，则填充默认值）
-                for col in missing:
-                    if col in ['org_name', 'dept']:
-                        prod_df[col] = '未分配' if col == 'org_name' else '未分配部门'
-                    else:
-                        prod_df[col] = 0
-                st.warning(f"数据缺少部分列：{missing}，已自动补全默认值。")
-
         # ---- 日期选择 ----
-        min_date = prod_df["sale_date"].min().date()
-        max_date = prod_df["sale_date"].max().date()
+        # 先获取最小/最大日期（从数据库查询，但为了简化，这里我们假定调用 RPC 前先确定范围）
+        # 由于 RPC 需要日期，我们可以在界面上让用户选择，然后直接请求。
+        # 但我们需要知道数据的最小/最大日期来限定日期选择器范围。
+        # 可以临时加载少量数据获取日期边界，或者使用原来的 load_product_sales 只取日期列。
+        # 为了简单，这里我们沿用之前的逻辑：从 load_product_sales 获取 min/max 日期（但数据量大会慢）
+        # 改进：可以单独查询日期范围，但这里暂时保留原逻辑，但只取日期列。
+        with st.spinner("加载日期范围..."):
+            # 轻量级查询，仅获取日期列（不加载全部数据）
+            # 这里我们直接用 load_product_sales 但只取 sale_date，然后应用日期筛选
+            # 但为了性能，我们可以不在这里加载全部，而是直接让用户选，默认显示最大日期。
+            # 由于我们已经有原代码，此处沿用原日期选择逻辑（但尽量减少数据加载）
+            # 但为了快速实施，我们先用一个简单方法：从数据库中查询最大最小日期（单独查询）
+            # 这里因为改动量小，我们直接使用原有的 prod_df 仅读取日期列（但原 load_product_sales 会拉全量）
+            # 需要优化：单独查询日期范围
+            # 临时方案：使用之前从 load_product_sales 获取 min_date / max_date，但会加载全量。
+            # 建议：创建单独的日期查询函数，但限于篇幅，我在这里提供一个简单实现：
+        # 以下代码使用原方式（会加载全量，但仅此一次，且用于日期选择）
+        # 我们可以使用 st.cache_data 缓存日期范围
+        @st.cache_data(ttl=600)
+        def get_date_range(suffix):
+            # 仅查询最小和最大日期
+            if supabase is None:
+                return None, None
+            try:
+                table_name = get_table_name("product_sales", suffix)
+                # 使用 select min/max 查询
+                resp = supabase.table(table_name).select("sale_date").order("sale_date", ascending=True).limit(1).execute()
+                min_date = resp.data[0]["sale_date"] if resp.data else None
+                resp = supabase.table(table_name).select("sale_date").order("sale_date", ascending=False).limit(1).execute()
+                max_date = resp.data[0]["sale_date"] if resp.data else None
+                if min_date and max_date:
+                    return pd.to_datetime(min_date).date(), pd.to_datetime(max_date).date()
+                return None, None
+            except:
+                return None, None
+
+        # 获取日期范围（针对当前数据源）
+        suffix = st.session_state.table_suffix
+        min_date, max_date = get_date_range(suffix)
+        if min_date is None or max_date is None:
+            st.warning("无法获取数据日期范围，请检查数据表是否存在。")
+            st.stop()
+
         st.markdown("#### 📅 日期范围")
 
         if 'org_start_date' not in st.session_state:
@@ -3366,22 +3395,46 @@ if idx_org is not None:
             st.error("开始日期不能晚于结束日期")
             st.stop()
 
-        # ---- 过滤日期 ----
-        mask = (prod_df["sale_date"] >= pd.to_datetime(start_date)) & (prod_df["sale_date"] <= pd.to_datetime(end_date))
-        df = prod_df[mask].copy()  # 确保 df 被定义
+        # ---- 调用 RPC 聚合函数 ----
+        with st.spinner("加载聚合数据..."):
+            df_summary = fetch_sales_summary(start_date, end_date, suffix)
 
-        if df.empty:
+        if df_summary.empty:
             st.warning("所选日期范围内无数据")
             st.stop()
 
         # ---- 模块 A：核心 KPI ----
         st.markdown("---")
         st.markdown("#### 📊 核心大盘 KPI")
-        total_ship = df['ship_amount'].sum()
-        total_return = df['return_amount'].sum()
+        total_ship = df_summary['total_ship'].sum()
+        total_return = df_summary['total_return'].sum()
         total_net = total_ship - total_return
         return_rate = total_return / (total_ship + 1e-5) * 100
 
+        # 近7天指标（基于数据最大日期）
+        last_date = max_date
+        period_start = last_date - timedelta(days=6)
+        # 由于我们已有聚合数据，但只包含所选日期的汇总，无法直接计算近7天。
+        # 近7天需要再次调用 RPC 获取近7天数据，但为了性能，我们可以另起一个查询。
+        # 但为了简化，我们在当前 Tab 中只展示所选日期范围的指标，并在 KPI 中增加近7天（如果所选范围正好是近7天）。
+        # 由于我们已经有日期选择器，默认是“最新日”，所以近7天可以另外获取。
+        # 方法：调用 fetch_sales_summary(period_start, last_date, suffix)
+        # 这里我们增加一个缓存，但为简化，我们直接再次调用（数据量小，可以接受）
+        with st.spinner("计算近7天..."):
+            df_7d = fetch_sales_summary(period_start, last_date, suffix)
+            net_7d = df_7d['total_net'].sum() if not df_7d.empty else 0
+            # 前7天
+            prev_period_start = last_date - timedelta(days=13)
+            prev_period_end = last_date - timedelta(days=7)
+            df_prev = fetch_sales_summary(prev_period_start, prev_period_end, suffix)
+            net_prev = df_prev['total_net'].sum() if not df_prev.empty else 0
+
+        if net_prev != 0:
+            change_7d = ((net_7d - net_prev) / net_prev) * 100
+        else:
+            change_7d = 0
+
+        # ---- 大卡片展示总净额 ----
         st.markdown(
             f"""
             <div style="background: linear-gradient(135deg, #1e293b, #0f172a); 
@@ -3390,7 +3443,7 @@ if idx_org is not None:
                         margin-bottom: 16px;
                         box-shadow: 0 8px 24px rgba(0,0,0,0.12);">
                 <div style="color: #94a3b8; font-size: 14px; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px;">
-                    总净销售额
+                    总净销售额（{start_date} ~ {end_date}）
                 </div>
                 <div style="color: #ffffff; font-size: 48px; font-weight: 700; letter-spacing: -1px;">
                     ¥{total_net:,.2f}
@@ -3403,13 +3456,72 @@ if idx_org is not None:
             unsafe_allow_html=True
         )
 
-        col1, col2, col3 = st.columns(3)
+        col1, col2, col3, col4 = st.columns(4)
         with col1:
             st.metric("总发货额", f"¥{total_ship:,.2f}")
         with col2:
             st.metric("总退货额", f"¥{total_return:,.2f}")
         with col3:
             st.metric("综合退货率", f"{return_rate:.2f}%", delta="需关注" if return_rate > 50 else "正常")
+        with col4:
+            change_text = f"{'▲' if change_7d >= 0 else '▼'} {abs(change_7d):.1f}%" if change_7d != 0 else "持平"
+            change_class = "change-up" if change_7d >= 0 else "change-down"
+            st.markdown(f"""
+            <div class="glass-card" style="padding: 16px 20px;">
+                <div style="font-size: 13px; color: #475569; text-transform: uppercase; letter-spacing: 0.3px;">近7天净销售额</div>
+                <div style="font-size: 28px; font-weight: 700; color: #0f172a; margin: 4px 0;">¥{net_7d:,.0f}</div>
+                <div style="font-size: 13px;">
+                    <span class="{change_class}">{change_text}</span>
+                    <span style="color:#64748b;margin-left:8px;">前7天 ¥{net_prev:,.0f}</span>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+        # ---- 趋势对比图（近7天 vs 前7天） ----
+        st.markdown("---")
+        st.markdown("#### 📈 近7天 vs 前7天 每日净销售额趋势")
+
+        # 获取近7天每日数据（按日期分组）
+        if not df_7d.empty:
+            df_7d_daily = df_7d.groupby('sale_date')['total_net'].sum().reset_index()
+        else:
+            df_7d_daily = pd.DataFrame()
+        if not df_prev.empty:
+            df_prev_daily = df_prev.groupby('sale_date')['total_net'].sum().reset_index()
+        else:
+            df_prev_daily = pd.DataFrame()
+
+        if not df_7d_daily.empty or not df_prev_daily.empty:
+            fig_trend = go.Figure()
+            if not df_7d_daily.empty:
+                fig_trend.add_trace(go.Scatter(
+                    x=df_7d_daily['sale_date'],
+                    y=df_7d_daily['total_net'],
+                    mode='lines+markers',
+                    name='近7天',
+                    line=dict(color='#22c55e', width=2.5),
+                    marker=dict(size=6)
+                ))
+            if not df_prev_daily.empty:
+                fig_trend.add_trace(go.Scatter(
+                    x=df_prev_daily['sale_date'],
+                    y=df_prev_daily['total_net'],
+                    mode='lines+markers',
+                    name='前7天',
+                    line=dict(color='#3b82f6', width=2.5, dash='dash'),
+                    marker=dict(size=6)
+                ))
+            fig_trend.update_layout(
+                height=280,
+                margin=dict(l=0, r=0, t=10, b=0),
+                hovermode='x unified',
+                legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1),
+                yaxis_title='净销售额 (¥)',
+                xaxis_title='日期'
+            )
+            st.plotly_chart(fig_trend, use_container_width=True)
+        else:
+            st.info("无数据可绘制趋势图")
 
         # ---- 模块 B：组织与部门赛马 ----
         st.markdown("---")
@@ -3418,12 +3530,11 @@ if idx_org is not None:
         col_b1, col_b2 = st.columns(2)
 
         with col_b1:
-            org_agg = df.groupby('org_name').agg(ship=('ship_amount', 'sum'), return_amt=('return_amount', 'sum')).reset_index()
-            org_agg['net'] = org_agg['ship'] - org_agg['return_amt']
-            positive = org_agg[org_agg['net'] > 0].copy()
-
+            # 组织饼图（仅显示正净额）
+            org_agg = df_summary.groupby('org_name')['total_net'].sum().reset_index()
+            positive = org_agg[org_agg['total_net'] > 0].copy()
             if not positive.empty:
-                fig_org = px.pie(positive, names='org_name', values='net',
+                fig_org = px.pie(positive, names='org_name', values='total_net',
                                  title='各组织净销售额占比（仅显示盈利组织）',
                                  hole=0.4,
                                  color_discrete_sequence=px.colors.qualitative.Pastel)
@@ -3433,28 +3544,46 @@ if idx_org is not None:
                 st.warning("当前所选日期范围内没有盈利的组织，无法绘制饼图。")
 
         with col_b2:
-            dept_agg = df.groupby('dept').agg(ship=('ship_amount', 'sum'), return_amt=('return_amount', 'sum')).reset_index()
-            dept_agg['net'] = dept_agg['ship'] - dept_agg['return_amt']
-            dept_net = dept_agg[dept_agg['net'] != 0].sort_values('net', ascending=True)
+            # 部门排行
+            dept_agg = df_summary.groupby('dept')['total_net'].sum().reset_index()
+            dept_net = dept_agg[dept_agg['total_net'] != 0].sort_values('total_net', ascending=True)
             if not dept_net.empty:
                 top15 = dept_net.tail(15)
-                fig_dept = px.bar(top15, x='net', y='dept', orientation='h',
+                fig_dept = px.bar(top15, x='total_net', y='dept', orientation='h',
                                   title='各部门净销售额排行（TOP15）',
-                                  labels={'net': '净销售额', 'dept': '部门'},
-                                  color='net', color_continuous_scale='Blues')
+                                  labels={'total_net': '净销售额', 'dept': '部门'},
+                                  color='total_net', color_continuous_scale='Blues')
                 fig_dept.update_layout(yaxis={'categoryorder': 'total ascending'})
                 st.plotly_chart(fig_dept, use_container_width=True)
             else:
                 st.info("无部门数据")
 
-                # ---- 模块 C：多维透视（原生 expander） ----
+        # ---- 退货率警告线 ----
+        st.markdown("#### 退货率警告线")
+        dept_return = df_summary.groupby('dept').agg(
+            ship=('total_ship', 'sum'),
+            return_amt=('total_return', 'sum')
+        ).reset_index()
+        dept_return['退货率'] = (dept_return['return_amt'] / (dept_return['ship'] + 1e-5) * 100).round(2)
+        dept_return = dept_return[dept_return['ship'] > 0]
+        if not dept_return.empty:
+            top10 = dept_return.sort_values('退货率', ascending=False).head(10)
+            fig_return = px.bar(top10, x='dept', y='退货率',
+                                title='退货率 TOP10 部门（红色 > 50%，橙色 > 30%）',
+                                labels={'dept': '部门', '退货率': '退货率 (%)'},
+                                color=top10['退货率'],
+                                color_continuous_scale='RdYlGn_r')
+            fig_return.add_hline(y=50, line_dash="dash", line_color="red", annotation_text="警戒线 50%")
+            fig_return.add_hline(y=30, line_dash="dash", line_color="orange", annotation_text="注意线 30%")
+            st.plotly_chart(fig_return, use_container_width=True)
+        else:
+            st.info("无有效部门数据")
+
+        # ---- 模块 C：多维透视（原生 expander） ----
         st.markdown("---")
         st.markdown("#### 🔍 多维数据透视与穿透")
 
-        # 确保 dept 和 org_name 是字符串类型（防止 TypeError）
-        df['dept'] = df['dept'].astype(str).fillna('未分配部门')
-        df['org_name'] = df['org_name'].astype(str).fillna('未分配组织')
-
+        # 平台识别（根据 shop_name）
         def get_platform(shop_name):
             if shop_name.startswith('天猫'):
                 return '天猫'
@@ -3467,9 +3596,9 @@ if idx_org is not None:
             else:
                 return '其他'
 
-        df['platform'] = df['shop_name'].apply(get_platform)
+        df_summary['platform'] = df_summary['shop_name'].apply(get_platform)
 
-        all_depts = sorted(df['dept'].unique())
+        all_depts = sorted(df_summary['dept'].unique())
         selected_depts = st.multiselect(
             "选择要查看的部门（留空则显示全部）",
             options=all_depts,
@@ -3477,18 +3606,19 @@ if idx_org is not None:
             key="org_pivot_dept_filter_expander"
         )
         if selected_depts:
-            df_pivot = df[df['dept'].isin(selected_depts)]
+            df_pivot = df_summary[df_summary['dept'].isin(selected_depts)]
         else:
-            df_pivot = df
+            df_pivot = df_summary
 
         if df_pivot.empty:
             st.info("当前筛选条件下无数据")
         else:
+            # 组织-平台-店铺 分组
             grouped = df_pivot.groupby(['org_name', 'platform', 'shop_name']).agg(
-                ship=('ship_amount', 'sum'),
-                return_amt=('return_amount', 'sum')
+                ship=('total_ship', 'sum'),
+                return_amt=('total_return', 'sum'),
+                net=('total_net', 'sum')
             ).reset_index()
-            grouped['net'] = grouped['ship'] - grouped['return_amt']
             grouped['退货率'] = (grouped['return_amt'] / (grouped['ship'] + 1e-5) * 100).round(2)
             grouped['退货率'] = grouped['退货率'].map(lambda x: f"{x:.2f}%")
 
@@ -3536,19 +3666,16 @@ if idx_org is not None:
                     file_name=f"组织部门明细_{start_date}_{end_date}.xlsx",
                     key="download_expander"
                 )
-        # 确保分组列是字符串
-        df['org_name'] = df['org_name'].astype(str)
-        df['dept'] = df['dept'].astype(str)
-        df['shop_name'] = df['shop_name'].astype(str)
+
         # ---- 模块 D：异常预警 ----
         st.markdown("---")
         st.markdown("#### ⚠️ 异常决策预警")
 
-        alert_df = df.groupby(['org_name', 'dept', 'shop_name']).agg(
-            ship=('ship_amount', 'sum'),
-            return_amt=('return_amount', 'sum')
+        alert_df = df_summary.groupby(['org_name', 'dept', 'shop_name']).agg(
+            ship=('total_ship', 'sum'),
+            return_amt=('total_return', 'sum'),
+            net=('total_net', 'sum')
         ).reset_index()
-        alert_df['net'] = alert_df['ship'] - alert_df['return_amt']
         alert_df['退货率'] = (alert_df['return_amt'] / (alert_df['ship'] + 1e-5) * 100)
         alert_negative = alert_df[alert_df['net'] < 0]
         alert_high_return = alert_df[alert_df['退货率'] > 65]
@@ -3561,6 +3688,68 @@ if idx_org is not None:
                 st.warning(f"⚠️ 退货率异常偏高（>{65}%）：{row['org_name']} -> {row['dept']} -> {row['shop_name']}，退货率 {row['退货率']:.1f}%")
         if alert_negative.empty and alert_high_return.empty:
             st.success("🎉 所有部门/店铺运营正常，无重大异常。")
+
+        # ---- AI 智能分析 ----
+        st.markdown("---")
+        st.markdown("#### 🤖 AI 智能总结")
+
+        model_options = {
+            "DeepSeek-V3": "deepseek-ai/DeepSeek-V3",
+            "DeepSeek-R1": "deepseek-ai/DeepSeek-R1",
+            "Qwen2.5-72B": "Qwen/Qwen2.5-72B-Instruct",
+            "Qwen2.5-7B": "Qwen/Qwen2.5-7B-Instruct",
+            "GLM-4-9B": "glm-4-9b-chat"
+        }
+        selected_model_name = st.selectbox(
+            "选择 AI 模型",
+            options=list(model_options.keys()),
+            index=1,
+            key="org_ai_model_select"
+        )
+        selected_model = model_options[selected_model_name]
+
+        if st.button("🚀 生成智能总结", key="org_generate_ai_summary"):
+            # 准备上下文
+            org_net = df_summary.groupby('org_name')['total_net'].sum().sort_values(ascending=False).head(3)
+            org_text = "\n".join([f"{i+1}. {org}: ¥{amt:,.0f}" for i, (org, amt) in enumerate(org_net.items())]) if not org_net.empty else "暂无"
+            dept_return = df_summary.groupby('dept').agg(ship=('total_ship', 'sum'), return_amt=('total_return', 'sum')).reset_index()
+            dept_return['退货率'] = (dept_return['return_amt'] / (dept_return['ship'] + 1e-5) * 100)
+            dept_return = dept_return.sort_values('退货率', ascending=False).head(3)
+            dept_text = "\n".join([f"{row['dept']}: {row['退货率']:.1f}%" for _, row in dept_return.iterrows()]) if not dept_return.empty else "暂无"
+
+            context = f"""
+            分析期间：{start_date} 至 {end_date}
+            总净销售额：¥{total_net:,.2f}
+            综合退货率：{return_rate:.2f}%
+            近7天净销售额：¥{net_7d:,.2f}（前7天：¥{net_prev:,.2f}，变化 {change_7d:+.1f}%）
+            净销售额 TOP3 组织：
+            {org_text}
+            退货率 TOP3 部门：
+            {dept_text}
+            """
+
+            prompt = """
+            你是一位资深的电商运营总监。请根据以上数据，用一段专业、简洁的中文总结当前组织与部门的经营状况。
+            要求：
+            1. 突出表现最好的组织和最需要关注的部门。
+            2. 结合近7天趋势，给出短期策略建议。
+            3. 若发现异常（如退货率极高、净额下滑），明确指出来。
+            """
+
+            with st.spinner("🤖 AI 正在分析，请稍候..."):
+                ai_summary = get_ai_summary(prompt, context, selected_model)
+
+            st.session_state.org_ai_summary = ai_summary
+            st.rerun()
+
+        if st.session_state.get("org_ai_summary"):
+            st.markdown(f"""
+            <div style="background:rgba(34,197,94,0.08);border:1px solid rgba(34,197,94,0.2);border-radius:12px;padding:16px 20px;margin-top:10px;">
+                <div style="color:#1e293b;font-size:14px;line-height:1.7;">{st.session_state.org_ai_summary}</div>
+            </div>
+            """, unsafe_allow_html=True)
+        else:
+            st.info("点击上方按钮生成 AI 智能总结。")
 # ========== 调试 ==========
 if idx_debug is not None:
     with tabs[idx_debug]:
