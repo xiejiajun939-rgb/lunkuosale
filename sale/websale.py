@@ -926,7 +926,7 @@ def process_uploaded_file(uploaded_file, suffix):
         return True, f"处理完成！最新日期：{latest_date}"
     except Exception as e:
         return False, f"未预料的错误：{str(e)}"
-refresh_materialized_view(suffix)        
+
 
 def load_target_file(uploaded_file, suffix):
     try:
