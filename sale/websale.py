@@ -395,14 +395,13 @@ def extract_anchor(remark):
 # ========== 新增：RPC 聚合与刷新函数 ==========
 @st.cache_data(ttl=300)
 def fetch_sales_summary(start_date, end_date, suffix=""):
-    """从数据库聚合函数获取汇总数据"""
     if supabase is None:
         return pd.DataFrame()
     try:
         response = supabase.rpc('get_sales_summary', {
             'start_date': start_date.isoformat(),
             'end_date': end_date.isoformat(),
-            'table_suffix': suffix
+            'table_suffix': suffix   # 确保这里传递的是 suffix
         }).execute()
         if response.data:
             return pd.DataFrame(response.data)
