@@ -1368,7 +1368,6 @@ if idx_dashboard is not None:
 
         # ---------- 加载数据 ----------
         with st.spinner("加载数据..."):
-            # 商品明细（已包含线下收入，且含有部门字段 dept，仅 _all 有效）
             prod_df = load_product_sales(st.session_state.table_suffix)
         
         if prod_df.empty:
@@ -1376,7 +1375,6 @@ if idx_dashboard is not None:
             st.stop()
 
         # ---------- 部门筛选 ----------
-        # 检查是否存在部门列且有有效值
         has_dept = 'dept' in prod_df.columns and prod_df['dept'].notna().any()
         if has_dept:
             depts = sorted(prod_df['dept'].dropna().unique())
@@ -1391,7 +1389,7 @@ if idx_dashboard is not None:
             selected_dept = '全部'
             st.caption("当前数据源无部门维度，显示全部数据。")
 
-        # ---------- 按日期汇总净销售额（基于过滤后的数据） ----------
+        # ---------- 按日期汇总净销售额 ----------
         daily_sales = prod_df.groupby(prod_df["sale_date"].dt.date)["net_amount"].sum().reset_index()
         daily_sales.columns = ["日期", "amount"]
         daily_sales = daily_sales.sort_values("日期")
@@ -1421,26 +1419,20 @@ if idx_dashboard is not None:
         month_mask = daily_sales["日期"] >= month_start
         month_sales = daily_sales.loc[month_mask, "amount"].sum()
 
-        # 目标达成率（目标基于店铺，但过滤部门后，只取该部门下店铺的目标）
-        # 注意：目标表 shop_targets 可能没有部门维度，所以先获取所有店铺目标，然后只统计当前部门下的店铺
-        target_dict = st.session_state.target_dict  # 全局目标
+        target_dict = st.session_state.target_dict
         if target_dict and has_dept and selected_dept != '全部':
-            # 获取当前部门下的所有店铺（从 prod_df 中提取唯一店铺）
             dept_shops = prod_df['shop_name'].unique()
-            # 只累加这些店铺的目标
             dept_target = sum([target_dict.get(shop, 0) for shop in dept_shops])
         else:
             dept_target = sum(target_dict.values())
 
         target_rate = (month_sales / dept_target * 100) if dept_target > 0 else 0
 
-        # 退货率（基于最新日商品明细）
         latest_prod = prod_df[prod_df["sale_date"].dt.date == latest_date]
         ship_latest = latest_prod["ship_amount"].sum()
         return_latest = latest_prod["return_amount"].sum()
         return_rate = (return_latest / ship_latest * 100) if ship_latest > 0 else 0
 
-        # 健康度
         health_score = 70
         if target_rate > 80:
             health_score += 15
@@ -1454,7 +1446,7 @@ if idx_dashboard is not None:
             health_score += 5
         health_score = min(100, health_score)
 
-        # ---------- KPI 卡片行 ----------
+        # ---------- KPI 卡片 ----------
         col1, col2, col3, col4 = st.columns(4)
 
         with col1:
@@ -1531,14 +1523,6 @@ if idx_dashboard is not None:
         start_date_recent = end_date - timedelta(days=6)
         start_date_previous = start_date_recent - timedelta(days=7)
 
-        # 近7天 vs 前7天（按店铺聚合，基于过滤后的 prod_df）
-        # 为了简化，仍按店铺维度，但仅限当前部门（已过滤）
-        if has_dept and selected_dept != '全部':
-            # 部门已过滤，直接按店铺聚合
-            pass
-
-        # 按店铺聚合每日销售（从 daily_sales 无法按店铺，需要从 prod_df 聚合）
-        # 使用 prod_df 按店铺和日期聚合
         shop_daily = prod_df.groupby([prod_df["sale_date"].dt.date, "shop_name"])["net_amount"].sum().reset_index()
         shop_daily.columns = ["日期", "shop_name", "amount"]
 
@@ -1559,7 +1543,6 @@ if idx_dashboard is not None:
             for _, row in merged.head(3).iterrows():
                 alerts.append(("#f87171" if row["下滑"] > 40 else "#fbbf24", f"📉 {row['shop_name']} 近7天销售下降 {row['下滑']:.0f}%"))
 
-        # 退货率上升（按货号）
         prod_recent = prod_df[(prod_df["sale_date"] >= pd.to_datetime(start_date_recent)) & (prod_df["sale_date"] <= pd.to_datetime(end_date))]
         prod_previous = prod_df[(prod_df["sale_date"] >= pd.to_datetime(start_date_previous)) & (prod_df["sale_date"] <= pd.to_datetime(start_date_recent - timedelta(days=1)))]
 
@@ -1577,9 +1560,7 @@ if idx_dashboard is not None:
             for _, row in merged_prod.head(3).iterrows():
                 alerts.append(("#f87171" if row["变化"] > 20 else "#fbbf24", f"📦 {row['style_code']} 退货率上升 {row['变化']:.1f} 个百分点"))
 
-        # 目标完成率不足30%（针对当前部门下的店铺）
         if target_dict and has_dept and selected_dept != '全部':
-            # 只检查当前部门的店铺
             dept_shop_names = prod_df['shop_name'].unique()
             for shop in dept_shop_names:
                 target = target_dict.get(shop, 0)
@@ -1588,7 +1569,6 @@ if idx_dashboard is not None:
                     if shop_sales / target < 0.3:
                         alerts.append(("#f87171", f"🎯 {shop} 月目标完成率不足30%"))
         elif target_dict and (not has_dept or selected_dept == '全部'):
-            # 全部店铺检查
             for shop, target in target_dict.items():
                 shop_sales = shop_daily[(shop_daily["日期"] >= month_start) & (shop_daily["shop_name"] == shop)]["amount"].sum()
                 if target > 0 and shop_sales / target < 0.3:
@@ -1613,7 +1593,6 @@ if idx_dashboard is not None:
 
         with col_left:
             st.markdown('<div class="section-title">🏆 店铺排行</div>', unsafe_allow_html=True)
-            # 基于最新日的店铺销售排行
             shop_latest = prod_df[prod_df["sale_date"].dt.date == latest_date].groupby("shop_name")["net_amount"].sum().sort_values(ascending=False).head(5)
 
             if not shop_latest.empty:
@@ -1636,7 +1615,6 @@ if idx_dashboard is not None:
             else:
                 st.info("暂无数据")
 
-            # 退货排行
             st.markdown('<div class="section-title" style="margin-top:16px;">📊 退货排行</div>', unsafe_allow_html=True)
             prod_latest = prod_df[prod_df["sale_date"].dt.date == latest_date]
             if not prod_latest.empty:
@@ -1668,9 +1646,10 @@ if idx_dashboard is not None:
 
         with col_right:
             st.markdown('<div class="section-title">📈 近7日销售趋势</div>', unsafe_allow_html=True)
-            # 使用 daily_sales（已过滤部门）
             last_7 = daily_sales[daily_sales["日期"] >= (latest_date - timedelta(days=6))]
-            trend = last_7.sort_values("日期")
+            trend = last_7.sort_values("日期").copy()
+            # ========== 修正：将日期列转换为 datetime 以便使用 .dt ==========
+            trend["日期"] = pd.to_datetime(trend["日期"])
 
             if not trend.empty:
                 fig = px.line(
