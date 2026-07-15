@@ -3199,7 +3199,9 @@ if idx_org is not None:
         st.subheader("🏢 组织与部门分析")
         st.info("该板块基于「全部数据」源，按组织/部门维度展示经营状况，供销售总监决策参考。")
 
-        # ---- 获取数据日期范围（仅用于确定默认值） ----
+        # ======================== 独立日期选择器 ========================
+        # 默认值为数据中的最大日期（含线下），但保留用户可调
+        # 我们使用 get_date_range 获取最大日期作为默认值
         @st.cache_data(ttl=600)
         def get_date_range(suffix):
             if supabase is None:
@@ -3233,68 +3235,63 @@ if idx_org is not None:
             st.warning("无法获取数据日期范围，请检查数据表是否存在。")
             st.stop()
 
-                # ======================== 1. 核心大盘 KPI（最新日 vs 月累计，含线下） ========================
+        st.markdown("#### 📅 日期选择")
+        # 用户选择基准日期，默认最大日期
+        base_date = st.date_input(
+            "选择分析基准日期",
+            value=max_date,
+            min_value=min_date,
+            max_value=max_date,
+            key="org_base_date"
+        )
+        st.caption(f"当前数据日期范围：{min_date} ~ {max_date}，您可以选择任意日期查看对应数据。")
+
+        # ======================== 1. 核心大盘 KPI（最新日 vs 月累计） ========================
         st.markdown("---")
         st.markdown("#### 📊 核心大盘 KPI")
-        
-        # 获取含线下的最大日期（确保最新日包含线下数据）
-        def get_latest_including_offline(suffix):
-            if supabase is None:
-                return None
-            try:
-                max_dates = []
-                # 线上最大日期
-                table_name = get_table_name("product_sales", suffix)
-                resp = supabase.table(table_name).select("sale_date").order("sale_date", desc=True).limit(1).execute()
-                if resp.data:
-                    max_dates.append(pd.to_datetime(resp.data[0]["sale_date"]).date())
-                if suffix == "_all":
-                    # 线下最大日期
-                    offline_resp = supabase.table("offline_sales_all").select("sale_date").order("sale_date", desc=True).limit(1).execute()
-                    if offline_resp.data:
-                        max_dates.append(pd.to_datetime(offline_resp.data[0]["sale_date"]).date())
-                if max_dates:
-                    return max(max_dates)
-                return None
-            except:
-                return None
-
-        latest_date = get_latest_including_offline(suffix)
-        if latest_date is None:
-            st.warning("无法获取最新日期")
-            st.stop()
-            
+        # 最新日 = 用户选择的日期
+        latest_date = base_date
         month_start = latest_date.replace(day=1)
 
-        with st.spinner(f"加载最新日（{latest_date}）及月累计数据..."):
+        with st.spinner("加载 KPI 数据..."):
             df_today = fetch_sales_summary(latest_date, latest_date, suffix)
             df_mtd = fetch_sales_summary(month_start, latest_date, suffix)
 
-        # 如果最新日无数据（可能线上有更晚日期但无线下，但我们已经取了最大日期，所以应该会有数据）
-        # 如果 df_today 为空，则回退到月累计中最近有数据的日期
-        if df_today.empty or df_today['total_net'].sum() == 0:
-            if not df_mtd.empty and 'sale_date' in df_mtd.columns:
-                available_dates = df_mtd['sale_date'].unique()
-                if len(available_dates) > 0:
-                    fallback_date = max(available_dates)
-                    latest_date = fallback_date
-                    df_today = fetch_sales_summary(latest_date, latest_date, suffix)
+        # 如果最新日无数据，尝试取该日期后最近有数据的日期（提示用户）
+        if df_today.empty:
+            # 尝试从月累计中找该日期所在月的数据，若没有则提示
+            if df_mtd.empty:
+                st.warning(f"所选日期 {latest_date} 及其所在月均无数据，请选择其他日期。")
+            else:
+                # 月累计有数据，但当日没有，可显示月累计数据，但最新日设为无数据
+                today_ship = 0
+                today_return = 0
+                today_net = 0
+                st.info(f"所选日期 {latest_date} 无销售数据，以下显示月累计数据。")
+        else:
+            today_ship = df_today['total_ship'].sum()
+            today_return = df_today['total_return'].sum()
+            today_net = today_ship - today_return
 
-        # 重新计算指标
-        today_ship = df_today['total_ship'].sum() if not df_today.empty else 0
-        today_return = df_today['total_return'].sum() if not df_today.empty else 0
-        today_net = today_ship - today_return
-
-        mtd_ship = df_mtd['total_ship'].sum() if not df_mtd.empty else 0
-        mtd_return = df_mtd['total_return'].sum() if not df_mtd.empty else 0
-        mtd_net = mtd_ship - mtd_return
-        mtd_return_rate = (mtd_return / (mtd_ship + 1e-5) * 100) if mtd_ship > 0 else 0
+        if not df_mtd.empty:
+            mtd_ship = df_mtd['total_ship'].sum()
+            mtd_return = df_mtd['total_return'].sum()
+            mtd_net = mtd_ship - mtd_return
+            mtd_return_rate = (mtd_return / (mtd_ship + 1e-5) * 100) if mtd_ship > 0 else 0
+        else:
+            mtd_ship = 0
+            mtd_return = 0
+            mtd_net = 0
+            mtd_return_rate = 0
 
         col1, col2 = st.columns(2)
         with col1:
-            st.markdown(f"**📅 最新日（{latest_date}）**")
-            st.metric("净销售额", f"¥{today_net:,.2f}",
-                      delta=f"发货 ¥{today_ship:,.2f} | 退货 ¥{today_return:,.2f}")
+            st.markdown(f"**📅 最新日（{latest_date.strftime('%Y-%m-%d')}）**")
+            if df_today.empty:
+                st.metric("净销售额", "无数据")
+            else:
+                st.metric("净销售额", f"¥{today_net:,.2f}",
+                          delta=f"发货 ¥{today_ship:,.2f} | 退货 ¥{today_return:,.2f}")
         with col2:
             st.markdown(f"**📆 月累计（{latest_date.strftime('%Y-%m')}）**")
             st.metric("净销售额", f"¥{mtd_net:,.2f}",
@@ -3304,13 +3301,15 @@ if idx_org is not None:
         st.markdown("---")
         st.markdown("#### 📈 趋势分析：近7天 vs 前7天")
 
-        last_date = max_date
-        period_start = last_date - timedelta(days=6)
-        prev_period_start = last_date - timedelta(days=13)
-        prev_period_end = last_date - timedelta(days=7)
+        # 基于用户选择的基准日期计算两个周期
+        # 近7天：从 base_date-6 到 base_date
+        # 前7天：从 base_date-13 到 base_date-7
+        period_start = base_date - timedelta(days=6)
+        prev_period_start = base_date - timedelta(days=13)
+        prev_period_end = base_date - timedelta(days=7)
 
         with st.spinner("加载趋势数据..."):
-            df_7d = fetch_sales_summary(period_start, last_date, suffix)
+            df_7d = fetch_sales_summary(period_start, base_date, suffix)
             df_prev = fetch_sales_summary(prev_period_start, prev_period_end, suffix)
 
         # 2.1 汇总统计表格
@@ -3339,7 +3338,7 @@ if idx_org is not None:
             # 确保日期列为 datetime 类型
             df_7d_daily['sale_date'] = pd.to_datetime(df_7d_daily['sale_date'])
             df_prev_daily['sale_date'] = pd.to_datetime(df_prev_daily['sale_date'])
-            # 前7天日期加7天对齐
+            # 前7天日期加7天对齐到近7天日期
             df_prev_daily['sale_date_aligned'] = df_prev_daily['sale_date'] + pd.Timedelta(days=7)
 
             fig = go.Figure()
@@ -3383,29 +3382,22 @@ if idx_org is not None:
         st.markdown("##### 组织与部门分布")
         time_mode_main = st.radio(
             "查看周期",
-            options=["最新日", "近7天", "月累计"],
-            index=1,
+            options=["近7天", "月累计"],
+            index=0,
             horizontal=True,
             key="org_dept_main_mode"
         )
-        if time_mode_main == "最新日":
-            start_date = latest_date
-            end_date = latest_date
-            period_label = "最新日"
-        elif time_mode_main == "近7天":
-            start_date = last_date - timedelta(days=6)
-            end_date = last_date
+        if time_mode_main == "近7天":
+            start_date = base_date - timedelta(days=6)
+            end_date = base_date
             period_label = "近7天"
         else:
-            start_date = last_date.replace(day=1)
-            end_date = last_date
-            period_label = f"月累计（{last_date.strftime('%Y-%m')}）"
+            start_date = base_date.replace(day=1)
+            end_date = base_date
+            period_label = f"月累计（{base_date.strftime('%Y-%m')}）"
 
         with st.spinner(f"加载 {period_label} 数据..."):
             df_period_main = fetch_sales_summary(start_date, end_date, suffix)
-
-        # 调试：检查线下数据是否进入
-        # st.write("调试：df_period_main 包含线下店铺？", df_period_main[df_period_main['shop_name'].str.contains('分销加盟部|唯品会|常州晋陵店|南京J6|南通崇川|无锡中山|芜湖古城|扬州广陵|宜兴八佰伴', case=False, na=False)])
 
         if not df_period_main.empty:
             col_org, col_dept = st.columns(2)
@@ -3441,24 +3433,20 @@ if idx_org is not None:
         st.markdown("#### 退货率警告线")
         time_mode_return = st.radio(
             "查看周期",
-            options=["最新日", "近7天", "月累计"],
-            index=1,
+            options=["近7天", "月累计"],
+            index=0,
             horizontal=True,
             key="org_dept_return_mode",
             label_visibility="collapsed"
         )
-        if time_mode_return == "最新日":
-            start_date_r = latest_date
-            end_date_r = latest_date
-            period_label_r = "最新日"
-        elif time_mode_return == "近7天":
-            start_date_r = last_date - timedelta(days=6)
-            end_date_r = last_date
+        if time_mode_return == "近7天":
+            start_date_r = base_date - timedelta(days=6)
+            end_date_r = base_date
             period_label_r = "近7天"
         else:
-            start_date_r = last_date.replace(day=1)
-            end_date_r = last_date
-            period_label_r = f"月累计（{last_date.strftime('%Y-%m')}）"
+            start_date_r = base_date.replace(day=1)
+            end_date_r = base_date
+            period_label_r = f"月累计（{base_date.strftime('%Y-%m')}）"
 
         with st.spinner(f"加载退货率数据（{period_label_r}）..."):
             df_return = fetch_sales_summary(start_date_r, end_date_r, suffix)
@@ -3488,24 +3476,20 @@ if idx_org is not None:
         st.markdown("#### 🔍 多维透视（组织 → 平台 → 店铺）")
         time_mode_pivot = st.radio(
             "查看周期",
-            options=["最新日", "近7天", "月累计"],
-            index=1,
+            options=["近7天", "月累计"],
+            index=0,
             horizontal=True,
             key="org_dept_pivot_mode",
             label_visibility="collapsed"
         )
-        if time_mode_pivot == "最新日":
-            start_date_p = latest_date
-            end_date_p = latest_date
-            period_label_p = "最新日"
-        elif time_mode_pivot == "近7天":
-            start_date_p = last_date - timedelta(days=6)
-            end_date_p = last_date
+        if time_mode_pivot == "近7天":
+            start_date_p = base_date - timedelta(days=6)
+            end_date_p = base_date
             period_label_p = "近7天"
         else:
-            start_date_p = last_date.replace(day=1)
-            end_date_p = last_date
-            period_label_p = f"月累计（{last_date.strftime('%Y-%m')}）"
+            start_date_p = base_date.replace(day=1)
+            end_date_p = base_date
+            period_label_p = f"月累计（{base_date.strftime('%Y-%m')}）"
 
         with st.spinner(f"加载透视数据（{period_label_p}）..."):
             df_pivot = fetch_sales_summary(start_date_p, end_date_p, suffix)
@@ -3542,7 +3526,7 @@ if idx_org is not None:
         else:
             st.warning(f"{period_label_p} 无数据，无法显示透视表。")
 
-        # ---------- 3.4 异常预警（使用与“组织与部门分布”相同的数据） ----------
+        # ---------- 3.4 异常预警 ----------
         st.markdown("---")
         st.markdown("#### ⚠️ 异常决策预警")
         if not df_period_main.empty:
@@ -3587,8 +3571,8 @@ if idx_org is not None:
 
         if st.button("🚀 生成智能总结", key="org_generate_ai_summary"):
             # 使用月累计 + 近7天变化作为上下文
-            total_net = mtd_net
-            return_rate = mtd_return_rate
+            total_net = mtd_net if not df_mtd.empty else 0
+            return_rate = mtd_return_rate if not df_mtd.empty else 0
             if not df_7d.empty and not df_prev.empty:
                 total_7d = df_7d['total_net'].sum()
                 total_prev = df_prev['total_net'].sum() if not df_prev.empty else 0
