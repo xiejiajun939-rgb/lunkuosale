@@ -3195,8 +3195,7 @@ if idx_system is not None:
 
 if idx_org is not None:
     with tabs[idx_org]:
-        st.subheader("🏢 组织与部门分析")
-        st.info("该板块基于「全部数据」源，按组织/部门维度展示经营状况，供销售总监决策参考。")
+       
 
         # ======================== 独立日期选择器 ========================
         @st.cache_data(ttl=600)
@@ -3244,7 +3243,7 @@ if idx_org is not None:
 
         # ======================== 1. 核心大盘 KPI（最新日 vs 月累计） ========================
         st.markdown("---")
-        st.markdown("#### 📊 核心大盘 KPI")
+        st.markdown("#### 📊 营销中心整体销售")
         latest_date = base_date
         month_start = latest_date.replace(day=1)
 
@@ -3359,7 +3358,7 @@ if idx_org is not None:
 
         # ======================== 3. 组织与部门拆解 ========================
         st.markdown("---")
-        st.markdown("#### 🏆 组织与部门业绩拆解")
+        st.markdown("#### 🏆 阿米巴组织与部门业绩拆解")
 
         # ---------- 3.1 组织饼图 + 部门排行 ----------
         st.markdown("##### 组织与部门分布")
@@ -3389,12 +3388,12 @@ if idx_org is not None:
                 positive_org = org_agg[org_agg['total_net'] > 0].copy()
                 if not positive_org.empty:
                     fig_org = px.pie(positive_org, names='org_name', values='total_net',
-                                     title=f'各组织净销售额占比（{period_label}）',
+                                     title=f'各阿米巴净销售额占比（{period_label}）',
                                      hole=0.4, color_discrete_sequence=px.colors.qualitative.Pastel)
                     fig_org.update_traces(textposition='inside', textinfo='percent+label')
                     st.plotly_chart(fig_org, use_container_width=True)
                 else:
-                    st.info("无盈利组织")
+                    st.info("无盈利阿米巴")
 
             with col_dept:
                 dept_agg = df_period_main.groupby('dept')['total_net'].sum().reset_index()
@@ -3403,14 +3402,14 @@ if idx_org is not None:
                     top10 = dept_agg.head(10)
                     fig_dept = px.bar(top10, x='total_net', y='dept', orientation='h',
                                       title=f'部门净销售额排行（TOP10，{period_label}）',
-                                      labels={'total_net': '净销售额', 'dept': '部门'},
+                                      labels={'total_net': '净销售额', 'dept': '渠道'},
                                       color='total_net', color_continuous_scale='Blues')
                     fig_dept.update_layout(yaxis={'categoryorder': 'total ascending'})
                     st.plotly_chart(fig_dept, use_container_width=True)
                 else:
-                    st.info("无部门数据")
+                    st.info("无渠道数据")
         else:
-            st.warning(f"{period_label} 无数据，无法显示组织/部门分布。")
+            st.warning(f"{period_label} 无数据，无法显示阿米巴/渠道分布。")
 
         # ---------- 3.2 退货率警告线 ----------
         st.markdown("#### 退货率警告线")
@@ -3451,12 +3450,12 @@ if idx_org is not None:
                 fig_return.add_hline(y=30, line_dash="dash", line_color="orange", annotation_text="注意线 30%")
                 st.plotly_chart(fig_return, use_container_width=True)
             else:
-                st.info("无有效部门数据")
+                st.info("无有效渠道数据")
         else:
             st.warning(f"{period_label_r} 无数据，无法显示退货率。")
 
         # ---------- 3.3 多维透视 ----------
-        st.markdown("#### 🔍 多维透视（组织 → 平台 → 店铺）")
+        st.markdown("#### 🔍 多维透视（渠道 → 平台 → 店铺）")
         time_mode_pivot = st.radio(
             "查看周期",
             options=["近7天", "月累计"],
@@ -3585,16 +3584,16 @@ if idx_org is not None:
             总净销售额：¥{total_net:,.2f}
             综合退货率：{return_rate:.2f}%
             近7天净销售额：¥{net_7d:,.2f}（前7天：¥{net_prev:,.2f}，变化 {change_7d:+.1f}%）
-            净销售额 TOP3 组织：
+            净销售额 TOP3 阿米巴：
             {org_text}
-            退货率 TOP3 部门：
+            退货率 TOP3 渠道：
             {dept_text}
             """
 
             prompt = """
             你是一位资深的电商运营总监。请根据以上数据，用一段专业、简洁的中文总结当前组织与部门的经营状况。
             要求：
-            1. 突出表现最好的组织和最需要关注的部门。
+            1. 突出表现最好的阿米巴和最需要关注的渠道。
             2. 结合近7天趋势，给出短期策略建议。
             3. 若发现异常（如退货率极高、净额下滑），明确指出来。
             """
