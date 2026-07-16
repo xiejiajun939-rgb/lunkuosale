@@ -228,7 +228,7 @@ if "monthly_actual" not in st.session_state:
 if "processing_upload" not in st.session_state:
     st.session_state.processing_upload = False
 
-# ========== 新增：维度映射加载函数 ==========
+# ========== 维度映射加载函数 ==========
 @st.cache_data(ttl=600)
 def load_dimension_mapping() -> pd.DataFrame:
     """从 Supabase 加载 shop+anchor -> org/dept 映射表"""
@@ -392,7 +392,8 @@ def extract_anchor(remark):
         return None
     match = re.search(r'主播[：:]([^_]+)', remark)
     return match.group(1).strip() if match else None
-# ========== 新增：RPC 聚合与刷新函数 ==========
+
+# ========== RPC 聚合与刷新函数 ==========
 @st.cache_data(ttl=300)
 def fetch_sales_summary(start_date, end_date, suffix=""):
     if supabase is None:
@@ -401,7 +402,7 @@ def fetch_sales_summary(start_date, end_date, suffix=""):
         response = supabase.rpc('get_sales_summary', {
             'start_date': start_date.isoformat(),
             'end_date': end_date.isoformat(),
-            'table_suffix': suffix   # 确保这里传递的是 suffix
+            'table_suffix': suffix
         }).execute()
         if response.data:
             return pd.DataFrame(response.data)
@@ -419,7 +420,7 @@ def refresh_materialized_view(suffix=""):
         supabase.rpc('refresh_mv', {'suffix': suffix}).execute()
     except Exception as e:
         st.warning(f"物化视图刷新失败（不影响数据入库）：{e}")
-# ========== 新增结束 ==========
+
 # ========== 数据加载函数 ==========
 @st.cache_data(ttl=300)
 def load_daily_sales(suffix=None, apply_filter=True):
@@ -718,9 +719,8 @@ def save_offline_sales(df_orders):
                 if attempt == 2:
                     raise e
                 time.sleep(2 ** attempt)
-    # ========== 新增：刷新物化视图（仅全部数据） ==========
     refresh_materialized_view("_all")
-    # ========== 新增结束 ==========
+
 def refresh_materialized_view(suffix=""):
     """刷新对应的物化视图（异步）"""
     if supabase is None:
@@ -788,7 +788,7 @@ def load_product_sales(suffix=None, apply_filter=True):
                 df["dept"] = None
             # ========== 维度关联结束 ==========
             
-                        # ========== 合并线下收入数据（仅全部数据） ==========
+            # ========== 合并线下收入数据（仅全部数据） ==========
             if suffix == "_all":
                 try:
                     offline_resp = supabase.table("offline_sales_all").select("*").execute()
@@ -817,21 +817,17 @@ def load_product_sales(suffix=None, apply_filter=True):
                         # 合并
                         df = pd.concat([df, offline_df], ignore_index=True)
                 except Exception as e:
-                    # 线下数据加载失败不影响主流程
                     pass
             # ========== 合并结束 ==========
             
             # ========== 为线下数据（以及任何未分配组织的数据）补全组织/部门 ==========
             if suffix == "_all":
                 if not mapping_df.empty:
-                    # 构建 shop_name -> (org_name, dept) 的映射（仅限 anchor_name='NONE'）
                     map_shop = mapping_df[mapping_df['anchor_name'] == 'NONE'].set_index('shop_name')[['org_name', 'dept']].to_dict('index')
-                    # 找出 org_name 为空的行
                     mask = df['org_name'].isna()
                     if mask.any():
                         df.loc[mask, 'org_name'] = df.loc[mask, 'shop_name'].map(lambda s: map_shop.get(s, {}).get('org_name'))
                         df.loc[mask, 'dept'] = df.loc[mask, 'shop_name'].map(lambda s: map_shop.get(s, {}).get('dept'))
-                        # 填充默认值
                         df['org_name'] = df['org_name'].fillna('未分配组织')
                         df['dept'] = df['dept'].fillna('未分配部门')
             # ========== 补全结束 ==========
@@ -919,9 +915,7 @@ def process_uploaded_file(uploaded_file, suffix):
             rebuild_daily_data(suffix)
             st.session_state.target_dict = load_targets(suffix)
         latest_date = merged["日期"].max().strftime('%Y-%m-%d') if not merged.empty else "无数据"
-        # ========== 新增：刷新物化视图 ==========
         refresh_materialized_view(suffix)
-        # ========== 新增结束 ==========
         return True, f"处理完成！最新日期：{latest_date}"
     except Exception as e:
         return False, f"未预料的错误：{str(e)}"
@@ -1045,7 +1039,7 @@ if st.session_state.target_dict == {}:
 with st.sidebar:
     st.header("📂 数据加载")
     st.subheader("🔄 数据源切换")
-    suffix_names = {"": "非直播数据", "_all": "全部数据"}   # 已去掉 _live
+    suffix_names = {"": "非直播数据", "_all": "全部数据"}
     current_source_name = suffix_names.get(st.session_state.table_suffix, "未知")
     st.info(f"📌 当前正在查看：**{current_source_name}**")
 
@@ -1063,9 +1057,7 @@ with st.sidebar:
             available = {"非直播数据": ""}
         available_suffixes = available
 
-    # 关键行：定义 options
     options = list(available_suffixes.keys())
-
     if current_source_name in options:
         default_index = options.index(current_source_name)
     else:
@@ -1078,7 +1070,6 @@ with st.sidebar:
             st.cache_data.clear()
             st.rerun()
     st.markdown("---")
-    # ... 其余代码 ...
 
     if st.session_state.role == "admin":
         current_display_suffix = st.session_state.table_suffix
@@ -1137,15 +1128,12 @@ with st.sidebar:
             target_file = st.file_uploader("选择目标文件 (Excel)", type=["xlsx", "xls"], key="target_upload_all_final")
             if st.button("📤 确认上传目标", key="confirm_target_all_final"):
                 handle_upload(target_file, "_all", "target")
-                # --- 线下收入上传（仅全部数据） ---
-                # --- 线下收入上传（仅全部数据） ---
             st.markdown("---")
             st.subheader("🏷️ 线下收入上传")
             uploaded_offline = st.file_uploader("选择线下收入文件 (Excel)", type=["xlsx", "xls"], key="offline_uploader")
             if uploaded_offline is not None:
                 if st.button("📤 上传线下收入", key="upload_offline"):
                     try:
-                        # 您的文件表头在第2行（序号那一行）
                         df = pd.read_excel(uploaded_offline, header=1)
                         required_cols = ["日期", "金额/时间", "备注", "组织名称"]
                         if not all(col in df.columns for col in required_cols):
@@ -1201,19 +1189,16 @@ with st.sidebar:
 # ========== 动态创建选项卡 ==========
 base_tabs = [
     "📊 经营驾驶舱",
-    "📋 每日明细",           # 新增 Tab，替代原“店铺分析”
+    "📋 每日明细",
     "📦 商品分析",
     "🎤 主播分析",
-    "📂 数据管理",
-    "📈 销售分布与品牌",
-    "⚠️ 异常预警"
+    "📈 销售分布与品牌"
 ]
-admin_extra_tabs = [ "🔧 调试", "📚 商品库导出", "⚙️ 系统设置"]
+admin_extra_tabs = ["📚 商品库导出", "⚙️ 系统设置"]
 
 # ---------- 动态插入“组织与部门分析” Tab（仅 _all） ----------
 if st.session_state.table_suffix == "_all":
     base_tabs_with_org = base_tabs.copy()
-    # 插入到“主播分析”和“数据管理”之间
     try:
         pos = base_tabs_with_org.index("🎤 主播分析") + 1
     except ValueError:
@@ -1242,23 +1227,20 @@ def get_tab_index(label):
     return tab_labels.index(label) if label in tab_labels else None
 
 idx_dashboard = get_tab_index("📊 经营驾驶舱")
-idx_daily = get_tab_index("📋 每日明细")          # 新 Tab 索引
+idx_daily = get_tab_index("📋 每日明细")
 idx_product = get_tab_index("📦 商品分析")
 idx_anchor = get_tab_index("🎤 主播分析")
-idx_data = get_tab_index("📂 数据管理")
 idx_distribution = get_tab_index("📈 销售分布与品牌")
-idx_alert = get_tab_index("⚠️ 异常预警")
-idx_org = get_tab_index("🏢 组织与部门分析")      # 新 Tab
-idx_debug = get_tab_index("🔧 调试")
+idx_org = get_tab_index("🏢 组织与部门分析")
 idx_export = get_tab_index("📚 商品库导出")
 idx_system = get_tab_index("⚙️ 系统设置")
 
-# 兼容旧变量（指向新 Tab）
-idx_latest = idx_daily          # 原“最新日明细”现在在“每日明细”中
-idx_query = idx_daily           # 原“日期查询”也在“每日明细”中
-idx_ship_return = idx_data
-idx_history = idx_data
+# 兼容旧变量（已删除模块置为 None）
 idx_anchor_compare = idx_anchor
+idx_ship_return = None
+idx_history = None
+
+
 
 # ========== 经营驾驶舱（保持不变） ==========
 if idx_dashboard is not None:
@@ -1915,33 +1897,6 @@ if idx_ship_return is not None:
             else:
                 st.info("无日期数据")
 
-# ========== 历史业绩 ==========
-if idx_history is not None:
-    with tabs[idx_history]:
-        with st.spinner("正在加载历史数据，请稍候..."):
-            daily_df = load_daily_sales()
-        if not daily_df.empty:
-            if st.session_state.table_suffix == "_all":
-                daily_df = daily_df.rename(columns={"shop_name": "主播名称"})
-            st.dataframe(daily_df, use_container_width=True, hide_index=True)
-            if st.session_state.table_suffix == "_all":
-                st.metric("📊 总业绩合计", f"{daily_df['amount'].sum():,.2f}")
-            else:
-                douyin_df = daily_df[daily_df["shop_name"].str.contains("抖音", case=False, na=False)]
-                video_df = daily_df[daily_df["shop_name"].str.contains("视频号", case=False, na=False)]
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.metric("📱 抖音合计", f"{douyin_df['amount'].sum():,.2f}")
-                with col2:
-                    st.metric("📺 视频号合计", f"{video_df['amount'].sum():,.2f}")
-                with col3:
-                    st.metric("📊 总业绩合计", f"{daily_df['amount'].sum():,.2f}")
-            output = io.BytesIO()
-            with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                daily_df.to_excel(writer, index=False)
-            st.download_button("💾 导出全部", data=output.getvalue(), file_name="历史业绩.xlsx", key="export_history_all")
-        else:
-            st.info("暂无历史数据")
 
 # ========== 商品分析 ==========
 if idx_product is not None:
@@ -3011,12 +2966,6 @@ if idx_distribution is not None:
                 else:
                     st.info("当前筛选条件下无首单礼金商品")
 
-# ========== 异常预警 ==========
-if idx_alert is not None:
-    with tabs[idx_alert]:
-        st.subheader("⚠️ 异常预警")
-        st.info("展示销售下滑、退货率飙升、目标完成率过低等异常。")
-        # 这里可复用经营驾驶舱中的告警逻辑，但为简洁，目前留空，后续可扩展。
 
 # ========== 组织与部门分析（仅 _all） ==========
 if idx_org is not None:
@@ -3592,16 +3541,7 @@ if idx_system is not None:
                 else:
                     st.error("请填写用户名和密码")
 
-# ========== 调试 ==========
-if idx_debug is not None:
-    with tabs[idx_debug]:
-        st.subheader("🔧 调试信息")
-        st.json({
-            "当前数据源后缀": st.session_state.table_suffix,
-            "每日业绩数据行数": len(st.session_state.df_all_daily) if st.session_state.df_all_daily is not None else 0,
-            "目标字典": st.session_state.target_dict,
-            "子账号数": len(st.session_state.sub_users)
-        })
+
 
 # ========== 商品库导出 ==========
 if idx_export is not None:
