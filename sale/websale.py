@@ -2970,8 +2970,6 @@ if idx_distribution is not None:
 # ========== 组织与部门分析（仅 _all） ==========
 if idx_org is not None:
     with tabs[idx_org]:
-        st.subheader("🏢 组织与部门分析")
-        st.info("该板块基于「全部数据」源，按组织/部门维度展示经营状况，供销售总监决策参考。")
 
         # ======================== 独立日期选择器 ========================
         @st.cache_data(ttl=600)
