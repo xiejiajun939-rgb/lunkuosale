@@ -1453,12 +1453,26 @@ if idx_dashboard is not None:
         month_mask = daily_sales["日期"] >= month_start
         month_sales = daily_sales.loc[month_mask, "amount"].sum()
 
-        target_dict = st.session_state.target_dict
-        if target_dict and has_dept and selected_dept != '全部':
-            dept_shops = prod_df['shop_name'].unique()
-            dept_target = sum([target_dict.get(shop, 0) for shop in dept_shops])
+        # ---------- 目标计算（适配全部数据的组织/部门） ----------
+        if st.session_state.table_suffix == "_all":
+            # 全部数据源：使用组织目标
+            org_targets = load_org_targets("_all")
+            if has_dept and selected_dept != '全部':
+                # 如果选择了部门，目标 = 该部门下所有组织的目标之和（通过映射取组织）
+                # 获取该部门下的组织列表
+                dept_orgs = prod_df[prod_df['dept'] == selected_dept]['org_name'].unique()
+                dept_target = sum([org_targets.get(org, 0) for org in dept_orgs])
+            else:
+                # 未选择部门，或全部：总目标为所有组织目标之和
+                dept_target = sum(org_targets.values())
         else:
-            dept_target = sum(target_dict.values())
+            # 非全部数据：使用店铺目标
+            target_dict = st.session_state.target_dict
+            if target_dict and has_dept and selected_dept != '全部':
+                dept_shops = prod_df['shop_name'].unique()
+                dept_target = sum([target_dict.get(shop, 0) for shop in dept_shops])
+            else:
+                dept_target = sum(target_dict.values())
 
         target_rate = (month_sales / dept_target * 100) if dept_target > 0 else 0
 
