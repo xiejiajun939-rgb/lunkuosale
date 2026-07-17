@@ -560,7 +560,36 @@ def clear_targets(suffix=None):
         supabase.table(table_name).delete().neq("id", 0).execute()
     st.session_state.target_dict = {}
     st.rerun()
+# ========== 组织目标管理（仅全部数据） ==========
+@st.cache_data(ttl=300)
+def load_org_targets(suffix=None):
+    """从 arg_targets 表加载组织目标"""
+    if supabase is None:
+        return {}
+    try:
+        table_name = get_table_name("arg_targets", suffix)
+        resp = supabase.table(table_name).select("*").execute()
+        if resp.data:
+            return {row["org_name"]: row["target_amount"] for row in resp.data}
+        else:
+            return {}
+    except Exception as e:
+        st.error(f"加载组织目标失败：{e}")
+        return {}
 
+def save_org_targets(target_dict, suffix=None):
+    """保存组织目标到 arg_targets 表"""
+    if supabase is None:
+        return
+    records = [{"org_name": k, "target_amount": v} for k, v in target_dict.items()]
+    if records:
+        table_name = get_table_name("arg_targets", suffix)
+        supabase.table(table_name).upsert(records, on_conflict="org_name").execute()
+
+def clear_org_targets(suffix=None):
+    if supabase:
+        table_name = get_table_name("arg_targets", suffix)
+        supabase.table(table_name).delete().neq("id", 0).execute()
 # ========== 商品相关函数 ==========
 SEASON_MAP = {"1": "春", "2": "夏", "3": "秋", "4": "冬"}
 SIZE_MAP = {"001": "S", "002": "M", "003": "L", "004": "XL", "008": "均码"}
