@@ -1294,7 +1294,7 @@ idx_history = None
 
 
 
-# ========== 经营驾驶舱（保持不变） ==========
+# ========== 经营驾驶舱 ==========
 if idx_dashboard is not None:
     with tabs[idx_dashboard]:
         st.markdown("""
@@ -1453,26 +1453,14 @@ if idx_dashboard is not None:
         month_mask = daily_sales["日期"] >= month_start
         month_sales = daily_sales.loc[month_mask, "amount"].sum()
 
-        # ---------- 目标计算（适配全部数据的组织/部门） ----------
-        if st.session_state.table_suffix == "_all":
-            # 全部数据源：使用组织目标
-            org_targets = load_org_targets("_all")
-            if has_dept and selected_dept != '全部':
-                # 如果选择了部门，目标 = 该部门下所有组织的目标之和（通过映射取组织）
-                # 获取该部门下的组织列表
-                dept_orgs = prod_df[prod_df['dept'] == selected_dept]['org_name'].unique()
-                dept_target = sum([org_targets.get(org, 0) for org in dept_orgs])
-            else:
-                # 未选择部门，或全部：总目标为所有组织目标之和
-                dept_target = sum(org_targets.values())
+        # ========== 关键修正：定义 target_dict ==========
+        target_dict = st.session_state.target_dict  # 获取全局店铺目标
+
+        if target_dict and has_dept and selected_dept != '全部':
+            dept_shops = prod_df['shop_name'].unique()
+            dept_target = sum([target_dict.get(shop, 0) for shop in dept_shops])
         else:
-            # 非全部数据：使用店铺目标
-            target_dict = st.session_state.target_dict
-            if target_dict and has_dept and selected_dept != '全部':
-                dept_shops = prod_df['shop_name'].unique()
-                dept_target = sum([target_dict.get(shop, 0) for shop in dept_shops])
-            else:
-                dept_target = sum(target_dict.values())
+            dept_target = sum(target_dict.values())
 
         target_rate = (month_sales / dept_target * 100) if dept_target > 0 else 0
 
@@ -1513,7 +1501,7 @@ if idx_dashboard is not None:
             <div class="glass-card">
                 <div class="kpi-label">昨日销售</div>
                 <div class="kpi-number">¥{latest_sales:,.0f}</div>
-                <!-- 新增：月累计销售额 -->
+                <!-- 月累计销售额 -->
                 <div style="font-size:16px; color:#475569; margin-top:4px;">月累计 ¥{month_sales:,.0f}</div>
                 <div style="margin-top:6px;">
                     <span class="{change_class}">{change_text}</span>
