@@ -3194,11 +3194,18 @@ if idx_org is not None:
         )
         st.caption(f"当前数据日期范围：{min_date} ~ {max_date}，您可以选择任意日期查看对应数据。")
 
-        # ======================== 1. 核心大盘 KPI ========================
+                # ======================== 1. 核心大盘 KPI ========================
         st.markdown("---")
         st.markdown("#### 📊 营销中心整体销售")
         latest_date = base_date
         month_start = latest_date.replace(day=1)
+
+        # ---------- 加载目标 ----------
+        if suffix == "_all":
+            org_targets = load_org_targets("_all")
+            total_target = sum(org_targets.values()) if org_targets else 0
+        else:
+            total_target = sum(st.session_state.target_dict.values())
 
         with st.spinner("加载 KPI 数据..."):
             df_today = fetch_sales_summary(latest_date, latest_date, suffix)
@@ -3225,6 +3232,9 @@ if idx_org is not None:
             mtd_net = 0
             mtd_return_rate = 0
 
+        # 计算目标完成率
+        target_rate = (mtd_net / total_target * 100) if total_target > 0 else 0
+
         col1, col2 = st.columns(2)
         with col1:
             st.markdown(f"**📅 最新日（{latest_date.strftime('%Y-%m-%d')}）**")
@@ -3237,6 +3247,23 @@ if idx_org is not None:
             st.markdown(f"**📆 月累计（{latest_date.strftime('%Y-%m')}）**")
             st.metric("净销售额", f"¥{mtd_net:,.2f}",
                       delta=f"发货 ¥{mtd_ship:,.2f} | 退货 ¥{mtd_return:,.2f} | 退货率 {mtd_return_rate:.2f}%")
+            # ---------- 新增：月目标完成率 ----------
+            bar_color = "#4ade80" if target_rate >= 80 else "#fbbf24" if target_rate >= 50 else "#f87171"
+            st.markdown(f"""
+            <div style="margin-top:12px; padding-top:8px; border-top:1px solid #e2e8f0;">
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <span style="font-size:14px; color:#475569; font-weight:500;">月目标完成率</span>
+                    <span style="font-size:18px; font-weight:700; color:#0f172a;">{target_rate:.1f}%</span>
+                </div>
+                <div style="width:100%; height:6px; background:#e2e8f0; border-radius:3px; margin-top:6px; overflow:hidden;">
+                    <div style="width:{min(target_rate,100)}%; height:100%; background:{bar_color}; border-radius:3px; transition:width 0.8s ease;"></div>
+                </div>
+                <div style="display:flex; justify-content:space-between; margin-top:4px;">
+                    <span style="color:#64748b; font-size:13px;">目标 ¥{total_target:,.0f}</span>
+                    <span style="color:#64748b; font-size:13px;">已达成 ¥{mtd_net:,.0f}</span>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
 
         # ======================== 2. 趋势分析（近7天 vs 前7天） ========================
         st.markdown("---")
