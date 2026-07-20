@@ -2258,6 +2258,7 @@ if idx_product is not None:
             st.session_state.sort_by = "净销售金额"
         if "sort_ascending" not in st.session_state:
             st.session_state.sort_ascending = False
+        # 店铺/主播选项缓存（初始为空，查询后更新）
         if "shop_options_cache" not in st.session_state:
             st.session_state.shop_options_cache = []
         if "anchor_options_cache" not in st.session_state:
@@ -2275,54 +2276,6 @@ if idx_product is not None:
             st.warning("⚠️ 当前数据源为「非直播数据」，商品汇总分析需使用「全部数据」。")
             st.info("请在左侧边栏切换到「全部数据」后再查看。")
             st.stop()
-
-        # ---------- 加载店铺和主播选项（轻量级，缓存） ----------
-        @st.cache_data(ttl=600)
-        def get_distinct_shops(suffix, start_date=None, end_date=None):
-            """获取店铺去重列表（用于筛选）"""
-            if supabase is None:
-                return []
-            table_name = "mv_product_sales_enriched_all" if suffix == "_all" else get_table_name("product_sales", suffix)
-            query = supabase.table(table_name).select('shop_name').distinct()
-            if start_date:
-                query = query.gte('sale_date', start_date.isoformat())
-            if end_date:
-                query = query.lte('sale_date', end_date.isoformat())
-            resp = query.execute()
-            if resp.data:
-                return sorted([row['shop_name'] for row in resp.data if row['shop_name']])
-            return []
-
-        @st.cache_data(ttl=600)
-        def get_distinct_anchors(suffix, start_date=None, end_date=None):
-            """获取主播去重列表（用于筛选）"""
-            if supabase is None:
-                return []
-            # 全部数据使用物化视图，非全部数据从 product_sales 中提取
-            if suffix == "_all":
-                table_name = "mv_product_sales_enriched_all"
-                query = supabase.table(table_name).select('anchor').distinct()
-                if start_date:
-                    query = query.gte('sale_date', start_date.isoformat())
-                if end_date:
-                    query = query.lte('sale_date', end_date.isoformat())
-                resp = query.execute()
-                if resp.data:
-                    # 过滤掉 'NONE' 和空值
-                    anchors = [row['anchor'] for row in resp.data if row['anchor'] and row['anchor'] != 'NONE']
-                    return sorted(anchors)
-            else:
-                # 非全部数据：需要从 remark 提取，较为复杂，暂不支持，返回空
-                return []
-            return []
-
-        # 获取店铺和主播选项（默认使用最近90天的数据范围，以减少查询范围）
-        end_date_default = date.today()
-        start_date_default = end_date_default - timedelta(days=90)
-        if not st.session_state.shop_options_cache:
-            st.session_state.shop_options_cache = get_distinct_shops("_all", start_date_default, end_date_default)
-        if not st.session_state.anchor_options_cache:
-            st.session_state.anchor_options_cache = get_distinct_anchors("_all", start_date_default, end_date_default)
 
         # ---------- 使用 st.form 包裹筛选 ----------
         with st.form(key="product_filter_form"):
@@ -2436,9 +2389,6 @@ if idx_product is not None:
             filter_anchors = selected_anchors if selected_anchors else None
             filter_shop_names = selected_shops if selected_shops else None
 
-            # 平台筛选：在 Python 端过滤（因为 RPC 没有 platform 参数）
-            # 或者我们可以在 RPC 中增加 platform 过滤，但为了快速，我们在 Python 端处理
-
             with st.spinner("正在加载商品销售数据，请稍候..."):
                 prod_df = load_product_summary(
                     suffix=st.session_state.table_suffix,
@@ -2454,23 +2404,28 @@ if idx_product is not None:
 
             # 平台过滤（在 Python 端）
             if not prod_df.empty and selected_platform != "全部":
-                # 如果选择了平台，过滤 shop_name
                 if selected_platform == "抖音":
                     prod_df = prod_df[prod_df["shop_name"].str.contains("抖音", case=False, na=False)]
                 elif selected_platform == "视频号":
                     prod_df = prod_df[prod_df["shop_name"].str.contains("视频号", case=False, na=False)]
 
-            # 更新缓存选项（品牌、品类等）
+            # 更新缓存选项（品牌、品类等，以及店铺、主播）
             if not prod_df.empty:
                 st.session_state.brands_cache = sorted(prod_df["brand"].dropna().unique())
                 st.session_state.categories_cache = sorted(prod_df["product_category"].dropna().unique())
                 st.session_state.years_cache = sorted(prod_df["year"].dropna().unique())
                 st.session_state.seasons_cache = sorted(prod_df["season"].dropna().unique())
+                if "shop_name" in prod_df.columns:
+                    st.session_state.shop_options_cache = sorted(prod_df["shop_name"].dropna().unique())
+                if "anchor" in prod_df.columns:
+                    st.session_state.anchor_options_cache = sorted(prod_df["anchor"].dropna().unique())
             else:
                 st.session_state.brands_cache = []
                 st.session_state.categories_cache = []
                 st.session_state.years_cache = []
                 st.session_state.seasons_cache = []
+                st.session_state.shop_options_cache = []
+                st.session_state.anchor_options_cache = []
 
             # ---------- 数据为空处理 ----------
             if prod_df.empty:
@@ -2689,9 +2644,8 @@ if idx_product is not None:
                 if col10.button("📈", key=f"trend_btn_{row['货号']}_{idx}"):
                     st.info(f"货号 {row['货号']} 的销售趋势可在日明细中查看。")
         else:
-            # 未提交查询，显示提示（可显示上次查询结果缓存，此处省略）
+            # 未提交查询，显示提示
             st.info("请设置筛选条件并点击「查询」按钮加载数据。")
-
 # ========== 销售对比（主播/店铺维度） ==========
 if idx_anchor_compare is not None:
     with tabs[idx_anchor_compare]:
