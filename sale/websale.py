@@ -761,26 +761,32 @@ def refresh_materialized_view(suffix=""):
 
 # ========== 核心修改：load_product_sales（仅对 _all 增加维度关联） ==========
 @st.cache_data(ttl=300)
-def load_product_sales(suffix=None, apply_filter=True):
+def load_product_sales(suffix=None, apply_filter=True, start_date=None, end_date=None):
     if supabase is None:
         return pd.DataFrame()
     try:
         table_name = get_table_name("product_sales", suffix)
         all_data = []
         page = 0
-        page_size = 1000
+        page_size = 500  # 减小分页大小，降低单次负载
         needed_cols = "sale_date, shop_name, product_code, style_code, brand, year, season, product_category, style, color_code, size_code, ship_amount, return_amount, net_amount, remark"
+        
+        # 构建查询，支持日期过滤
+        query = supabase.table(table_name).select(needed_cols)
+        if start_date:
+            query = query.gte("sale_date", start_date.isoformat())
+        if end_date:
+            query = query.lte("sale_date", end_date.isoformat())
+        
         while True:
-            resp = supabase.table(table_name)\
-                           .select(needed_cols)\
-                           .range(page * page_size, (page + 1) * page_size - 1)\
-                           .execute()
+            resp = query.range(page * page_size, (page + 1) * page_size - 1).execute()
             if not resp.data:
                 break
             all_data.extend(resp.data)
             if len(resp.data) < page_size:
                 break
             page += 1
+        
         if all_data:
             df = pd.DataFrame(all_data)
             df["sale_date"] = pd.to_datetime(df["sale_date"])
@@ -824,7 +830,6 @@ def load_product_sales(suffix=None, apply_filter=True):
                     if offline_resp.data:
                         offline_df = pd.DataFrame(offline_resp.data)
                         offline_df["sale_date"] = pd.to_datetime(offline_df["sale_date"])
-                        # 补全其他列（线下数据没有商品维度）
                         offline_df["product_code"] = None
                         offline_df["style_code"] = None
                         offline_df["brand"] = None
@@ -838,18 +843,16 @@ def load_product_sales(suffix=None, apply_filter=True):
                         offline_df["master_category"] = None
                         offline_df["remark"] = offline_df["remark"].fillna("线下收入")
                         offline_df["anchor"] = "NONE"
-                        # 确保列顺序与 df 一致
                         for col in df.columns:
                             if col not in offline_df.columns:
                                 offline_df[col] = None
                         offline_df = offline_df[df.columns]
-                        # 合并
                         df = pd.concat([df, offline_df], ignore_index=True)
                 except Exception as e:
                     pass
             # ========== 合并结束 ==========
             
-            # ========== 为线下数据（以及任何未分配组织的数据）补全组织/部门 ==========
+            # ========== 补全组织/部门 ==========
             if suffix == "_all":
                 if not mapping_df.empty:
                     map_shop = mapping_df[mapping_df['anchor_name'] == 'NONE'].set_index('shop_name')[['org_name', 'dept']].to_dict('index')
@@ -2223,7 +2226,10 @@ if idx_product is not None:
             st.session_state.sort_ascending = False
         
         with st.spinner("正在加载商品销售数据，请稍候..."):
-            prod_df = load_product_sales(st.session_state.table_suffix)
+            # 获取当前选中的日期范围（由 date_quick_buttons 设置）
+            start_date = st.session_state.get("prod_start_final", None)
+            end_date = st.session_state.get("prod_end_final", None)
+            prod_df = load_product_sales(st.session_state.table_suffix, start_date=start_date, end_date=end_date)
         
         if prod_df.empty:
             st.warning("暂无商品销售数据，请先上传订单文件。")
