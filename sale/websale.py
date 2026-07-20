@@ -1781,7 +1781,7 @@ if idx_dashboard is not None:
 if idx_daily is not None:
     with tabs[idx_daily]:
         st.subheader("📋 每日明细查询")
-        st.info("此处展示最新日销售明细，并支持按日期查询任意一天的销售情况。")
+        st.info("此处展示最新日销售明细、单日查询以及区间汇总查询。")
 
         # ---------- 加载商品数据 ----------
         with st.spinner("加载数据..."):
@@ -1947,8 +1947,8 @@ if idx_daily is not None:
 
             st.markdown("---")
 
-            # ---------- 第二部分：日期查询 ----------
-            st.markdown("#### 🔍 日期查询")
+            # ---------- 第二部分：日期查询（单日） ----------
+            st.markdown("#### 🔍 日期查询（单日）")
             if st.button("📅 今日", key="query_today_daily"):
                 st.session_state["query_date_daily"] = date.today()
                 st.rerun()
@@ -2035,6 +2035,96 @@ if idx_daily is not None:
                         file_name=f"查询_{query_date}.xlsx",
                         key="export_query_result_daily"
                     )
+
+            st.markdown("---")
+
+            # ---------- 第三部分：区间查询（新增） ----------
+            st.markdown("#### 📆 区间查询")
+            st.caption("选择起止日期，按选定维度汇总区间内的发货、退货、净额及退货率。")
+            col_start, col_end = st.columns(2)
+            with col_start:
+                range_start = st.date_input("开始日期", value=prod_df["sale_date"].min().date(), key="range_start_daily")
+            with col_end:
+                range_end = st.date_input("结束日期", value=prod_df["sale_date"].max().date(), key="range_end_daily")
+
+            if st.button("📊 查询区间汇总", key="query_range_daily"):
+                if range_start > range_end:
+                    st.error("开始日期不能晚于结束日期")
+                else:
+                    mask_range = (prod_df["sale_date"].dt.date >= range_start) & (prod_df["sale_date"].dt.date <= range_end)
+                    range_data = prod_df[mask_range]
+                    if range_data.empty:
+                        st.warning("所选区间内无数据")
+                    else:
+                        range_agg = aggregate_dim(range_data, group_col, dim_label)
+                        # 计算退货率（数值）
+                        range_agg["退货率_数值"] = range_agg.apply(
+                            lambda r: (r['退货金额'] / r['发货金额'] * 100) if r['发货金额'] != 0 else 0.0, axis=1
+                        )
+                        # 添加目标（如果有）
+                        range_agg["目标金额"] = range_agg[dim_label].map(target_dict).fillna(0)
+                        range_agg["达成率_数值"] = range_agg.apply(
+                            lambda r: (r['净销售金额'] / r['目标金额'] * 100) if r['目标金额'] != 0 else 0.0, axis=1
+                        )
+                        range_agg = range_agg.sort_values(dim_label)
+
+                        # 显示表格
+                        display_cols_range = [
+                            dim_label,
+                            "发货金额", "退货金额", "净销售金额", "退货率_数值",
+                            "目标金额", "达成率_数值"
+                        ]
+                        rename_map_range = {
+                            dim_label: dim_label,
+                            "发货金额": "区间发货",
+                            "退货金额": "区间退货",
+                            "净销售金额": "区间净额",
+                            "退货率_数值": "退货率",
+                            "目标金额": "目标金额",
+                            "达成率_数值": "达成率"
+                        }
+                        display_range = range_agg[display_cols_range].rename(columns=rename_map_range)
+                        column_config_range = {
+                            dim_label: st.column_config.TextColumn(dim_label),
+                            "区间发货": st.column_config.NumberColumn("区间发货", format="%.2f"),
+                            "区间退货": st.column_config.NumberColumn("区间退货", format="%.2f"),
+                            "区间净额": st.column_config.NumberColumn("区间净额", format="%.2f"),
+                            "退货率": st.column_config.NumberColumn("退货率", format="%.2f%%"),
+                            "目标金额": st.column_config.NumberColumn("目标金额", format="%.2f"),
+                            "达成率": st.column_config.NumberColumn("达成率", format="%.2f%%")
+                        }
+                        st.dataframe(display_range, column_config=column_config_range, use_container_width=True, hide_index=True)
+
+                        # 汇总
+                        total_ship = range_agg["发货金额"].sum()
+                        total_return = range_agg["退货金额"].sum()
+                        total_net = range_agg["净销售金额"].sum()
+                        total_target = range_agg["目标金额"].sum()
+                        total_return_rate = (total_return / total_ship * 100) if total_ship != 0 else 0.0
+                        total_rate = (total_net / total_target * 100) if total_target != 0 else 0.0
+
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            st.metric("📊 区间合计", f"净额: ¥{total_net:,.2f}", delta=f"发货 ¥{total_ship:,.2f} / 退货 ¥{total_return:,.2f}")
+                        with col2:
+                            st.metric("📆 退货率", f"{total_return_rate:.2f}%")
+                        with col3:
+                            st.metric("🎯 目标完成率", f"{total_rate:.2f}%", delta=f"总目标: ¥{total_target:,.2f}")
+
+                        # 导出
+                        output_range = io.BytesIO()
+                        with pd.ExcelWriter(output_range, engine='openpyxl') as writer:
+                            export_range = display_range.copy()
+                            for col in ['退货率', '达成率']:
+                                if col in export_range.columns:
+                                    export_range[col] = export_range[col].apply(lambda x: f"{x:.2f}%")
+                            export_range.to_excel(writer, index=False)
+                        st.download_button(
+                            "💾 导出区间汇总",
+                            data=output_range.getvalue(),
+                            file_name=f"区间汇总_{range_start}_{range_end}.xlsx",
+                            key="export_range_daily"
+                        )
 # ========== 发货退货明细 ==========
 if idx_ship_return is not None:
     with tabs[idx_ship_return]:
