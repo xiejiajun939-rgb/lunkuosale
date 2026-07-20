@@ -2246,15 +2246,13 @@ if idx_product is not None:
             min_date = prod_df["sale_date"].min().date()
             max_date = prod_df["sale_date"].max().date()
             
-           from datetime import date, timedelta
-
             date_quick_buttons("prod_start_final", "prod_end_final",
                                default_start=date.today() - timedelta(days=30),
                                default_end=date.today(),
                                min_date=min_date,
                                max_date=max_date)
-            start_date = st.session_state.get("prod_start_final", min_date)
-            end_date = st.session_state.get("prod_end_final", max_date)
+            start_date = st.session_state.get("prod_start_final", date.today() - timedelta(days=30))
+            end_date = st.session_state.get("prod_end_final", date.today())
             
             st.subheader("🔍 筛选条件")
             col_platform, col_shop = st.columns(2)
