@@ -882,7 +882,7 @@ def load_product_summary(suffix, start_date, end_date, group_by='style',
         
         df = pd.DataFrame(resp.data)
         
-        # 自动匹配金额列
+        # 重命名金额列
         rename_map = {}
         for col in df.columns:
             col_lower = col.lower()
@@ -902,7 +902,7 @@ def load_product_summary(suffix, start_date, end_date, group_by='style',
             else:
                 df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
         
-        # 处理 group_value
+        # 确保 group_value 存在
         if "group_value" not in df.columns:
             df["group_value"] = df.get("style_code", "未知")
         df["group_value"] = df["group_value"].fillna("未知").astype(str)
@@ -921,7 +921,6 @@ def load_product_summary(suffix, start_date, end_date, group_by='style',
             else:
                 df[col] = df[col].fillna(None)
         
-        # 如果有 shop_name 列，也填充
         if "shop_name" in df.columns:
             df["shop_name"] = df["shop_name"].fillna("")
         if "anchor" in df.columns:
