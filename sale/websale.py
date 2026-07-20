@@ -762,36 +762,72 @@ def refresh_materialized_view(suffix=""):
         st.warning(f"物化视图刷新失败（不影响数据入库）：{e}")
 
 # ========== 核心修改：load_product_sales（仅对 _all 增加维度关联） ==========
-# ========== 核心修改：load_product_sales（仅对 _all 增加维度关联） ==========
 @st.cache_data(ttl=300)
-def load_product_sales(suffix=None, apply_filter=True, start_date=None, end_date=None, aggregate=False):
+def load_product_summary(suffix, start_date, end_date, 
+                         filter_brands=None, filter_categories=None, 
+                         filter_years=None, filter_seasons=None,
+                         filter_anchors=None, filter_shop_names=None):
     if supabase is None:
         return pd.DataFrame()
     try:
-        if suffix == "_all":
-            table_name = "mv_product_sales_enriched_all"
-        else:
-            table_name = get_table_name("product_sales", suffix)
-
-        if aggregate:
-            # 聚合模式（保留，但商品分析不再使用）
-            query = supabase.table(table_name).select(
-                "style_code, sum(ship_amount) as ship_amount, sum(return_amount) as return_amount, sum(net_amount) as net_amount"
-            )
-            if start_date:
-                query = query.gte("sale_date", start_date.isoformat())
-            if end_date:
-                query = query.lte("sale_date", end_date.isoformat())
-            resp = query.execute()
-            if resp.data:
-                df = pd.DataFrame(resp.data)
-                df.rename(columns={"net_amount": "净销售金额", "ship_amount": "发货金额", "return_amount": "退货金额"}, inplace=True)
-                for col in ["净销售金额", "发货金额", "退货金额"]:
+        params = {
+            'start_date': start_date.isoformat(),
+            'end_date': end_date.isoformat(),
+            'suffix': suffix,
+            'filter_brands': filter_brands or [],
+            'filter_categories': filter_categories or [],
+            'filter_years': filter_years or [],
+            'filter_seasons': filter_seasons or [],
+            'filter_anchors': filter_anchors or [],
+            'filter_shop_names': filter_shop_names or []
+        }
+        resp = supabase.rpc('get_product_summary', params).execute()
+        if resp.data:
+            df = pd.DataFrame(resp.data)
+            
+            # 自动匹配金额列
+            rename_map = {}
+            for col in df.columns:
+                col_lower = col.lower()
+                if col_lower in ['total_ship', 'ship_amount']:
+                    rename_map[col] = '发货金额'
+                elif col_lower in ['total_return', 'return_amount']:
+                    rename_map[col] = '退货金额'
+                elif col_lower in ['total_net', 'net_amount']:
+                    rename_map[col] = '净销售金额'
+            df.rename(columns=rename_map, inplace=True)
+            
+            # 确保金额列存在并转为数值
+            for col in ["发货金额", "退货金额", "净销售金额"]:
+                if col not in df.columns:
+                    df[col] = 0.0
+                else:
                     df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
-                df = df[df["style_code"].notna()]
-                return df
+            
+            # 处理 style_code：缺失时填充“未知款号”，并清洗
+            if "style_code" not in df.columns:
+                df["style_code"] = "未知款号"
             else:
-                return pd.DataFrame()
+                df["style_code"] = df["style_code"].fillna("未知款号").astype(str).str.strip().str.upper()
+                # 将空字符串、'NAN'、'NONE' 等统一替换为“未知款号”
+                df.loc[df["style_code"] == "", "style_code"] = "未知款号"
+                df.loc[df["style_code"] == "NAN", "style_code"] = "未知款号"
+                df.loc[df["style_code"] == "NONE", "style_code"] = "未知款号"
+            
+            # 处理其他维度列（若缺失则填充 None）
+            for col in ["brand", "product_category", "year", "season"]:
+                if col not in df.columns:
+                    df[col] = None
+                else:
+                    df[col] = df[col].fillna(None)
+            
+            # 注意：不再过滤任何行，保留全部数据
+            return df
+        else:
+            return pd.DataFrame()
+    except Exception as e:
+        st.error(f"加载商品汇总失败：{e}")
+        return pd.DataFrame()
 
         # ---------- 明细模式 ----------
         if suffix == "_all":
