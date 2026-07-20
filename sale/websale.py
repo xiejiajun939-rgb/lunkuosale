@@ -413,11 +413,13 @@ def fetch_sales_summary(start_date, end_date, suffix=""):
         return pd.DataFrame()
 
 def refresh_materialized_view(suffix=""):
-    """刷新物化视图"""
+    """刷新对应的物化视图（异步）"""
     if supabase is None:
         return
     try:
-        supabase.rpc('refresh_mv', {'suffix': suffix}).execute()
+        # 仅对 _all 执行刷新
+        if suffix == "_all":
+            supabase.rpc('refresh_mv', {'suffix': suffix}).execute()
     except Exception as e:
         st.warning(f"物化视图刷新失败（不影响数据入库）：{e}")
 
@@ -765,13 +767,18 @@ def load_product_sales(suffix=None, apply_filter=True, start_date=None, end_date
     if supabase is None:
         return pd.DataFrame()
     try:
-        table_name = get_table_name("product_sales", suffix)
+        if suffix == "_all":
+            # 使用物化视图
+            table_name = "mv_product_sales_enriched_all"
+            needed_cols = "sale_date, shop_name, product_code, style_code, brand, year, season, product_category, style, color_code, size_code, ship_amount, return_amount, net_amount, remark, org_name, dept, anchor"
+        else:
+            # 非全部数据仍用原始表
+            table_name = get_table_name("product_sales", suffix)
+            needed_cols = "sale_date, shop_name, product_code, style_code, brand, year, season, product_category, style, color_code, size_code, ship_amount, return_amount, net_amount, remark"
+
         all_data = []
         page = 0
-        page_size = 500  # 减小分页大小，降低单次负载
-        needed_cols = "sale_date, shop_name, product_code, style_code, brand, year, season, product_category, style, color_code, size_code, ship_amount, return_amount, net_amount, remark"
-        
-        # 构建查询，支持日期过滤
+        page_size = 500
         query = supabase.table(table_name).select(needed_cols)
         if start_date:
             query = query.gte("sale_date", start_date.isoformat())
@@ -786,89 +793,36 @@ def load_product_sales(suffix=None, apply_filter=True, start_date=None, end_date
             if len(resp.data) < page_size:
                 break
             page += 1
-        
-        if all_data:
-            df = pd.DataFrame(all_data)
-            df["sale_date"] = pd.to_datetime(df["sale_date"])
-            if "style_code" not in df.columns or df["style_code"].isnull().all():
-                df["style_code"] = df["product_code"].str[:8]
-            else:
-                df["style_code"] = df["style_code"].fillna(df["product_code"].str[:8])
-            for col in ["ship_amount", "return_amount", "net_amount"]:
-                if col in df.columns:
-                    df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
-            if suffix == "_all" and "anchor" not in df.columns:
-                df["anchor"] = df["remark"].apply(extract_anchor)
-            
-            # ========== 维度关联逻辑（仅当 suffix == "_all"） ==========
-            if suffix == "_all":
-                mapping_df = load_dimension_mapping()
-                if not mapping_df.empty:
-                    if "anchor" not in df.columns:
-                        df["anchor"] = "NONE"
-                    df["anchor"] = df["anchor"].fillna("NONE")
-                    df = df.merge(
-                        mapping_df,
-                        left_on=["shop_name", "anchor"],
-                        right_on=["shop_name", "anchor_name"],
-                        how="left"
-                    )
-                    df["org_name"] = df["org_name"].fillna("未分配组织")
-                    df["dept"] = df["dept"].fillna("未分配部门")
-                else:
-                    df["org_name"] = "未分配组织"
-                    df["dept"] = "未分配部门"
-            else:
-                df["org_name"] = None
-                df["dept"] = None
-            # ========== 维度关联结束 ==========
-            
-            # ========== 合并线下收入数据（仅全部数据） ==========
-            if suffix == "_all":
-                try:
-                    offline_resp = supabase.table("offline_sales_all").select("*").execute()
-                    if offline_resp.data:
-                        offline_df = pd.DataFrame(offline_resp.data)
-                        offline_df["sale_date"] = pd.to_datetime(offline_df["sale_date"])
-                        offline_df["product_code"] = None
-                        offline_df["style_code"] = None
-                        offline_df["brand"] = None
-                        offline_df["year"] = None
-                        offline_df["season"] = None
-                        offline_df["product_category"] = None
-                        offline_df["style"] = None
-                        offline_df["color_code"] = None
-                        offline_df["size_code"] = None
-                        offline_df["image_url"] = None
-                        offline_df["master_category"] = None
-                        offline_df["remark"] = offline_df["remark"].fillna("线下收入")
-                        offline_df["anchor"] = "NONE"
-                        for col in df.columns:
-                            if col not in offline_df.columns:
-                                offline_df[col] = None
-                        offline_df = offline_df[df.columns]
-                        df = pd.concat([df, offline_df], ignore_index=True)
-                except Exception as e:
-                    pass
-            # ========== 合并结束 ==========
-            
-            # ========== 补全组织/部门 ==========
-            if suffix == "_all":
-                if not mapping_df.empty:
-                    map_shop = mapping_df[mapping_df['anchor_name'] == 'NONE'].set_index('shop_name')[['org_name', 'dept']].to_dict('index')
-                    mask = df['org_name'].isna()
-                    if mask.any():
-                        df.loc[mask, 'org_name'] = df.loc[mask, 'shop_name'].map(lambda s: map_shop.get(s, {}).get('org_name'))
-                        df.loc[mask, 'dept'] = df.loc[mask, 'shop_name'].map(lambda s: map_shop.get(s, {}).get('dept'))
-                        df['org_name'] = df['org_name'].fillna('未分配组织')
-                        df['dept'] = df['dept'].fillna('未分配部门')
-            # ========== 补全结束 ==========
 
-            if apply_filter:
-                df = apply_data_permission(df)
-            return df
-        else:
+        if not all_data:
             return pd.DataFrame()
+
+        df = pd.DataFrame(all_data)
+        df["sale_date"] = pd.to_datetime(df["sale_date"])
+        # 统一处理缺失的 style_code（若有）
+        if "style_code" not in df.columns or df["style_code"].isnull().all():
+            df["style_code"] = df["product_code"].str[:8]
+        else:
+            df["style_code"] = df["style_code"].fillna(df["product_code"].str[:8])
+        for col in ["ship_amount", "return_amount", "net_amount"]:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+
+        # 如果是全部数据，物化视图已包含 org_name, dept, anchor，无需再关联
+        if suffix == "_all":
+            # 确保列存在
+            for col in ["org_name", "dept", "anchor"]:
+                if col not in df.columns:
+                    df[col] = "未分配组织" if col == "org_name" else ("未分配部门" if col == "dept" else "NONE")
+        else:
+            # 非全部数据，手动添加空列
+            df["org_name"] = None
+            df["dept"] = None
+            # 若有需要可提取 anchor，但非全部数据通常不需要
+
+        if apply_filter:
+            df = apply_data_permission(df)
+        return df
     except Exception as e:
         st.error(f"加载商品销售数据失败：{e}")
         return pd.DataFrame()
