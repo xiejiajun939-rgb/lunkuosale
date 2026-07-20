@@ -846,14 +846,9 @@ def load_product_summary(suffix, start_date, end_date,
                          filter_brands=None, filter_categories=None, 
                          filter_years=None, filter_seasons=None,
                          filter_anchors=None, filter_shop_names=None):
-    """通过 RPC 获取按货号汇总的销售数据，包含品牌、品类、年份、季节"""
     if supabase is None:
-        st.error("Supabase 未连接")
         return pd.DataFrame()
     try:
-        # 调试：打印参数（部署后可注释掉）
-        print(f"[DEBUG] load_product_summary 参数: suffix={suffix}, start={start_date}, end={end_date}")
-        
         params = {
             'start_date': start_date.isoformat(),
             'end_date': end_date.isoformat(),
@@ -866,23 +861,38 @@ def load_product_summary(suffix, start_date, end_date,
             'filter_shop_names': filter_shop_names or []
         }
         resp = supabase.rpc('get_product_summary', params).execute()
-        
-        # 调试：打印返回数据条数
-        print(f"[DEBUG] RPC 返回数据条数: {len(resp.data) if resp.data else 0}")
-        
         if resp.data:
             df = pd.DataFrame(resp.data)
-            df.rename(columns={
-                "total_ship": "发货金额",
-                "total_return": "退货金额",
-                "total_net": "净销售金额"
-            }, inplace=True)
+            # 检查是否存在预期列，不区分大小写地匹配
+            # 先打印列名（调试用）
+            # st.write("列名：", df.columns.tolist())  # 可注释掉
+            
+            # 重命名：查找可能的列名
+            rename_map = {}
+            for col in df.columns:
+                if col.lower() == 'total_ship' or col.lower() == 'ship_amount':
+                    rename_map[col] = '发货金额'
+                elif col.lower() == 'total_return' or col.lower() == 'return_amount':
+                    rename_map[col] = '退货金额'
+                elif col.lower() == 'total_net' or col.lower() == 'net_amount':
+                    rename_map[col] = '净销售金额'
+            df.rename(columns=rename_map, inplace=True)
+            
+            # 确保金额列为数值
             for col in ["发货金额", "退货金额", "净销售金额"]:
-                df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+                if col not in df.columns:
+                    df[col] = 0.0
+                else:
+                    df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+            
+            # 确保 style_code 存在且为字符串
+            if "style_code" not in df.columns:
+                df["style_code"] = ""
             df["style_code"] = df["style_code"].astype(str).str.strip().str.upper()
+            # 过滤掉空 style_code
+            df = df[df["style_code"] != ""]
             return df
         else:
-            # 返回空 DataFrame，但不报错
             return pd.DataFrame()
     except Exception as e:
         st.error(f"加载商品汇总失败：{e}")
