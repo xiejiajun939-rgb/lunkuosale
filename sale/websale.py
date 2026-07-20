@@ -2273,6 +2273,10 @@ if idx_product is not None:
                 start_date=start_date,
                 end_date=end_date
             )
+            st.write(f"🔍 load_product_summary 返回 DataFrame 行数: {len(prod_df)}")
+            st.write("🔍 DataFrame 列名:", prod_df.columns.tolist())
+            if not prod_df.empty:
+                st.dataframe(prod_df.head(5))
 
         # ---------- 数据为空处理 ----------
         if prod_df.empty:
