@@ -2432,7 +2432,18 @@ if idx_product is not None:
             key="sort_by_selector"
         )
         with col_sort2:
-            sort_order = st.radio("排序顺序", ["降序", "升序"], horizontal=True, index=0 if not st.session_state.sort_ascending else 1, key="sort_order_radio")
+            # 1. 先检查并初始化 session_state (假设默认是降序，即 False)
+            if "sort_ascending" not in st.session_state:
+                st.session_state.sort_ascending = False
+            
+            # 2. 然后再渲染 radio 单选框
+            sort_order = st.radio(
+                "排序顺序", 
+                ["降序", "升序"], 
+                horizontal=True, 
+                index=0 if not st.session_state.sort_ascending else 1, 
+                key="sort_order_radio"
+            )
         with col_sort3:
             page_size_options = [10, 20, 50, 100]
             selected_page_size = st.selectbox(
