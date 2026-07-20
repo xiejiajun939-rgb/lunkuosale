@@ -871,7 +871,11 @@ def load_product_summary(suffix, start_date, end_date,
         }
         resp = supabase.rpc('get_product_summary', params).execute()
         if resp.data:
+            st.write(f"🔍 RPC 返回原始数据条数: {len(resp.data)}")
+            if len(resp.data) > 0:
+                st.write("🔍 第一条数据示例:", resp.data[0])
             df = pd.DataFrame(resp.data)
+            
             
             # 1. 自动匹配金额列（不区分大小写）
             rename_map = {}
