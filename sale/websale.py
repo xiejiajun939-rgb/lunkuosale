@@ -849,8 +849,11 @@ def load_product_summary(suffix, start_date, end_date,
     """通过 RPC 获取按货号汇总的销售数据，包含品牌、品类、年份、季节"""
     if supabase is None:
         st.error("Supabase 未连接")
-        return pd.DataFrame(columns=["style_code", "brand", "product_category", "year", "season", "发货金额", "退货金额", "净销售金额"])
+        return pd.DataFrame()
     try:
+        # 调试：打印参数（部署后可注释掉）
+        print(f"[DEBUG] load_product_summary 参数: suffix={suffix}, start={start_date}, end={end_date}")
+        
         params = {
             'start_date': start_date.isoformat(),
             'end_date': end_date.isoformat(),
@@ -863,6 +866,10 @@ def load_product_summary(suffix, start_date, end_date,
             'filter_shop_names': filter_shop_names or []
         }
         resp = supabase.rpc('get_product_summary', params).execute()
+        
+        # 调试：打印返回数据条数
+        print(f"[DEBUG] RPC 返回数据条数: {len(resp.data) if resp.data else 0}")
+        
         if resp.data:
             df = pd.DataFrame(resp.data)
             df.rename(columns={
@@ -873,17 +880,13 @@ def load_product_summary(suffix, start_date, end_date,
             for col in ["发货金额", "退货金额", "净销售金额"]:
                 df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
             df["style_code"] = df["style_code"].astype(str).str.strip().str.upper()
-            # 确保所有列都存在
-            for col in ["brand", "product_category", "year", "season"]:
-                if col not in df.columns:
-                    df[col] = None
             return df
         else:
-            # 返回空 DataFrame 但包含所有列，避免 KeyError
-            return pd.DataFrame(columns=["style_code", "brand", "product_category", "year", "season", "发货金额", "退货金额", "净销售金额"])
+            # 返回空 DataFrame，但不报错
+            return pd.DataFrame()
     except Exception as e:
-        st.error(f"加载商品汇总失败，请检查 RPC 函数是否存在。错误详情：{e}")
-        return pd.DataFrame(columns=["style_code", "brand", "product_category", "year", "season", "发货金额", "退货金额", "净销售金额"])
+        st.error(f"加载商品汇总失败：{e}")
+        return pd.DataFrame()
 
 def validate_order_data(df):
     try:
@@ -2186,6 +2189,7 @@ if idx_ship_return is not None:
 # ========== 商品分析 ==========
 if idx_product is not None:
     with tabs[idx_product]:
+        # ---------- 状态初始化 ----------
         if st.session_state.get("detail_clicked", False):
             st.session_state.detail_clicked = False
         else:
@@ -2212,31 +2216,13 @@ if idx_product is not None:
                 st.session_state.trend_clicked = False
                 st.cache_data.clear()
                 st.rerun()
-        
-        if "dialog_style_code" not in st.session_state:
-            st.session_state.dialog_style_code = None
-        if "show_dialog" not in st.session_state:
-            st.session_state.show_dialog = False
-        if "cached_detail_data" not in st.session_state:
-            st.session_state.cached_detail_data = None
-        if "detail_clicked" not in st.session_state:
-            st.session_state.detail_clicked = False
-        if "trend_style_code" not in st.session_state:
-            st.session_state.trend_style_code = None
-        if "show_trend_dialog" not in st.session_state:
-            st.session_state.show_trend_dialog = False
-        if "trend_data" not in st.session_state:
-            st.session_state.trend_data = None
-        if "trend_clicked" not in st.session_state:
-            st.session_state.trend_clicked = False
-        if "product_page_num" not in st.session_state:
-            st.session_state.product_page_num = 1
-        if "product_page_size" not in st.session_state:
-            st.session_state.product_page_size = 10
-        if "sort_by" not in st.session_state:
-            st.session_state.sort_by = "净销售金额"
-        if "sort_ascending" not in st.session_state:
-            st.session_state.sort_ascending = False
+
+        # ---------- 检查当前数据源 ----------
+        current_suffix = st.session_state.table_suffix
+        if current_suffix != "_all":
+            st.warning("⚠️ 当前数据源为「非直播数据」，商品汇总分析需使用「全部数据」。")
+            st.info("请在左侧边栏切换到「全部数据」后再查看。")
+            st.stop()
 
         # ---------- 日期快捷按钮 ----------
         date_quick_buttons("prod_start_final", "prod_end_final",
@@ -2255,36 +2241,46 @@ if idx_product is not None:
                 end_date=end_date
             )
 
-        # 若数据为空，给出具体提示
+        # ---------- 数据为空处理 ----------
         if prod_df.empty:
             st.warning(f"所选日期范围（{start_date} ~ {end_date}）内无商品销售数据。")
-            st.info("可能原因：\n1. 物化视图尚未刷新（请先上传数据）。\n2. RPC 函数未正确创建。\n3. 该时间段确实无销售。")
+            st.info("可能原因：\n1. 物化视图尚未刷新（请先上传数据或点击下方刷新按钮）。\n2. RPC 函数未正确创建。\n3. 该时间段确实无销售。")
             # 提供手动刷新物化视图按钮
-            if st.button("🔄 尝试刷新物化视图", key="refresh_mv_btn"):
-                refresh_materialized_view("_all")
+            if st.button("🔄 强制刷新物化视图", key="refresh_mv_btn"):
+                with st.spinner("正在刷新物化视图..."):
+                    refresh_materialized_view("_all")
                 st.success("已发送刷新请求，请稍后重新加载页面。")
                 st.rerun()
+            # 提供测试查询按钮
+            if st.button("🧪 测试 RPC 查询", key="test_rpc_btn"):
+                try:
+                    test_resp = supabase.rpc('get_product_summary', {
+                        'start_date': start_date.isoformat(),
+                        'end_date': end_date.isoformat(),
+                        'suffix': '_all'
+                    }).execute()
+                    st.write(f"RPC 返回数据条数: {len(test_resp.data) if test_resp.data else 0}")
+                    if test_resp.data:
+                        st.dataframe(pd.DataFrame(test_resp.data).head(5))
+                except Exception as e:
+                    st.error(f"RPC 测试失败：{e}")
             st.stop()
 
         # ---------- 确保必要的列存在 ----------
-        # RPC 返回必须包含 style_code, brand, product_category, year, season
-        # 若缺失则添加默认值
         required_cols = ["style_code", "brand", "product_category", "year", "season"]
         for col in required_cols:
             if col not in prod_df.columns:
-                prod_df[col] = None  # 或填充默认值
+                prod_df[col] = None
 
-        # ---------- 补充商品库信息（图片、分类、礼金标签） ----------
+        # ---------- 补充商品库信息 ----------
         master_df = load_product_master()
         if not master_df.empty and "style_code" in master_df.columns:
             master_df["style_code"] = master_df["style_code"].astype(str).str.strip().str.upper()
-            # 合并商品库信息（优先使用 master 的 category 覆盖 product_category）
             prod_df = prod_df.merge(
                 master_df[["style_code", "image_url", "category", "has_newbie_coupon"]],
                 on="style_code",
                 how="left"
             )
-            # 如果 product_category 为空，使用 master 的 category
             prod_df["product_category"] = prod_df["product_category"].fillna(prod_df["category"])
             prod_df.rename(columns={"category": "master_category"}, inplace=True)
             prod_df["master_category"] = prod_df["master_category"].fillna("未分类")
@@ -2302,7 +2298,6 @@ if idx_product is not None:
             platform_options = ["全部", "抖音", "视频号"]
             selected_platform = st.selectbox("平台", platform_options, key="platform_filter_final")
         with col_shop:
-            # 从数据中提取店铺（若存在）
             shop_list = prod_df["shop_name"].dropna().unique() if "shop_name" in prod_df.columns else []
             selected_shops = st.multiselect("店铺（可多选）", options=sorted(shop_list), default=[])
 
@@ -2313,7 +2308,6 @@ if idx_product is not None:
             brands_all = ["全部"] + sorted(prod_df["brand"].dropna().unique())
             selected_brand = st.selectbox("品牌", brands_all, key="brand_filter_final")
 
-        # 品类、年份、季节多选
         col_cat, col_year, col_season = st.columns(3)
         with col_cat:
             all_categories = sorted(prod_df["product_category"].dropna().unique())
@@ -2328,7 +2322,6 @@ if idx_product is not None:
         coupon_filter_options = ["全部", "仅首单礼金", "非首单礼金"]
         selected_coupon_filter = st.selectbox("是否首单礼金款式", coupon_filter_options, key="coupon_filter_final")
 
-        # 主播筛选（仅当数据源为全部或直播时有意义）
         selected_anchors = []
         if st.session_state.table_suffix in ["_live", "_all"]:
             if "anchor" in prod_df.columns:
@@ -2369,14 +2362,12 @@ if idx_product is not None:
 
         # ---------- 准备显示 ----------
         grouped = filtered.copy()
-        # 计算退款率
         grouped["退款率"] = np.where(
             grouped["发货金额"] != 0,
             ((grouped["退货金额"] / grouped["发货金额"].replace(0, np.nan)) * 100).map("{:.2f}%".format),
             "-"
         )
 
-        # 选择要显示的列
         display_cols = ["style_code", "master_category", "发货金额", "退货金额", "净销售金额", "退款率", "has_newbie_coupon", "image_url", "brand", "product_category", "year", "season"]
         existing_cols = [c for c in display_cols if c in grouped.columns]
         grouped = grouped[existing_cols]
@@ -2418,7 +2409,6 @@ if idx_product is not None:
             st.session_state.product_page_num = 1
             st.rerun()
 
-        # 执行排序
         if st.session_state.sort_by == "货号":
             grouped = grouped.sort_values("货号", ascending=st.session_state.sort_ascending)
         elif st.session_state.sort_by == "发货金额":
@@ -2428,12 +2418,10 @@ if idx_product is not None:
         elif st.session_state.sort_by == "净销售金额":
             grouped = grouped.sort_values("净销售金额", ascending=st.session_state.sort_ascending)
         elif st.session_state.sort_by == "退款率":
-            # 退款率是字符串，提取数值排序
             grouped["退款率_num"] = grouped["退款率"].str.rstrip("%").astype(float)
             grouped = grouped.sort_values("退款率_num", ascending=st.session_state.sort_ascending)
             grouped = grouped.drop(columns=["退款率_num"])
 
-        # 分页控制
         page_size = st.session_state.product_page_size
         total_rows = len(grouped)
         total_pages = (total_rows + page_size - 1) // page_size if total_rows > 0 else 1
@@ -2458,9 +2446,7 @@ if idx_product is not None:
                 export_df = grouped.copy()
                 if "image_url" in export_df.columns:
                     export_df = export_df.drop(columns=["image_url"])
-                # 移除辅助列
                 export_df = export_df.drop(columns=[c for c in export_df.columns if c.endswith("_num")], errors='ignore')
-                # 重命名
                 rename_map = {
                     "master_category": "商品分类",
                     "has_newbie_coupon": "是否新人礼金",
@@ -2489,8 +2475,6 @@ if idx_product is not None:
         end_idx = min(start_idx + page_size, total_rows)
         page_df = grouped.iloc[start_idx:end_idx]
 
-        # 展示表格（带图片和按钮）
-        # 动态创建列（根据现有列）
         cols = st.columns([2, 0.5, 1.5, 1.2, 1.2, 1.2, 1, 0.8, 0.8, 0.8])
         headers = ["货号", "图片", "商品分类", "发货金额(¥)", "退货金额(¥)", "净销售金额(¥)", "退款率", "新人礼金", "详情", "趋势"]
         for col, header in zip(cols, headers):
