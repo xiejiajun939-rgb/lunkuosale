@@ -763,66 +763,82 @@ def refresh_materialized_view(suffix=""):
 
 # ========== 核心修改：load_product_sales（仅对 _all 增加维度关联） ==========
 @st.cache_data(ttl=300)
-def load_product_sales(suffix=None, apply_filter=True, start_date=None, end_date=None):
+def load_product_sales(suffix=None, apply_filter=True, start_date=None, end_date=None, aggregate=False):
     if supabase is None:
         return pd.DataFrame()
     try:
         if suffix == "_all":
-            # 使用物化视图
             table_name = "mv_product_sales_enriched_all"
-            needed_cols = "sale_date, shop_name, product_code, style_code, brand, year, season, product_category, style, color_code, size_code, ship_amount, return_amount, net_amount, remark, org_name, dept, anchor"
+            # 聚合查询需要的列
+            if aggregate:
+                needed_cols = "style_code, sum(ship_amount) as ship_amount, sum(return_amount) as return_amount, sum(net_amount) as net_amount"
+            else:
+                needed_cols = "sale_date, shop_name, product_code, style_code, brand, year, season, product_category, style, color_code, size_code, ship_amount, return_amount, net_amount, remark, org_name, dept, anchor"
         else:
-            # 非全部数据仍用原始表
             table_name = get_table_name("product_sales", suffix)
-            needed_cols = "sale_date, shop_name, product_code, style_code, brand, year, season, product_category, style, color_code, size_code, ship_amount, return_amount, net_amount, remark"
+            if aggregate:
+                needed_cols = "style_code, sum(ship_amount) as ship_amount, sum(return_amount) as return_amount, sum(net_amount) as net_amount"
+            else:
+                needed_cols = "sale_date, shop_name, product_code, style_code, brand, year, season, product_category, style, color_code, size_code, ship_amount, return_amount, net_amount, remark"
 
-        all_data = []
-        page = 0
-        page_size = 500
-        query = supabase.table(table_name).select(needed_cols)
-        if start_date:
-            query = query.gte("sale_date", start_date.isoformat())
-        if end_date:
-            query = query.lte("sale_date", end_date.isoformat())
-        
-        while True:
-            resp = query.range(page * page_size, (page + 1) * page_size - 1).execute()
-            if not resp.data:
-                break
-            all_data.extend(resp.data)
-            if len(resp.data) < page_size:
-                break
-            page += 1
-
-        if not all_data:
-            return pd.DataFrame()
-
-        df = pd.DataFrame(all_data)
-        df["sale_date"] = pd.to_datetime(df["sale_date"])
-        # 统一处理缺失的 style_code（若有）
-        if "style_code" not in df.columns or df["style_code"].isnull().all():
-            df["style_code"] = df["product_code"].str[:8]
+        if aggregate:
+            # 聚合查询，直接在数据库分组
+            query = supabase.table(table_name).select(needed_cols)
+            if start_date:
+                query = query.gte("sale_date", start_date.isoformat())
+            if end_date:
+                query = query.lte("sale_date", end_date.isoformat())
+            resp = query.group_by("style_code").execute()
+            if resp.data:
+                df = pd.DataFrame(resp.data)
+                # 重命名列
+                df.rename(columns={"net_amount": "净销售金额", "ship_amount": "发货金额", "return_amount": "退货金额"}, inplace=True)
+                for col in ["净销售金额", "发货金额", "退货金额"]:
+                    df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+                # 关联商品库获取分类、图片等（后续在商品分析中处理）
+                return df
+            else:
+                return pd.DataFrame()
         else:
-            df["style_code"] = df["style_code"].fillna(df["product_code"].str[:8])
-        for col in ["ship_amount", "return_amount", "net_amount"]:
-            if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
-
-        # 如果是全部数据，物化视图已包含 org_name, dept, anchor，无需再关联
-        if suffix == "_all":
-            # 确保列存在
-            for col in ["org_name", "dept", "anchor"]:
-                if col not in df.columns:
-                    df[col] = "未分配组织" if col == "org_name" else ("未分配部门" if col == "dept" else "NONE")
-        else:
-            # 非全部数据，手动添加空列
-            df["org_name"] = None
-            df["dept"] = None
-            # 若有需要可提取 anchor，但非全部数据通常不需要
-
-        if apply_filter:
-            df = apply_data_permission(df)
-        return df
+            # 原有明细查询逻辑（保持不变）
+            all_data = []
+            page = 0
+            page_size = 500
+            query = supabase.table(table_name).select(needed_cols)
+            if start_date:
+                query = query.gte("sale_date", start_date.isoformat())
+            if end_date:
+                query = query.lte("sale_date", end_date.isoformat())
+            while True:
+                resp = query.range(page * page_size, (page + 1) * page_size - 1).execute()
+                if not resp.data:
+                    break
+                all_data.extend(resp.data)
+                if len(resp.data) < page_size:
+                    break
+                page += 1
+            if not all_data:
+                return pd.DataFrame()
+            df = pd.DataFrame(all_data)
+            df["sale_date"] = pd.to_datetime(df["sale_date"])
+            if "style_code" not in df.columns or df["style_code"].isnull().all():
+                df["style_code"] = df["product_code"].str[:8]
+            else:
+                df["style_code"] = df["style_code"].fillna(df["product_code"].str[:8])
+            for col in ["ship_amount", "return_amount", "net_amount"]:
+                if col in df.columns:
+                    df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+            # 处理全部数据的 org_name/dept/anchor
+            if suffix == "_all":
+                for col in ["org_name", "dept", "anchor"]:
+                    if col not in df.columns:
+                        df[col] = "未分配组织" if col == "org_name" else ("未分配部门" if col == "dept" else "NONE")
+            else:
+                df["org_name"] = None
+                df["dept"] = None
+            if apply_filter:
+                df = apply_data_permission(df)
+            return df
     except Exception as e:
         st.error(f"加载商品销售数据失败：{e}")
         return pd.DataFrame()
@@ -2183,7 +2199,7 @@ if idx_product is not None:
             # 获取当前选中的日期范围（由 date_quick_buttons 设置）
             start_date = st.session_state.get("prod_start_final", None)
             end_date = st.session_state.get("prod_end_final", None)
-            prod_df = load_product_sales(st.session_state.table_suffix, start_date=start_date, end_date=end_date)
+            prod_df = load_product_sales(st.session_state.table_suffix, start_date=start_date, end_date=end_date, aggregate=True)
         
         if prod_df.empty:
             st.warning("暂无商品销售数据，请先上传订单文件。")
