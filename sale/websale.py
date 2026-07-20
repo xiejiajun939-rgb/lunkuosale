@@ -2233,7 +2233,7 @@ if idx_ship_return is not None:
 # ========== 商品分析 ==========
 if idx_product is not None:
     with tabs[idx_product]:
-        # ---------- 初始化所有 session_state 变量 ----------
+        # ---------- 初始化 session_state ----------
         if "detail_clicked" not in st.session_state:
             st.session_state.detail_clicked = False
         if "show_dialog" not in st.session_state:
@@ -2258,6 +2258,10 @@ if idx_product is not None:
             st.session_state.sort_by = "净销售金额"
         if "sort_ascending" not in st.session_state:
             st.session_state.sort_ascending = False
+        if "shop_options_cache" not in st.session_state:
+            st.session_state.shop_options_cache = []
+        if "anchor_options_cache" not in st.session_state:
+            st.session_state.anchor_options_cache = []
 
         # ---------- 重置状态 ----------
         if st.session_state.detail_clicked:
@@ -2272,11 +2276,59 @@ if idx_product is not None:
             st.info("请在左侧边栏切换到「全部数据」后再查看。")
             st.stop()
 
-        # ---------- 使用 st.form 包裹筛选条件 ----------
+        # ---------- 加载店铺和主播选项（轻量级，缓存） ----------
+        @st.cache_data(ttl=600)
+        def get_distinct_shops(suffix, start_date=None, end_date=None):
+            """获取店铺去重列表（用于筛选）"""
+            if supabase is None:
+                return []
+            table_name = "mv_product_sales_enriched_all" if suffix == "_all" else get_table_name("product_sales", suffix)
+            query = supabase.table(table_name).select('shop_name').distinct()
+            if start_date:
+                query = query.gte('sale_date', start_date.isoformat())
+            if end_date:
+                query = query.lte('sale_date', end_date.isoformat())
+            resp = query.execute()
+            if resp.data:
+                return sorted([row['shop_name'] for row in resp.data if row['shop_name']])
+            return []
+
+        @st.cache_data(ttl=600)
+        def get_distinct_anchors(suffix, start_date=None, end_date=None):
+            """获取主播去重列表（用于筛选）"""
+            if supabase is None:
+                return []
+            # 全部数据使用物化视图，非全部数据从 product_sales 中提取
+            if suffix == "_all":
+                table_name = "mv_product_sales_enriched_all"
+                query = supabase.table(table_name).select('anchor').distinct()
+                if start_date:
+                    query = query.gte('sale_date', start_date.isoformat())
+                if end_date:
+                    query = query.lte('sale_date', end_date.isoformat())
+                resp = query.execute()
+                if resp.data:
+                    # 过滤掉 'NONE' 和空值
+                    anchors = [row['anchor'] for row in resp.data if row['anchor'] and row['anchor'] != 'NONE']
+                    return sorted(anchors)
+            else:
+                # 非全部数据：需要从 remark 提取，较为复杂，暂不支持，返回空
+                return []
+            return []
+
+        # 获取店铺和主播选项（默认使用最近90天的数据范围，以减少查询范围）
+        end_date_default = date.today()
+        start_date_default = end_date_default - timedelta(days=90)
+        if not st.session_state.shop_options_cache:
+            st.session_state.shop_options_cache = get_distinct_shops("_all", start_date_default, end_date_default)
+        if not st.session_state.anchor_options_cache:
+            st.session_state.anchor_options_cache = get_distinct_anchors("_all", start_date_default, end_date_default)
+
+        # ---------- 使用 st.form 包裹筛选 ----------
         with st.form(key="product_filter_form"):
             st.subheader("🔍 筛选条件")
 
-            # ---- 日期快捷按钮（在 form 内，点击即提交） ----
+            # ---- 日期快捷按钮（在 form 内） ----
             col_date_btns = st.columns([1, 1, 1, 1, 1, 1])
             with col_date_btns[0]:
                 if st.form_submit_button("📅 昨日", use_container_width=True):
@@ -2317,7 +2369,7 @@ if idx_product is not None:
             with col_date_btns[5]:
                 st.caption("自定义日期（下方）")
 
-            # ---- 日期输入（使用 session_state 存储，以便 form 提交后更新） ----
+            # ---- 日期输入 ----
             col_date1, col_date2 = st.columns(2)
             with col_date1:
                 start_date = st.date_input(
@@ -2332,23 +2384,25 @@ if idx_product is not None:
                     key="prod_end_input"
                 )
 
-            # ---- 其他筛选组件 ----
-            col_platform, col_shop = st.columns(2)
+            # ---- 平台、店铺、主播 ----
+            col_platform, col_shop, col_anchor = st.columns(3)
             with col_platform:
                 platform_options = ["全部", "抖音", "视频号"]
                 selected_platform = st.selectbox("平台", platform_options, key="platform_filter_final")
             with col_shop:
-                # 店铺列表需要从数据中获取，但这里还没有数据，可以先从 session_state 中获取上一个查询的列表（若无则留空）
-                # 我们将在查询后动态更新，但这里暂时空列表，后续查询后更新 session_state 中的店铺列表
-                # 由于数据还未加载，我们可以使用 placeholder，或者从之前缓存的 prod_df 获取，但我们这里暂不处理，查询后会重新渲染
-                shop_list = st.session_state.get("shop_list_cache", [])
-                selected_shops = st.multiselect("店铺（可多选）", options=shop_list, default=[])
+                # 使用缓存的店铺选项
+                shop_options = st.session_state.shop_options_cache
+                selected_shops = st.multiselect("店铺（可多选）", options=shop_options, default=[])
+            with col_anchor:
+                anchor_options = st.session_state.anchor_options_cache
+                selected_anchors = st.multiselect("主播（可多选）", options=anchor_options, default=[])
 
+            # ---- 品牌、货号、品类、年份、季节 ----
             col_code, col_brand = st.columns(2)
             with col_code:
                 style_codes_input = st.text_input("货号筛选（多个用英文逗号分隔）", placeholder="例如: L262Y050, G262Y030", key="style_code_filter_final")
             with col_brand:
-                brands_all = st.session_state.get("brands_cache", ["全部"])
+                brands_all = ["全部"] + sorted(st.session_state.get("brands_cache", []))
                 selected_brand = st.selectbox("品牌", brands_all, key="brand_filter_final")
 
             col_cat, col_year, col_season = st.columns(3)
@@ -2365,15 +2419,12 @@ if idx_product is not None:
             coupon_filter_options = ["全部", "仅首单礼金", "非首单礼金"]
             selected_coupon_filter = st.selectbox("是否首单礼金款式", coupon_filter_options, key="coupon_filter_final")
 
-            anchor_options = st.session_state.get("anchors_cache", [])
-            selected_anchors = st.multiselect("主播（可多选）", options=anchor_options, default=[])
-
             # ---- 查询按钮 ----
             submitted = st.form_submit_button("🚀 查询", use_container_width=True)
 
-        # ---------- 数据加载（仅在 form 提交后执行） ----------
+        # ---------- 数据加载（仅在提交时执行） ----------
         if submitted:
-            # 将从 form 中读取的日期保存到 session_state（便于页面其他地方使用）
+            # 保存日期到 session_state
             st.session_state.prod_start_final = start_date
             st.session_state.prod_end_final = end_date
 
@@ -2384,6 +2435,9 @@ if idx_product is not None:
             filter_seasons = selected_seasons if selected_seasons else None
             filter_anchors = selected_anchors if selected_anchors else None
             filter_shop_names = selected_shops if selected_shops else None
+
+            # 平台筛选：在 Python 端过滤（因为 RPC 没有 platform 参数）
+            # 或者我们可以在 RPC 中增加 platform 过滤，但为了快速，我们在 Python 端处理
 
             with st.spinner("正在加载商品销售数据，请稍候..."):
                 prod_df = load_product_summary(
@@ -2398,22 +2452,25 @@ if idx_product is not None:
                     filter_shop_names=filter_shop_names
                 )
 
-            # 缓存筛选选项（供下次渲染使用）
+            # 平台过滤（在 Python 端）
+            if not prod_df.empty and selected_platform != "全部":
+                # 如果选择了平台，过滤 shop_name
+                if selected_platform == "抖音":
+                    prod_df = prod_df[prod_df["shop_name"].str.contains("抖音", case=False, na=False)]
+                elif selected_platform == "视频号":
+                    prod_df = prod_df[prod_df["shop_name"].str.contains("视频号", case=False, na=False)]
+
+            # 更新缓存选项（品牌、品类等）
             if not prod_df.empty:
-                st.session_state.shop_list_cache = sorted(prod_df["shop_name"].dropna().unique())
-                st.session_state.brands_cache = ["全部"] + sorted(prod_df["brand"].dropna().unique())
+                st.session_state.brands_cache = sorted(prod_df["brand"].dropna().unique())
                 st.session_state.categories_cache = sorted(prod_df["product_category"].dropna().unique())
                 st.session_state.years_cache = sorted(prod_df["year"].dropna().unique())
                 st.session_state.seasons_cache = sorted(prod_df["season"].dropna().unique())
-                st.session_state.anchors_cache = sorted(prod_df["anchor"].dropna().unique())
             else:
-                # 若为空，清空缓存（避免显示旧选项）
-                st.session_state.shop_list_cache = []
-                st.session_state.brands_cache = ["全部"]
+                st.session_state.brands_cache = []
                 st.session_state.categories_cache = []
                 st.session_state.years_cache = []
                 st.session_state.seasons_cache = []
-                st.session_state.anchors_cache = []
 
             # ---------- 数据为空处理 ----------
             if prod_df.empty:
@@ -2463,9 +2520,8 @@ if idx_product is not None:
                 prod_df["image_url"] = None
                 prod_df["has_newbie_coupon"] = False
 
-            # ---------- 应用筛选（已在 RPC 中过滤，但为了安全，再次过滤） ----------
+            # ---------- 应用货号文本筛选和礼金筛选（在 Python 端） ----------
             filtered = prod_df.copy()
-            # 这些筛选已在 RPC 中处理，但若用户未通过 RPC 过滤（如货号文本筛选），则在这里补充
             if style_codes_input.strip():
                 target_codes = [code.strip().upper() for code in style_codes_input.split(",") if code.strip()]
                 if target_codes:
@@ -2633,12 +2689,8 @@ if idx_product is not None:
                 if col10.button("📈", key=f"trend_btn_{row['货号']}_{idx}"):
                     st.info(f"货号 {row['货号']} 的销售趋势可在日明细中查看。")
         else:
-            # 未提交查询，显示默认提示
+            # 未提交查询，显示提示（可显示上次查询结果缓存，此处省略）
             st.info("请设置筛选条件并点击「查询」按钮加载数据。")
-            # 如果之前有缓存数据，可显示上次查询结果（可选）
-            if "prod_df_cached" in st.session_state:
-                st.caption("显示上次查询结果（点击查询更新）")
-                # 可以显示上次的部分数据，但为了简洁，略过
 
 # ========== 销售对比（主播/店铺维度） ==========
 if idx_anchor_compare is not None:
