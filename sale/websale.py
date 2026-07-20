@@ -847,20 +847,20 @@ def load_product_summary(suffix, start_date, end_date,
                          filter_brands=None, filter_categories=None, 
                          filter_years=None, filter_seasons=None,
                          filter_anchors=None, filter_shop_names=None):
-    """通过 RPC 获取按货号汇总的销售数据（不含 product_category）"""
     if supabase is None:
         return pd.DataFrame()
     try:
+        # 将空列表转换为 None，避免 ANY([]) 过滤掉所有行
         params = {
             'start_date': start_date.isoformat(),
             'end_date': end_date.isoformat(),
             'suffix': suffix,
-            'filter_brands': filter_brands or [],
-            'filter_categories': filter_categories or [],  # 此参数在RPC中无实际作用，保留兼容
-            'filter_years': filter_years or [],
-            'filter_seasons': filter_seasons or [],
-            'filter_anchors': filter_anchors or [],
-            'filter_shop_names': filter_shop_names or []
+            'filter_brands': filter_brands if filter_brands else None,
+            'filter_categories': filter_categories if filter_categories else None,
+            'filter_years': filter_years if filter_years else None,
+            'filter_seasons': filter_seasons if filter_seasons else None,
+            'filter_anchors': filter_anchors if filter_anchors else None,
+            'filter_shop_names': filter_shop_names if filter_shop_names else None
         }
         resp = supabase.rpc('get_product_summary', params).execute()
         if resp.data:
