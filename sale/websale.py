@@ -869,12 +869,12 @@ def load_product_summary(suffix, start_date, end_date,
             'start_date': start_date.isoformat(),
             'end_date': end_date.isoformat(),
             'suffix': suffix,
-            'filter_brands': filter_brands or [],
-            'filter_categories': filter_categories or [],
-            'filter_years': filter_years or [],
-            'filter_seasons': filter_seasons or [],
-            'filter_anchors': filter_anchors or [],
-            'filter_shop_names': filter_shop_names or []
+            'filter_brands': filter_brands if filter_brands else None,
+            'filter_categories': filter_categories if filter_categories else None,
+            'filter_years': filter_years if filter_years else None,
+            'filter_seasons': filter_seasons if filter_seasons else None,
+            'filter_anchors': filter_anchors if filter_anchors else None,
+            'filter_shop_names': filter_shop_names if filter_shop_names else None
         }
         resp = supabase.rpc('get_product_summary', params).execute()
         
