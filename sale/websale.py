@@ -2246,6 +2246,16 @@ if idx_product is not None:
             st.session_state.trend_style_code = None
             st.session_state.trend_data = None
 
+        # ---------- 临时日期与查询日期状态初始化 ----------
+        if "prod_temp_start" not in st.session_state:
+            st.session_state.prod_temp_start = date.today() - timedelta(days=30)
+        if "prod_temp_end" not in st.session_state:
+            st.session_state.prod_temp_end = date.today()
+        if "prod_query_start" not in st.session_state:
+            st.session_state.prod_query_start = st.session_state.prod_temp_start
+        if "prod_query_end" not in st.session_state:
+            st.session_state.prod_query_end = st.session_state.prod_temp_end
+
         col_btn, _ = st.columns([1, 5])
         with col_btn:
             if st.button("🔄 刷新数据", key="refresh_analysis_final"):
@@ -2267,14 +2277,24 @@ if idx_product is not None:
             st.info("请在左侧边栏切换到「全部数据」后再查看。")
             st.stop()
 
-        # ---------- 日期快捷按钮 ----------
-        date_quick_buttons("prod_start_final", "prod_end_final",
-                           default_start=date.today() - timedelta(days=30),
-                           default_end=date.today(),
+        # ---------- 日期快捷按钮（只修改临时日期） ----------
+        date_quick_buttons("prod_temp_start", "prod_temp_end",
+                           default_start=st.session_state.prod_temp_start,
+                           default_end=st.session_state.prod_temp_end,
                            min_date=None,
                            max_date=None)
-        start_date = st.session_state.get("prod_start_final", date.today() - timedelta(days=30))
-        end_date = st.session_state.get("prod_end_final", date.today())
+
+        # ---------- 确认查询按钮 ----------
+        col_confirm, _ = st.columns([1, 5])
+        with col_confirm:
+            if st.button("📊 确认查询", key="confirm_product_query"):
+                st.session_state.prod_query_start = st.session_state.prod_temp_start
+                st.session_state.prod_query_end = st.session_state.prod_temp_end
+                st.rerun()
+
+        # 使用查询日期加载数据
+        start_date = st.session_state.prod_query_start
+        end_date = st.session_state.prod_query_end
 
         # ---------- 加载汇总数据 ----------
         with st.spinner("正在加载商品销售数据，请稍候..."):
@@ -2420,23 +2440,17 @@ if idx_product is not None:
         col_sort1, col_sort2, col_sort3 = st.columns([1, 1, 2])
         with col_sort1:
             sort_options = ["货号", "发货金额", "退货金额", "净销售金额", "退款率"]
-            # 1. 先检查并初始化 session_state
-        if "sort_by" not in st.session_state:
-            st.session_state.sort_by = sort_options[3]  # 初始化为 sort_options 里的第4个选项
-        
-        # 2. 然后再渲染 selectbox
-        selected_sort = st.selectbox(
-            "排序字段", 
-            sort_options, 
-            index=sort_options.index(st.session_state.sort_by) if st.session_state.sort_by in sort_options else 3, 
-            key="sort_by_selector"
-        )
+            if "sort_by" not in st.session_state:
+                st.session_state.sort_by = sort_options[3]
+            selected_sort = st.selectbox(
+                "排序字段", 
+                sort_options, 
+                index=sort_options.index(st.session_state.sort_by) if st.session_state.sort_by in sort_options else 3, 
+                key="sort_by_selector"
+            )
         with col_sort2:
-            # 1. 先检查并初始化 session_state (假设默认是降序，即 False)
             if "sort_ascending" not in st.session_state:
                 st.session_state.sort_ascending = False
-            
-            # 2. 然后再渲染 radio 单选框
             sort_order = st.radio(
                 "排序顺序", 
                 ["降序", "升序"], 
@@ -2445,11 +2459,15 @@ if idx_product is not None:
                 key="sort_order_radio"
             )
         with col_sort3:
+            if "product_page_size" not in st.session_state:
+                st.session_state.product_page_size = 10
+            if "product_page_num" not in st.session_state:
+                st.session_state.product_page_num = 1
             page_size_options = [10, 20, 50, 100]
             selected_page_size = st.selectbox(
                 "每页显示行数",
                 options=page_size_options,
-                index=page_size_options.index(st.session_state.product_page_size),
+                index=page_size_options.index(st.session_state.product_page_size) if st.session_state.product_page_size in page_size_options else 0,
                 key="page_size_selector"
             )
             if selected_page_size != st.session_state.product_page_size:
