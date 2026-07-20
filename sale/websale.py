@@ -863,34 +863,49 @@ def load_product_summary(suffix, start_date, end_date,
         resp = supabase.rpc('get_product_summary', params).execute()
         if resp.data:
             df = pd.DataFrame(resp.data)
-            # 检查是否存在预期列，不区分大小写地匹配
-            # 先打印列名（调试用）
-            # st.write("列名：", df.columns.tolist())  # 可注释掉
-            
-            # 重命名：查找可能的列名
+            # ========== 关键修复：稳健处理列名 ==========
+            # 1. 自动匹配金额列（不区分大小写）
             rename_map = {}
             for col in df.columns:
-                if col.lower() == 'total_ship' or col.lower() == 'ship_amount':
+                col_lower = col.lower()
+                if col_lower in ['total_ship', 'ship_amount']:
                     rename_map[col] = '发货金额'
-                elif col.lower() == 'total_return' or col.lower() == 'return_amount':
+                elif col_lower in ['total_return', 'return_amount']:
                     rename_map[col] = '退货金额'
-                elif col.lower() == 'total_net' or col.lower() == 'net_amount':
+                elif col_lower in ['total_net', 'net_amount']:
                     rename_map[col] = '净销售金额'
             df.rename(columns=rename_map, inplace=True)
-            
-            # 确保金额列为数值
+
+            # 2. 确保金额列存在（若缺失则补0）
             for col in ["发货金额", "退货金额", "净销售金额"]:
                 if col not in df.columns:
                     df[col] = 0.0
                 else:
                     df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
-            
-            # 确保 style_code 存在且为字符串
+
+            # ========== 核心修复：处理 style_code ==========
+            # 如果没有 style_code 列，尝试用 product_code 提取
             if "style_code" not in df.columns:
-                df["style_code"] = ""
-            df["style_code"] = df["style_code"].astype(str).str.strip().str.upper()
-            # 过滤掉空 style_code
-            df = df[df["style_code"] != ""]
+                if "product_code" in df.columns:
+                    df["style_code"] = df["product_code"].astype(str).str[:8]
+                else:
+                    df["style_code"] = "未知款号"
+
+            # 清洗：填充 NaN、转换为字符串、去除首尾空格、转大写
+            df["style_code"] = df["style_code"].fillna("未知款号").astype(str).str.strip().str.upper()
+
+            # 将常见的空值占位符转换为“未知款号”
+            df.loc[df["style_code"] == "", "style_code"] = "未知款号"
+            df.loc[df["style_code"] == "NAN", "style_code"] = "未知款号"
+            df.loc[df["style_code"] == "NONE", "style_code"] = "未知款号"
+
+            # 注意：不再过滤空 style_code，保留所有行，让“未知款号”也能参与汇总
+
+            # ========== 处理其他维度字段（如果缺失则补默认值） ==========
+            for col in ["brand", "product_category", "year", "season"]:
+                if col not in df.columns:
+                    df[col] = None
+
             return df
         else:
             return pd.DataFrame()
