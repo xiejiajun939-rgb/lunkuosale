@@ -2420,7 +2420,17 @@ if idx_product is not None:
         col_sort1, col_sort2, col_sort3 = st.columns([1, 1, 2])
         with col_sort1:
             sort_options = ["货号", "发货金额", "退货金额", "净销售金额", "退款率"]
-            selected_sort = st.selectbox("排序字段", sort_options, index=sort_options.index(st.session_state.sort_by) if st.session_state.sort_by in sort_options else 3, key="sort_by_selector")
+            # 1. 先检查并初始化 session_state
+        if "sort_by" not in st.session_state:
+            st.session_state.sort_by = sort_options[3]  # 初始化为 sort_options 里的第4个选项
+        
+        # 2. 然后再渲染 selectbox
+        selected_sort = st.selectbox(
+            "排序字段", 
+            sort_options, 
+            index=sort_options.index(st.session_state.sort_by) if st.session_state.sort_by in sort_options else 3, 
+            key="sort_by_selector"
+        )
         with col_sort2:
             sort_order = st.radio("排序顺序", ["降序", "升序"], horizontal=True, index=0 if not st.session_state.sort_ascending else 1, key="sort_order_radio")
         with col_sort3:
