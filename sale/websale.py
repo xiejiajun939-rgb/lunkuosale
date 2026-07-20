@@ -2315,7 +2315,7 @@ if idx_product is not None:
         if not st.session_state.anchor_options_cache:
             st.session_state.anchor_options_cache = get_distinct_values("anchor", start_default, end_default)
 
-        # ---------- 筛选表单（所有条件并列） ----------
+        # ---------- 筛选表单 ----------
         with st.form(key="product_filter_form"):
             st.subheader("🔍 筛选条件")
 
@@ -2375,7 +2375,7 @@ if idx_product is not None:
                     key="prod_end_input"
                 )
 
-            # 店铺/主播筛选（并列）
+            # 店铺/主播筛选
             col_shop, col_anchor = st.columns(2)
             with col_shop:
                 selected_shops = st.multiselect(
@@ -2462,7 +2462,6 @@ if idx_product is not None:
             # ---------- 数据为空处理 ----------
             if prod_df.empty:
                 st.warning("所选条件下无销售数据，请调整筛选条件。")
-                # 提供刷新物化视图和测试 RPC 的按钮
                 if st.button("🔄 强制刷新物化视图", key="refresh_mv_btn"):
                     with st.spinner("正在刷新物化视图..."):
                         refresh_materialized_view("_all")
@@ -2483,7 +2482,7 @@ if idx_product is not None:
                         st.error(f"RPC 测试失败：{e}")
                 st.stop()
 
-            # ---------- 更新缓存选项（品牌、品类等） ----------
+            # ---------- 更新缓存选项 ----------
             if not prod_df.empty:
                 st.session_state.brands_cache = sorted(prod_df["brand"].dropna().unique())
                 st.session_state.categories_cache = sorted(prod_df["product_category"].dropna().unique())
@@ -2523,7 +2522,6 @@ if idx_product is not None:
                 st.stop()
 
             # ---------- 准备显示 ----------
-            # 计算退款率（数值）
             prod_df["退款率_数值"] = np.where(
                 prod_df["发货金额"] != 0,
                 (prod_df["退货金额"] / prod_df["发货金额"]) * 100,
@@ -2531,10 +2529,27 @@ if idx_product is not None:
             )
             prod_df["退款率"] = prod_df["退款率_数值"].map("{:.2f}%".format)
 
-            # 主显示列（按货号汇总）
-            display_df = prod_df[["style_code", "master_category", "发货金额", "退货金额", "净销售金额", "退款率", "has_newbie_coupon", "image_url", "brand", "product_category", "year", "season"]].copy()
+            # 主列名为 group_value（即货号，因为 group_by='style'）
+            group_col = "group_value"
+            display_df = prod_df.copy()
+            cols_to_show = [
+                group_col,
+                "master_category",
+                "发货金额",
+                "退货金额",
+                "净销售金额",
+                "退款率",
+                "has_newbie_coupon",
+                "image_url",
+                "brand",
+                "product_category",
+                "year",
+                "season"
+            ]
+            existing_cols = [c for c in cols_to_show if c in display_df.columns]
+            display_df = display_df[existing_cols]
             display_df.rename(columns={
-                "style_code": "货号",
+                group_col: "货号",
                 "master_category": "商品分类",
                 "has_newbie_coupon": "新人礼金"
             }, inplace=True)
@@ -2647,7 +2662,6 @@ if idx_product is not None:
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     )
 
-            # 使用 column_config 美化表格
             column_config = {
                 "货号": st.column_config.TextColumn("货号", width="medium"),
                 "商品分类": st.column_config.TextColumn("商品分类", width="medium"),
