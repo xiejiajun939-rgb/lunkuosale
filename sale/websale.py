@@ -829,7 +829,7 @@ def load_product_sales(suffix=None, apply_filter=True, start_date=None, end_date
             for col in ["org_name", "dept", "anchor"]:
                 if col not in df.columns:
                     df[col] = "未分配组织" if col == "org_name" else ("未分配部门" if col == "dept" else "NONE")
-            # ---------- 修正：在这里加载 mapping_df ----------
+            # ---------- 补全组织/部门 ----------
             mapping_df = load_dimension_mapping()
             if not mapping_df.empty:
                 map_shop = mapping_df[mapping_df['anchor_name'] == 'NONE'].set_index('shop_name')[['org_name', 'dept']].to_dict('index')
@@ -856,7 +856,6 @@ def load_product_summary(suffix, start_date, end_date,
                          filter_years=None, filter_seasons=None,
                          filter_anchors=None, filter_shop_names=None):
     if supabase is None:
-        st.error("Supabase 未连接")
         return pd.DataFrame()
     try:
         params = {
@@ -870,69 +869,53 @@ def load_product_summary(suffix, start_date, end_date,
             'filter_anchors': filter_anchors or [],
             'filter_shop_names': filter_shop_names or []
         }
-        # 调试：显示请求参数
-        st.write("🔍 RPC 请求参数:", params)
         resp = supabase.rpc('get_product_summary', params).execute()
-        # 调试：显示原始响应类型和长度
-        st.write("🔍 resp.data 类型:", type(resp.data))
-        st.write("🔍 resp.data 长度:", len(resp.data) if resp.data else 0)
         if resp.data:
-            # 显示第一条数据的键，用于检查列名
-            st.write("🔍 第一条数据键:", list(resp.data[0].keys()))
-            # 显示前两条数据
-            st.write("🔍 前两条数据:", resp.data[:2])
-        else:
-            st.warning("⚠️ resp.data 为空，RPC 未返回数据")
-            return pd.DataFrame()
-        
-        df = pd.DataFrame(resp.data)
-        st.write("🔍 DataFrame 行数:", len(df))
-        st.write("🔍 DataFrame 列名:", df.columns.tolist())
-        # 如果 DataFrame 为空，直接返回
-        if df.empty:
+            df = pd.DataFrame(resp.data)
+            
+            # 自动匹配金额列
+            rename_map = {}
+            for col in df.columns:
+                col_lower = col.lower()
+                if col_lower in ['total_ship', 'ship_amount']:
+                    rename_map[col] = '发货金额'
+                elif col_lower in ['total_return', 'return_amount']:
+                    rename_map[col] = '退货金额'
+                elif col_lower in ['total_net', 'net_amount']:
+                    rename_map[col] = '净销售金额'
+            df.rename(columns=rename_map, inplace=True)
+            
+            # 确保金额列存在
+            for col in ["发货金额", "退货金额", "净销售金额"]:
+                if col not in df.columns:
+                    df[col] = 0.0
+                else:
+                    df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+            
+            # 处理 style_code：保留空值，标记为“未知款号”
+            if "style_code" not in df.columns:
+                df["style_code"] = "未知款号"
+            else:
+                df["style_code"] = df["style_code"].fillna("未知款号").astype(str).str.strip().str.upper()
+                # 将空字符串、'NAN'、'NONE' 等统一替换为“未知款号”
+                df.loc[df["style_code"] == "", "style_code"] = "未知款号"
+                df.loc[df["style_code"] == "NAN", "style_code"] = "未知款号"
+                df.loc[df["style_code"] == "NONE", "style_code"] = "未知款号"
+            
+            # 处理其他维度列
+            for col in ["brand", "product_category", "year", "season"]:
+                if col not in df.columns:
+                    df[col] = None
+                else:
+                    df[col] = df[col].fillna(None)
+            
+            # 不再过滤任何行
             return df
-        
-        # 重命名列...
-        rename_map = {}
-        for col in df.columns:
-            col_lower = col.lower()
-            if col_lower in ['total_ship', 'ship_amount']:
-                rename_map[col] = '发货金额'
-            elif col_lower in ['total_return', 'return_amount']:
-                rename_map[col] = '退货金额'
-            elif col_lower in ['total_net', 'net_amount']:
-                rename_map[col] = '净销售金额'
-        df.rename(columns=rename_map, inplace=True)
-        st.write("🔍 重命名后列名:", df.columns.tolist())
-        
-        for col in ["发货金额", "退货金额", "净销售金额"]:
-            if col not in df.columns:
-                df[col] = 0.0
-            else:
-                df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
-        
-        # 处理 style_code
-        if "style_code" not in df.columns:
-            df["style_code"] = "未知款号"
         else:
-            df["style_code"] = df["style_code"].fillna("未知款号").astype(str).str.strip().str.upper()
-            df.loc[df["style_code"] == "", "style_code"] = "未知款号"
-            df.loc[df["style_code"] == "NAN", "style_code"] = "未知款号"
-            df.loc[df["style_code"] == "NONE", "style_code"] = "未知款号"
-        
-        # 填充其他维度列
-        for col in ["brand", "product_category", "year", "season"]:
-            if col not in df.columns:
-                df[col] = None
-            else:
-                df[col] = df[col].fillna(None)
-        
-        st.write("🔍 最终 DataFrame 行数:", len(df))
-        return df
+            # 如果 resp.data 为空，返回空 DataFrame
+            return pd.DataFrame()
     except Exception as e:
         st.error(f"加载商品汇总失败：{e}")
-        import traceback
-        st.code(traceback.format_exc())
         return pd.DataFrame()
 def validate_order_data(df):
     try:
@@ -2281,14 +2264,13 @@ if idx_product is not None:
 
         # ---------- 加载汇总数据 ----------
         with st.spinner("正在加载商品销售数据，请稍候..."):
-            prod_df = load_product_summary(
-                suffix=st.session_state.table_suffix,
-                start_date=start_date,
-                end_date=end_date
-            )
-            st.write(f"🔍 load_product_summary 返回 DataFrame 行数: {len(prod_df)}")
-            st.write("🔍 DataFrame 列名:", prod_df.columns.tolist())
-            if not prod_df.empty:
+            prod_df = load_product_summary(...)
+        
+        # 安全调试（不会引起语法错误）
+        st.info(f"加载了 {len(prod_df)} 行数据，列名：{list(prod_df.columns)}")
+        
+        if prod_df.empty:
+            # ... 后续处理
                 st.dataframe(prod_df.head(5))
 
         # ---------- 数据为空处理 ----------
