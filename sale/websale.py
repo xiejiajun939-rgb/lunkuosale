@@ -856,8 +856,15 @@ def load_product_summary(suffix, start_date, end_date,
                          filter_years=None, filter_seasons=None,
                          filter_anchors=None, filter_shop_names=None):
     if supabase is None:
+        st.error("Supabase 未连接")
         return pd.DataFrame()
     try:
+        # 确保日期为 date 对象（防止字符串传入）
+        if isinstance(start_date, str):
+            start_date = date.fromisoformat(start_date)
+        if isinstance(end_date, str):
+            end_date = date.fromisoformat(end_date)
+        
         params = {
             'start_date': start_date.isoformat(),
             'end_date': end_date.isoformat(),
@@ -870,52 +877,59 @@ def load_product_summary(suffix, start_date, end_date,
             'filter_shop_names': filter_shop_names or []
         }
         resp = supabase.rpc('get_product_summary', params).execute()
-        if resp.data:
-            df = pd.DataFrame(resp.data)
-            
-            # 自动匹配金额列
-            rename_map = {}
-            for col in df.columns:
-                col_lower = col.lower()
-                if col_lower in ['total_ship', 'ship_amount']:
-                    rename_map[col] = '发货金额'
-                elif col_lower in ['total_return', 'return_amount']:
-                    rename_map[col] = '退货金额'
-                elif col_lower in ['total_net', 'net_amount']:
-                    rename_map[col] = '净销售金额'
-            df.rename(columns=rename_map, inplace=True)
-            
-            # 确保金额列存在
-            for col in ["发货金额", "退货金额", "净销售金额"]:
-                if col not in df.columns:
-                    df[col] = 0.0
-                else:
-                    df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
-            
-            # 处理 style_code：保留空值，标记为“未知款号”
-            if "style_code" not in df.columns:
-                df["style_code"] = "未知款号"
-            else:
-                df["style_code"] = df["style_code"].fillna("未知款号").astype(str).str.strip().str.upper()
-                # 将空字符串、'NAN'、'NONE' 等统一替换为“未知款号”
-                df.loc[df["style_code"] == "", "style_code"] = "未知款号"
-                df.loc[df["style_code"] == "NAN", "style_code"] = "未知款号"
-                df.loc[df["style_code"] == "NONE", "style_code"] = "未知款号"
-            
-            # 处理其他维度列
-            for col in ["brand", "product_category", "year", "season"]:
-                if col not in df.columns:
-                    df[col] = None
-                else:
-                    df[col] = df[col].fillna(None)
-            
-            # 不再过滤任何行
-            return df
-        else:
-            # 如果 resp.data 为空，返回空 DataFrame
+        
+        # 检查响应状态（如果存在）
+        if hasattr(resp, 'status_code') and resp.status_code != 200:
+            st.error(f"RPC 返回错误状态码: {resp.status_code}")
             return pd.DataFrame()
+        
+        if not resp.data:
+            return pd.DataFrame()
+        
+        df = pd.DataFrame(resp.data)
+        
+        # 自动匹配金额列
+        rename_map = {}
+        for col in df.columns:
+            col_lower = col.lower()
+            if col_lower in ['total_ship', 'ship_amount']:
+                rename_map[col] = '发货金额'
+            elif col_lower in ['total_return', 'return_amount']:
+                rename_map[col] = '退货金额'
+            elif col_lower in ['total_net', 'net_amount']:
+                rename_map[col] = '净销售金额'
+        if rename_map:
+            df.rename(columns=rename_map, inplace=True)
+        
+        # 确保金额列存在
+        for col in ["发货金额", "退货金额", "净销售金额"]:
+            if col not in df.columns:
+                df[col] = 0.0
+            else:
+                df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+        
+        # 处理 style_code
+        if "style_code" not in df.columns:
+            df["style_code"] = "未知款号"
+        else:
+            df["style_code"] = df["style_code"].fillna("未知款号").astype(str).str.strip().str.upper()
+            df.loc[df["style_code"] == "", "style_code"] = "未知款号"
+            df.loc[df["style_code"] == "NAN", "style_code"] = "未知款号"
+            df.loc[df["style_code"] == "NONE", "style_code"] = "未知款号"
+        
+        # 其他维度列
+        for col in ["brand", "product_category", "year", "season"]:
+            if col not in df.columns:
+                df[col] = None
+            else:
+                df[col] = df[col].fillna(None)
+        
+        return df
     except Exception as e:
-        st.error(f"加载商品汇总失败：{e}")
+        # 将错误详情显示在 Streamlit 页面上
+        st.error(f"加载商品汇总失败: {e}")
+        import traceback
+        st.code(traceback.format_exc())
         return pd.DataFrame()
 def validate_order_data(df):
     try:
@@ -2264,14 +2278,13 @@ if idx_product is not None:
 
         # ---------- 加载汇总数据 ----------
         with st.spinner("正在加载商品销售数据，请稍候..."):
-            prod_df = load_product_summary(...)
+            prod_df = load_product_summary(
+                suffix=st.session_state.table_suffix,
+                start_date=start_date,
+                end_date=end_date
+            )
         
-        # 安全调试（不会引起语法错误）
-        st.info(f"加载了 {len(prod_df)} 行数据，列名：{list(prod_df.columns)}")
         
-        if prod_df.empty:
-            # ... 后续处理
-                st.dataframe(prod_df.head(5))
 
         # ---------- 数据为空处理 ----------
         if prod_df.empty:
