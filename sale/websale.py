@@ -847,10 +847,7 @@ def load_product_summary(suffix, start_date, end_date,
                          filter_brands=None, filter_categories=None, 
                          filter_years=None, filter_seasons=None,
                          filter_anchors=None, filter_shop_names=None):
-    """
-    通过 RPC 获取按货号汇总的销售数据，包含品牌、品类、年份、季节
-    用于商品分析等汇总场景，大幅减少数据传输量
-    """
+    """通过 RPC 获取按货号汇总的销售数据（不含 product_category）"""
     if supabase is None:
         return pd.DataFrame()
     try:
@@ -859,7 +856,7 @@ def load_product_summary(suffix, start_date, end_date,
             'end_date': end_date.isoformat(),
             'suffix': suffix,
             'filter_brands': filter_brands or [],
-            'filter_categories': filter_categories or [],
+            'filter_categories': filter_categories or [],  # 此参数在RPC中无实际作用，保留兼容
             'filter_years': filter_years or [],
             'filter_seasons': filter_seasons or [],
             'filter_anchors': filter_anchors or [],
@@ -875,7 +872,6 @@ def load_product_summary(suffix, start_date, end_date,
             }, inplace=True)
             for col in ["发货金额", "退货金额", "净销售金额"]:
                 df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
-            # 统一 style_code 格式用于后续匹配
             df["style_code"] = df["style_code"].astype(str).str.strip().str.upper()
             return df
         else:
