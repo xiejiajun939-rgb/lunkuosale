@@ -762,6 +762,7 @@ def refresh_materialized_view(suffix=""):
         st.warning(f"物化视图刷新失败（不影响数据入库）：{e}")
 
 # ========== 核心修改：load_product_sales（仅对 _all 增加维度关联） ==========
+# ========== 核心修改：load_product_sales（仅对 _all 增加维度关联） ==========
 @st.cache_data(ttl=300)
 def load_product_sales(suffix=None, apply_filter=True, start_date=None, end_date=None, aggregate=False):
     if supabase is None:
@@ -787,17 +788,69 @@ def load_product_sales(suffix=None, apply_filter=True, start_date=None, end_date
                 df.rename(columns={"net_amount": "净销售金额", "ship_amount": "发货金额", "return_amount": "退货金额"}, inplace=True)
                 for col in ["净销售金额", "发货金额", "退货金额"]:
                     df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
-                # 如果 style_code 存在空值，可以过滤或填充
                 df = df[df["style_code"].notna()]
                 return df
             else:
                 return pd.DataFrame()
+
+        # ---------- 明细模式 ----------
+        if suffix == "_all":
+            needed_cols = "sale_date, shop_name, product_code, style_code, brand, year, season, product_category, style, color_code, size_code, ship_amount, return_amount, net_amount, remark, org_name, dept, anchor"
+        else:
+            needed_cols = "sale_date, shop_name, product_code, style_code, brand, year, season, product_category, style, color_code, size_code, ship_amount, return_amount, net_amount, remark"
+
+        all_data = []
+        page = 0
+        page_size = 500
+        query = supabase.table(table_name).select(needed_cols)
+        if start_date:
+            query = query.gte("sale_date", start_date.isoformat())
+        if end_date:
+            query = query.lte("sale_date", end_date.isoformat())
+        while True:
+            resp = query.range(page * page_size, (page + 1) * page_size - 1).execute()
+            if not resp.data:
+                break
+            all_data.extend(resp.data)
+            if len(resp.data) < page_size:
+                break
+            page += 1
+        if not all_data:
+            return pd.DataFrame()
+        df = pd.DataFrame(all_data)
+        df["sale_date"] = pd.to_datetime(df["sale_date"])
+        if "style_code" not in df.columns or df["style_code"].isnull().all():
+            df["style_code"] = df["product_code"].str[:8]
+        else:
+            df["style_code"] = df["style_code"].fillna(df["product_code"].str[:8])
+        for col in ["ship_amount", "return_amount", "net_amount"]:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+        if suffix == "_all":
+            for col in ["org_name", "dept", "anchor"]:
+                if col not in df.columns:
+                    df[col] = "未分配组织" if col == "org_name" else ("未分配部门" if col == "dept" else "NONE")
+        else:
+            df["org_name"] = None
+            df["dept"] = None
+        if apply_filter:
+            df = apply_data_permission(df)
+        return df
+    except Exception as e:
+        st.error(f"加载商品销售数据失败：{e}")
+        return pd.DataFrame()
+
+
+# ========== 新增：商品汇总 RPC 函数 ==========
 @st.cache_data(ttl=300)
 def load_product_summary(suffix, start_date, end_date, 
                          filter_brands=None, filter_categories=None, 
                          filter_years=None, filter_seasons=None,
                          filter_anchors=None, filter_shop_names=None):
-    """通过 RPC 获取按货号汇总的销售数据，包含品牌、品类、年份、季节"""
+    """
+    通过 RPC 获取按货号汇总的销售数据，包含品牌、品类、年份、季节
+    用于商品分析等汇总场景，大幅减少数据传输量
+    """
     if supabase is None:
         return pd.DataFrame()
     try:
@@ -822,7 +875,7 @@ def load_product_summary(suffix, start_date, end_date,
             }, inplace=True)
             for col in ["发货金额", "退货金额", "净销售金额"]:
                 df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
-            # 确保 style_code 为字符串，用于后续匹配
+            # 统一 style_code 格式用于后续匹配
             df["style_code"] = df["style_code"].astype(str).str.strip().str.upper()
             return df
         else:
