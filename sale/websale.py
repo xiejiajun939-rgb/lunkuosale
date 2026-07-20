@@ -2230,21 +2230,40 @@ if idx_ship_return is not None:
                 st.info("无日期数据")
 
 # ========== 商品分析 ==========
+# ========== 商品分析 ==========
 if idx_product is not None:
     with tabs[idx_product]:
-        # ---------- 状态初始化 ----------
-        if st.session_state.get("detail_clicked", False):
+        # ---------- 初始化所有 session_state 变量 ----------
+        if "detail_clicked" not in st.session_state:
             st.session_state.detail_clicked = False
-        else:
+        if "show_dialog" not in st.session_state:
             st.session_state.show_dialog = False
+        if "dialog_style_code" not in st.session_state:
             st.session_state.dialog_style_code = None
+        if "cached_detail_data" not in st.session_state:
             st.session_state.cached_detail_data = None
-        if st.session_state.get("trend_clicked", False):
+        if "trend_clicked" not in st.session_state:
             st.session_state.trend_clicked = False
-        else:
+        if "show_trend_dialog" not in st.session_state:
             st.session_state.show_trend_dialog = False
+        if "trend_style_code" not in st.session_state:
             st.session_state.trend_style_code = None
+        if "trend_data" not in st.session_state:
             st.session_state.trend_data = None
+        if "product_page_num" not in st.session_state:
+            st.session_state.product_page_num = 1
+        if "product_page_size" not in st.session_state:
+            st.session_state.product_page_size = 10
+        if "sort_by" not in st.session_state:
+            st.session_state.sort_by = "净销售金额"
+        if "sort_ascending" not in st.session_state:
+            st.session_state.sort_ascending = False
+
+        # ---------- 重置状态（点击详情/趋势后重置） ----------
+        if st.session_state.detail_clicked:
+            st.session_state.detail_clicked = False
+        if st.session_state.trend_clicked:
+            st.session_state.trend_clicked = False
 
         col_btn, _ = st.columns([1, 5])
         with col_btn:
@@ -2416,36 +2435,32 @@ if idx_product is not None:
 
         # ---------- 排序和分页 ----------
         st.markdown("#### 货号汇总表")
-        
+
         col_sort1, col_sort2, col_sort3 = st.columns([1, 1, 2])
         with col_sort1:
             sort_options = ["货号", "发货金额", "退货金额", "净销售金额", "退款率"]
-            # 1. 先检查并初始化 session_state
-        if "sort_by" not in st.session_state:
-            st.session_state.sort_by = sort_options[3]  # 初始化为 sort_options 里的第4个选项
-        
-        # 2. 然后再渲染 selectbox
-        selected_sort = st.selectbox(
-            "排序字段", 
-            sort_options, 
-            index=sort_options.index(st.session_state.sort_by) if st.session_state.sort_by in sort_options else 3, 
-            key="sort_by_selector"
-        )
+            # 确保 sort_by 有效
+            if st.session_state.sort_by not in sort_options:
+                st.session_state.sort_by = sort_options[3]  # 默认“净销售金额”
+            selected_sort = st.selectbox(
+                "排序字段",
+                sort_options,
+                index=sort_options.index(st.session_state.sort_by),
+                key="sort_by_selector"
+            )
         with col_sort2:
-            # 1. 先检查并初始化 session_state (假设默认是降序，即 False)
-            if "sort_ascending" not in st.session_state:
-                st.session_state.sort_ascending = False
-            
-            # 2. 然后再渲染 radio 单选框
             sort_order = st.radio(
-                "排序顺序", 
-                ["降序", "升序"], 
-                horizontal=True, 
-                index=0 if not st.session_state.sort_ascending else 1, 
+                "排序顺序",
+                ["降序", "升序"],
+                horizontal=True,
+                index=0 if not st.session_state.sort_ascending else 1,
                 key="sort_order_radio"
             )
         with col_sort3:
             page_size_options = [10, 20, 50, 100]
+            # 确保 product_page_size 在选项中
+            if st.session_state.product_page_size not in page_size_options:
+                st.session_state.product_page_size = 10
             selected_page_size = st.selectbox(
                 "每页显示行数",
                 options=page_size_options,
@@ -2471,6 +2486,7 @@ if idx_product is not None:
             st.session_state.product_page_num = 1
             st.rerun()
 
+        # 执行排序
         if st.session_state.sort_by == "货号":
             grouped = grouped.sort_values("货号", ascending=st.session_state.sort_ascending)
         elif st.session_state.sort_by == "发货金额":
@@ -2541,7 +2557,7 @@ if idx_product is not None:
         headers = ["货号", "图片", "商品分类", "发货金额(¥)", "退货金额(¥)", "净销售金额(¥)", "退款率", "新人礼金", "详情", "趋势"]
         for col, header in zip(cols, headers):
             col.markdown(f"**{header}**")
-        
+
         for idx, row in page_df.iterrows():
             col1, col2, col3, col4, col5, col6, col7, col8, col9, col10 = st.columns([2, 0.5, 1.5, 1.2, 1.2, 1.2, 1, 0.8, 0.8, 0.8])
             col1.write(row["货号"])
@@ -2559,7 +2575,6 @@ if idx_product is not None:
                 st.info(f"货号 {row['货号']} 的详细销售明细可查看日明细或导出数据。")
             if col10.button("📈", key=f"trend_btn_{row['货号']}_{idx}"):
                 st.info(f"货号 {row['货号']} 的销售趋势可在日明细中查看。")
-
 
 # ========== 销售对比（主播/店铺维度） ==========
 if idx_anchor_compare is not None:
