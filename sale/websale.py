@@ -529,6 +529,7 @@ def fetch_sales_summary(start_date, end_date, suffix=""):
         st.error(f"聚合数据加载失败：{e}")
         return pd.DataFrame()
 
+# ========== 每日业绩相关函数 ==========
 @st.cache_data(ttl=300)
 def load_daily_sales(suffix=None, apply_filter=True):
     if supabase is None:
@@ -562,6 +563,14 @@ def load_daily_sales(suffix=None, apply_filter=True):
         st.error(f"加载店铺业绩失败：{e}")
         return pd.DataFrame()
 
+def save_daily_sales(records, suffix=None):
+    """将每日汇总记录保存到 daily_sales 表"""
+    if supabase is None or not records:
+        return
+    table_name = get_table_name("daily_sales", suffix)
+    # 按 (sale_date, shop_name) 冲突更新
+    supabase.table(table_name).upsert(records, on_conflict="sale_date,shop_name").execute()
+
 def rebuild_daily_data(suffix=None):
     df = load_daily_sales(suffix)
     if df.empty:
@@ -583,84 +592,6 @@ def rebuild_daily_data(suffix=None):
     st.session_state.monthly_actual = monthly_actual
     st.session_state.latest_date = latest_date
 
-def rebuild_daily_from_product(suffix=None):
-    if supabase is None:
-        return False, "Supabase 未连接"
-    try:
-        with st.spinner("正在重建每日业绩，请稍候..."):
-            product_table = get_table_name("product_sales", suffix)
-            all_data = []
-            page = 0
-            page_size = 1000
-            while True:
-                resp = supabase.table(product_table).select("sale_date, shop_name, net_amount, remark").range(page*page_size, (page+1)*page_size-1).execute()
-                if not resp.data:
-                    break
-                all_data.extend(resp.data)
-                if len(resp.data) < page_size:
-                    break
-                page += 1
-            if not all_data:
-                daily_table = get_table_name("daily_sales", suffix)
-                supabase.table(daily_table).delete().neq("id", 0).execute()
-                return True, "商品销售表无数据，已清空每日业绩表"
-            df = pd.DataFrame(all_data)
-            df["sale_date"] = pd.to_datetime(df["sale_date"])
-            if suffix == "_all":
-                df["anchor"] = df["remark"].apply(extract_anchor)
-                daily_agg = df.groupby(["sale_date", "anchor"])["net_amount"].sum().reset_index()
-                daily_agg.columns = ["sale_date", "店铺名称", "amount"]
-            else:
-                daily_agg = df.groupby(["sale_date", "shop_name"])["net_amount"].sum().reset_index()
-                daily_agg.columns = ["sale_date", "店铺名称", "amount"]
-            daily_agg = daily_agg.sort_values(["店铺名称", "sale_date"])
-            daily_agg["cumulative_amount"] = daily_agg.groupby("店铺名称")["amount"].cumsum().round(2)
-            records = []
-            for _, row in daily_agg.iterrows():
-                records.append({
-                    "sale_date": row["sale_date"].strftime("%Y-%m-%d"),
-                    "shop_name": row["店铺名称"],
-                    "amount": float(row["amount"]),
-                    "cumulative_amount": float(row["cumulative_amount"])
-                })
-            if records:
-                daily_table = get_table_name("daily_sales", suffix)
-                supabase.table(daily_table).delete().neq("id", 0).execute()
-                batch_size = 1000
-                for i in range(0, len(records), batch_size):
-                    batch = records[i:i+batch_size]
-                    supabase.table(daily_table).insert(batch).execute()
-        return True, f"成功重建每日业绩，共 {len(records)} 条记录"
-    except Exception as e:
-        return False, str(e)
-
-def load_targets(suffix=None):
-    if supabase is None:
-        return {}
-    try:
-        table_name = get_table_name("shop_targets", suffix)
-        resp = supabase.table(table_name).select("*").execute()
-        if resp.data:
-            return {row["shop_name"]: row["target_amount"] for row in resp.data}
-        else:
-            return {}
-    except:
-        return {}
-
-def save_targets(target_dict, suffix=None):
-    if supabase is None:
-        return
-    records = [{"shop_name": k, "target_amount": v} for k, v in target_dict.items()]
-    if records:
-        table_name = get_table_name("shop_targets", suffix)
-        supabase.table(table_name).upsert(records, on_conflict="shop_name").execute()
-
-def clear_targets(suffix=None):
-    if supabase:
-        table_name = get_table_name("shop_targets", suffix)
-        supabase.table(table_name).delete().neq("id", 0).execute()
-    st.session_state.target_dict = {}
-    st.rerun()
 # ========== 组织目标管理（仅全部数据） ==========
 @st.cache_data(ttl=300)
 def load_org_targets(suffix=None):
@@ -691,6 +622,7 @@ def clear_org_targets(suffix=None):
     if supabase:
         table_name = get_table_name("arg_targets", suffix)
         supabase.table(table_name).delete().neq("id", 0).execute()
+
 # ========== 商品相关函数 ==========
 SEASON_MAP = {"1": "春", "2": "夏", "3": "秋", "4": "冬"}
 SIZE_MAP = {"001": "S", "002": "M", "003": "L", "004": "XL", "008": "均码"}
@@ -849,16 +781,88 @@ def save_offline_sales(df_orders):
                 if attempt == 2:
                     raise e
                 time.sleep(2 ** attempt)
-    refresh_materialized_view("_all")
+    # 物化视图刷新已注释，不再需要
+    # refresh_materialized_view("_all")
 
-def refresh_materialized_view(suffix=""):
-    """刷新对应的物化视图（异步）"""
+# ========== 从商品明细重建每日业绩 ==========
+def rebuild_daily_from_product(suffix=None):
+    if supabase is None:
+        return False, "Supabase 未连接"
+    try:
+        with st.spinner("正在重建每日业绩，请稍候..."):
+            product_table = get_table_name("product_sales", suffix)
+            all_data = []
+            page = 0
+            page_size = 1000
+            while True:
+                resp = supabase.table(product_table).select("sale_date, shop_name, net_amount, remark").range(page*page_size, (page+1)*page_size-1).execute()
+                if not resp.data:
+                    break
+                all_data.extend(resp.data)
+                if len(resp.data) < page_size:
+                    break
+                page += 1
+            if not all_data:
+                daily_table = get_table_name("daily_sales", suffix)
+                supabase.table(daily_table).delete().neq("id", 0).execute()
+                return True, "商品销售表无数据，已清空每日业绩表"
+            df = pd.DataFrame(all_data)
+            df["sale_date"] = pd.to_datetime(df["sale_date"])
+            if suffix == "_all":
+                df["anchor"] = df["remark"].apply(extract_anchor)
+                daily_agg = df.groupby(["sale_date", "anchor"])["net_amount"].sum().reset_index()
+                daily_agg.columns = ["sale_date", "店铺名称", "amount"]
+            else:
+                daily_agg = df.groupby(["sale_date", "shop_name"])["net_amount"].sum().reset_index()
+                daily_agg.columns = ["sale_date", "店铺名称", "amount"]
+            daily_agg = daily_agg.sort_values(["店铺名称", "sale_date"])
+            daily_agg["cumulative_amount"] = daily_agg.groupby("店铺名称")["amount"].cumsum().round(2)
+            records = []
+            for _, row in daily_agg.iterrows():
+                records.append({
+                    "sale_date": row["sale_date"].strftime("%Y-%m-%d"),
+                    "shop_name": row["店铺名称"],
+                    "amount": float(row["amount"]),
+                    "cumulative_amount": float(row["cumulative_amount"])
+                })
+            if records:
+                daily_table = get_table_name("daily_sales", suffix)
+                supabase.table(daily_table).delete().neq("id", 0).execute()
+                batch_size = 1000
+                for i in range(0, len(records), batch_size):
+                    batch = records[i:i+batch_size]
+                    supabase.table(daily_table).insert(batch).execute()
+        return True, f"成功重建每日业绩，共 {len(records)} 条记录"
+    except Exception as e:
+        return False, str(e)
+
+def load_targets(suffix=None):
+    if supabase is None:
+        return {}
+    try:
+        table_name = get_table_name("shop_targets", suffix)
+        resp = supabase.table(table_name).select("*").execute()
+        if resp.data:
+            return {row["shop_name"]: row["target_amount"] for row in resp.data}
+        else:
+            return {}
+    except:
+        return {}
+
+def save_targets(target_dict, suffix=None):
     if supabase is None:
         return
-    try:
-        supabase.rpc('refresh_mv', {'suffix': suffix}).execute()
-    except Exception as e:
-        st.warning(f"物化视图刷新失败（不影响数据入库）：{e}")
+    records = [{"shop_name": k, "target_amount": v} for k, v in target_dict.items()]
+    if records:
+        table_name = get_table_name("shop_targets", suffix)
+        supabase.table(table_name).upsert(records, on_conflict="shop_name").execute()
+
+def clear_targets(suffix=None):
+    if supabase:
+        table_name = get_table_name("shop_targets", suffix)
+        supabase.table(table_name).delete().neq("id", 0).execute()
+    st.session_state.target_dict = {}
+    st.rerun()
 
 # ========== 核心修改：load_product_sales（仅对 _all 增加维度关联） ==========
 @st.cache_data(ttl=300)
@@ -1045,11 +1049,11 @@ def process_uploaded_file(uploaded_file, suffix):
             rebuild_daily_data(suffix)
             st.session_state.target_dict = load_targets(suffix)
         latest_date = merged["日期"].max().strftime('%Y-%m-%d') if not merged.empty else "无数据"
-        refresh_materialized_view(suffix)
+        # 物化视图刷新已注释，不再需要
+        # refresh_materialized_view(suffix)
         return True, f"处理完成！最新日期：{latest_date}"
     except Exception as e:
         return False, f"未预料的错误：{str(e)}"
-
 
 def load_target_file(uploaded_file, suffix):
     try:
@@ -1287,7 +1291,6 @@ with st.sidebar:
                 if st.button("📤 上传组织目标", key="upload_org_target_btn"):
                     try:
                         df_target = pd.read_excel(uploaded_org_target, header=None)
-                        # 第一列：组织名称，第二列：目标金额
                         org_names = df_target.iloc[:, 0].astype(str).str.strip()
                         target_vals = pd.to_numeric(df_target.iloc[:, 1], errors='coerce')
                         target_dict = {}
@@ -1388,12 +1391,10 @@ idx_org = get_tab_index("🏢 组织与部门分析")
 idx_export = get_tab_index("📚 商品库导出")
 idx_system = get_tab_index("⚙️ 系统设置")
 
-# 兼容旧变量（已删除模块置为 None）
+# 兼容旧变量
 idx_anchor_compare = idx_anchor
 idx_ship_return = None
 idx_history = None
-
-
 
 # ========== 经营驾驶舱 ==========
 if idx_dashboard is not None:
@@ -1501,7 +1502,6 @@ if idx_dashboard is not None:
         </style>
         """, unsafe_allow_html=True)
 
-        # ---------- 加载数据 ----------
         with st.spinner("加载数据..."):
             prod_df = load_product_sales(st.session_state.table_suffix)
         
@@ -1509,7 +1509,6 @@ if idx_dashboard is not None:
             st.info("📌 暂无商品销售数据，请先上传订单文件。")
             st.stop()
 
-        # ---------- 部门筛选 ----------
         has_dept = 'dept' in prod_df.columns and prod_df['dept'].notna().any()
         if has_dept:
             depts = sorted(prod_df['dept'].dropna().unique())
@@ -1524,7 +1523,6 @@ if idx_dashboard is not None:
             selected_dept = '全部'
             st.caption("当前数据源无部门维度，显示全部数据。")
 
-        # ---------- 按日期汇总净销售额 ----------
         daily_sales = prod_df.groupby(prod_df["sale_date"].dt.date)["net_amount"].sum().reset_index()
         daily_sales.columns = ["日期", "amount"]
         daily_sales = daily_sales.sort_values("日期")
@@ -1536,7 +1534,6 @@ if idx_dashboard is not None:
         latest_date = daily_sales["日期"].max()
         st.caption(f"📅 数据更新至：{latest_date.strftime('%Y年%m月%d日')}" + (f" | 部门：{selected_dept}" if selected_dept != '全部' else ""))
 
-        # ---------- 计算指标 ----------
         prev_date = latest_date - timedelta(days=1)
 
         mask_latest = daily_sales["日期"] == latest_date
@@ -1554,8 +1551,7 @@ if idx_dashboard is not None:
         month_mask = daily_sales["日期"] >= month_start
         month_sales = daily_sales.loc[month_mask, "amount"].sum()
 
-        # ========== 关键修正：定义 target_dict ==========
-        target_dict = st.session_state.target_dict  # 获取全局店铺目标
+        target_dict = st.session_state.target_dict
 
         if target_dict and has_dept and selected_dept != '全部':
             dept_shops = prod_df['shop_name'].unique()
@@ -1583,7 +1579,6 @@ if idx_dashboard is not None:
             health_score += 5
         health_score = min(100, health_score)
 
-        # ---------- KPI 卡片 ----------
         col1, col2, col3, col4 = st.columns(4)
 
         with col1:
@@ -1602,7 +1597,6 @@ if idx_dashboard is not None:
             <div class="glass-card">
                 <div class="kpi-label">昨日销售</div>
                 <div class="kpi-number">¥{latest_sales:,.0f}</div>
-                <!-- 月累计销售额 -->
                 <div style="font-size:16px; color:#475569; margin-top:4px;">月累计 ¥{month_sales:,.0f}</div>
                 <div style="margin-top:6px;">
                     <span class="{change_class}">{change_text}</span>
@@ -1654,7 +1648,6 @@ if idx_dashboard is not None:
 
         st.markdown("---")
 
-        # ---------- 异常提醒 ----------
         st.markdown('<div class="section-title">⚠️ 异常提醒 <span class="badge">需关注</span></div>', unsafe_allow_html=True)
 
         alerts = []
@@ -1727,7 +1720,6 @@ if idx_dashboard is not None:
 
         st.markdown("---")
 
-        # ---------- 双列布局 ----------
         col_left, col_right = st.columns([1, 1])
 
         with col_left:
@@ -1821,7 +1813,6 @@ if idx_dashboard is not None:
 
         st.markdown("---")
 
-        # ---------- AI 智能总结 ----------
         st.markdown('<div class="section-title">🤖 智能总结</div>', unsafe_allow_html=True)
 
         model_options = {
@@ -1878,19 +1869,17 @@ if idx_dashboard is not None:
         else:
             st.info("点击上方按钮生成 AI 智能总结。")
 
-# ========== 每日明细（合并“最新日明细”和“日期查询”） ==========
+# ========== 每日明细 ==========
 if idx_daily is not None:
     with tabs[idx_daily]:
         st.subheader("📋 每日明细查询")
         st.info("此处展示最新日销售明细，并支持按日期查询任意一天的销售情况。")
 
-        # ---------- 加载商品数据 ----------
         with st.spinner("加载数据..."):
             prod_df = load_product_sales(st.session_state.table_suffix, apply_filter=False)
         if prod_df.empty:
             st.warning("暂无商品销售数据，请先上传订单文件。")
         else:
-            # ---------- 确定维度 ----------
             is_all = st.session_state.table_suffix == "_all"
             if is_all:
                 org_targets = load_org_targets("_all")
@@ -1919,7 +1908,6 @@ if idx_daily is not None:
                 dim_label = "店铺名称"
                 target_dict = st.session_state.target_dict
 
-            # ---------- 聚合辅助函数 ----------
             def aggregate_dim(df, group_col, dim_label):
                 agg = df.groupby(group_col).agg(
                     发货金额=("ship_amount", "sum"),
@@ -1928,7 +1916,6 @@ if idx_daily is not None:
                 ).reset_index().rename(columns={group_col: dim_label})
                 return agg
 
-            # ---------- 第一部分：最新日明细 ----------
             st.markdown("#### 📅 最新日明细")
             source_names = {"": "非直播数据", "_all": "全部数据"}
             current_source = source_names.get(st.session_state.table_suffix, "未知")
@@ -1937,20 +1924,16 @@ if idx_daily is not None:
             latest_date = prod_df["sale_date"].max().date()
             month_start = latest_date.replace(day=1)
 
-            # 当日数据
             mask_today = prod_df["sale_date"].dt.date == latest_date
             today_data = prod_df[mask_today]
             today_agg = aggregate_dim(today_data, group_col, dim_label)
 
-            # 月累计数据
             mask_month = (prod_df["sale_date"].dt.date >= month_start) & (prod_df["sale_date"].dt.date <= latest_date)
             month_data = prod_df[mask_month]
             month_agg = aggregate_dim(month_data, group_col, dim_label)
 
-            # 合并
             df_latest = pd.merge(today_agg, month_agg, on=dim_label, suffixes=("_日", "_月"), how="outer").fillna(0)
 
-            # 计算退货率（数值）
             df_latest["日退货率_数值"] = df_latest.apply(
                 lambda r: (r['退货金额_日'] / r['发货金额_日'] * 100) if r['发货金额_日'] != 0 else 0.0, axis=1
             )
@@ -1958,25 +1941,20 @@ if idx_daily is not None:
                 lambda r: (r['退货金额_月'] / r['发货金额_月'] * 100) if r['发货金额_月'] != 0 else 0.0, axis=1
             )
 
-            # 添加目标
             df_latest["目标金额"] = df_latest[dim_label].map(target_dict).fillna(0)
-            # 达成率数值 = 月累计净额 / 目标 * 100
             df_latest["达成率_数值"] = df_latest.apply(
                 lambda r: (r['净销售金额_月'] / r['目标金额'] * 100) if r['目标金额'] != 0 else 0.0, axis=1
             )
 
-            # 排序（按维度名称）
             df_latest = df_latest.sort_values(dim_label)
 
             if not df_latest.empty:
-                # 显示表格
                 display_cols = [
                     dim_label,
                     "发货金额_日", "退货金额_日", "净销售金额_日", "日退货率_数值",
                     "发货金额_月", "退货金额_月", "净销售金额_月", "月累计退货率_数值",
                     "目标金额", "达成率_数值"
                 ]
-                # 重命名列（用于显示）
                 rename_map = {
                     dim_label: dim_label,
                     "发货金额_日": "日发货",
@@ -1992,7 +1970,6 @@ if idx_daily is not None:
                 }
                 display_df = df_latest[display_cols].rename(columns=rename_map)
 
-                # 使用 column_config 将百分比列格式化为百分数，并保留两位小数
                 column_config = {
                     dim_label: st.column_config.TextColumn(dim_label),
                     "日发货": st.column_config.NumberColumn("日发货", format="%.2f"),
@@ -2008,7 +1985,6 @@ if idx_daily is not None:
                 }
                 st.dataframe(display_df, column_config=column_config, use_container_width=True, hide_index=True)
 
-                # 汇总行
                 total_today_ship = df_latest["发货金额_日"].sum()
                 total_today_return = df_latest["退货金额_日"].sum()
                 total_today_net = df_latest["净销售金额_日"].sum()
@@ -2027,12 +2003,9 @@ if idx_daily is not None:
                 with col3:
                     st.metric("🎯 目标完成率", f"{total_rate:.2f}%", delta=f"总目标: ¥{total_target:,.2f}")
 
-                # 导出
                 output = io.BytesIO()
                 with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                    # 导出时显示为字符串百分比（便于阅读）
                     export_df = display_df.copy()
-                    # 将数值百分比转换为字符串，添加 "%"
                     for col in ['日退货率', '月累计退货率', '达成率']:
                         if col in export_df.columns:
                             export_df[col] = export_df[col].apply(lambda x: f"{x:.2f}%")
@@ -2048,7 +2021,6 @@ if idx_daily is not None:
 
             st.markdown("---")
 
-            # ---------- 第二部分：日期查询 ----------
             st.markdown("#### 🔍 日期查询")
             if st.button("📅 今日", key="query_today_daily"):
                 st.session_state["query_date_daily"] = date.today()
@@ -2122,7 +2094,6 @@ if idx_daily is not None:
                     with col2:
                         st.metric("📆 截止当日月累计", f"净额: ¥{total_q_month_net:,.2f}", delta=f"发货 ¥{total_q_month_ship:,.2f} / 退货 ¥{total_q_month_return:,.2f}")
 
-                    # 导出
                     output_q = io.BytesIO()
                     with pd.ExcelWriter(output_q, engine='openpyxl') as writer:
                         export_q = display_q.copy()
@@ -2136,7 +2107,8 @@ if idx_daily is not None:
                         file_name=f"查询_{query_date}.xlsx",
                         key="export_query_result_daily"
                     )
-# ========== 发货退货明细 ==========
+
+# ========== 发货退货明细（已弃用，保留占位） ==========
 if idx_ship_return is not None:
     with tabs[idx_ship_return]:
         with st.spinner("正在加载商品数据，请稍候..."):
@@ -2176,7 +2148,6 @@ if idx_ship_return is not None:
                 st.download_button("💾 导出", data=output.getvalue(), file_name=f"发货退货_{selected_date.strftime('%Y%m%d')}.xlsx", key="export_ship_return")
             else:
                 st.info("无日期数据")
-
 
 # ========== 商品分析 ==========
 if idx_product is not None:
@@ -3246,12 +3217,9 @@ if idx_distribution is not None:
                 else:
                     st.info("当前筛选条件下无首单礼金商品")
 
-
 # ========== 组织与部门分析（仅 _all） ==========
 if idx_org is not None:
     with tabs[idx_org]:
-
-        # ======================== 独立日期选择器 ========================
         @st.cache_data(ttl=600)
         def get_date_range(suffix):
             if supabase is None:
@@ -3295,13 +3263,11 @@ if idx_org is not None:
         )
         st.caption(f"当前数据日期范围：{min_date} ~ {max_date}，您可以选择任意日期查看对应数据。")
 
-                # ======================== 1. 核心大盘 KPI ========================
         st.markdown("---")
         st.markdown("#### 📊 营销中心整体销售")
         latest_date = base_date
         month_start = latest_date.replace(day=1)
 
-        # ---------- 加载目标 ----------
         if suffix == "_all":
             org_targets = load_org_targets("_all")
             total_target = sum(org_targets.values()) if org_targets else 0
@@ -3333,7 +3299,6 @@ if idx_org is not None:
             mtd_net = 0
             mtd_return_rate = 0
 
-        # 计算目标完成率
         target_rate = (mtd_net / total_target * 100) if total_target > 0 else 0
 
         col1, col2 = st.columns(2)
@@ -3348,7 +3313,6 @@ if idx_org is not None:
             st.markdown(f"**📆 月累计（{latest_date.strftime('%Y-%m')}）**")
             st.metric("净销售额", f"¥{mtd_net:,.2f}",
                       delta=f"发货 ¥{mtd_ship:,.2f} | 退货 ¥{mtd_return:,.2f} | 退货率 {mtd_return_rate:.2f}%")
-            # ---------- 新增：月目标完成率 ----------
             bar_color = "#4ade80" if target_rate >= 80 else "#fbbf24" if target_rate >= 50 else "#f87171"
             st.markdown(f"""
             <div style="margin-top:12px; padding-top:8px; border-top:1px solid #e2e8f0;">
@@ -3366,7 +3330,6 @@ if idx_org is not None:
             </div>
             """, unsafe_allow_html=True)
 
-        # ======================== 2. 趋势分析（近7天 vs 前7天） ========================
         st.markdown("---")
         st.markdown("#### 📈 趋势分析：近7天 vs 前7天")
 
@@ -3435,11 +3398,9 @@ if idx_org is not None:
         else:
             st.info("无足够数据绘制趋势图（需同时拥有近7天和前7天数据）。")
 
-        # ======================== 3. 组织与部门拆解 ========================
         st.markdown("---")
         st.markdown("#### 🏆 阿米巴组织与部门业绩拆解")
 
-        # ---------- 3.1 组织饼图 + 部门排行 ----------
         st.markdown("##### 组织与部门分布")
         time_mode_main = st.radio(
             "查看周期",
@@ -3490,7 +3451,6 @@ if idx_org is not None:
         else:
             st.warning(f"{period_label} 无数据，无法显示阿米巴/渠道分布。")
 
-        # ---------- 3.2 退货率警告线 ----------
         st.markdown("#### 退货率警告线")
         time_mode_return = st.radio(
             "查看周期",
@@ -3533,7 +3493,6 @@ if idx_org is not None:
         else:
             st.warning(f"{period_label_r} 无数据，无法显示退货率。")
 
-        # ---------- 3.3 多维透视 ----------
         st.markdown("#### 🔍 多维透视（渠道 → 平台 → 店铺）")
         time_mode_pivot = st.radio(
             "查看周期",
@@ -3587,7 +3546,6 @@ if idx_org is not None:
         else:
             st.warning(f"{period_label_p} 无数据，无法显示透视表。")
 
-        # ---------- 3.4 异常预警 ----------
         st.markdown("---")
         st.markdown("#### ⚠️ 异常决策预警")
         if not df_period_main.empty:
@@ -3611,7 +3569,6 @@ if idx_org is not None:
         else:
             st.info("当前周期无数据，无法预警。")
 
-        # ======================== 4. AI 智能总结 ========================
         st.markdown("---")
         st.markdown("#### 🤖 AI 智能总结")
 
@@ -3714,16 +3671,13 @@ if idx_system is not None:
                     
                     suffix_display = {"": "非直播数据", "_live": "直播数据", "_all": "全部数据"}
                     
-                    # ---- 使用 st.form 包裹配置，防止即时刷新 ----
                     with st.form(key=f"form_{username}"):
                         new_perms = {}
                         for suf, display_name in suffix_display.items():
-                            # 构建选项列表：全部数据时额外添加“组织与部门分析”
                             if suf == "_all":
                                 all_options = base_tabs + ["🏢 组织与部门分析"]
                             else:
                                 all_options = base_tabs
-                            # 默认选中当前权限
                             default_val = [tab for tab in perms.get(suf, []) if tab in all_options]
                             selected = st.multiselect(
                                 f"{display_name} 允许的选项卡",
@@ -3733,7 +3687,6 @@ if idx_system is not None:
                             )
                             new_perms[suf] = selected
                         
-                        # 默认数据源
                         current_default = info.get("default_suffix", "")
                         default_options = {"非直播数据": "", "全部数据": "_all"}
                         default_display = [k for k, v in default_options.items() if v == current_default]
@@ -3746,7 +3699,6 @@ if idx_system is not None:
                         )
                         new_default = default_options[new_default_display]
 
-                        # 数据过滤权限
                         st.markdown("**数据过滤权限**")
                         platform_options = ["all", "抖音", "视频号"]
                         current_platform = info.get("filter_platform", "all")
@@ -3757,7 +3709,6 @@ if idx_system is not None:
                             key=f"platform_{username}"
                         )
                         
-                        # 获取所有店铺/主播名称（用于过滤）
                         @st.cache_data(ttl=600)
                         def get_all_shop_names():
                             df = load_product_sales(apply_filter=False)
@@ -3783,7 +3734,6 @@ if idx_system is not None:
                             key=f"shops_{username}"
                         )
 
-                        # 提交按钮：保存所有权限
                         submitted = st.form_submit_button("💾 保存全部权限")
                         if submitted:
                             st.session_state.sub_users[username]["permissions"] = new_perms
@@ -3796,7 +3746,6 @@ if idx_system is not None:
                             else:
                                 st.error(f"保存失败：{msg}")
                     
-                    # 删除按钮（放在表单外部，单独操作）
                     if st.button(f"删除账号", key=f"del_{username}"):
                         ok, msg = delete_sub_account_from_db(username)
                         if ok:
@@ -3845,8 +3794,6 @@ if idx_system is not None:
                             st.error(f"创建失败：{msg}")
                 else:
                     st.error("请填写用户名和密码")
-
-
 
 # ========== 商品库导出 ==========
 if idx_export is not None:
