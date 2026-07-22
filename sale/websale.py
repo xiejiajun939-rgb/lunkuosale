@@ -235,7 +235,7 @@ def load_dimension_mapping() -> pd.DataFrame:
     if supabase is None:
         return pd.DataFrame()
     try:
-        resp = supabase.table("mapping_rows").select("*").execute()
+        resp = supabase.table("mapping").select("*").execute()
         if resp.data:
             df = pd.DataFrame(resp.data)
             df['shop_name'] = df['shop_name'].astype(str).str.strip()
