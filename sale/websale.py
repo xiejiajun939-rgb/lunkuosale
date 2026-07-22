@@ -529,11 +529,38 @@ def fetch_sales_summary(start_date, end_date, suffix=""):
         st.error(f"聚合数据加载失败：{e}")
         return pd.DataFrame()
 
-def save_daily_sales(records, suffix=None):
-    if supabase is None or not records:
-        return
-    table_name = get_table_name("daily_sales", suffix)
-    supabase.table(table_name).upsert(records, on_conflict="sale_date,shop_name").execute()
+@st.cache_data(ttl=300)
+def load_daily_sales(suffix=None, apply_filter=True):
+    if supabase is None:
+        return pd.DataFrame()
+    try:
+        table_name = get_table_name("daily_sales", suffix)
+        all_data = []
+        page = 0
+        page_size = 1000
+        query_columns = "id, sale_date, shop_name, amount, cumulative_amount"
+        while True:
+            resp = supabase.table(table_name)\
+                           .select(query_columns)\
+                           .range(page * page_size, (page + 1) * page_size - 1)\
+                           .execute()
+            if not resp.data:
+                break
+            all_data.extend(resp.data)
+            if len(resp.data) < page_size:
+                break
+            page += 1
+        if all_data:
+            df = pd.DataFrame(all_data)
+            df["sale_date"] = pd.to_datetime(df["sale_date"])
+            if apply_filter:
+                df = apply_data_permission(df)
+            return df
+        else:
+            return pd.DataFrame()
+    except Exception as e:
+        st.error(f"加载店铺业绩失败：{e}")
+        return pd.DataFrame()
 
 def rebuild_daily_data(suffix=None):
     df = load_daily_sales(suffix)
