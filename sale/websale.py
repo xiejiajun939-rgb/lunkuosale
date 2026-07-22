@@ -400,13 +400,13 @@ def fetch_sales_summary(start_date, end_date, suffix=""):
         return pd.DataFrame()
     try:
         product_table = get_table_name("product_sales", suffix)
-        # 从 product_sales 获取数据（分页查询）
         all_data = []
         page = 0
         page_size = 1000
+        # 注意：必须查询 remark 字段，用于提取主播
         while True:
             resp = supabase.table(product_table)\
-                           .select("sale_date, shop_name, ship_amount, return_amount, net_amount")\
+                           .select("sale_date, shop_name, remark, ship_amount, return_amount, net_amount")\
                            .gte("sale_date", start_date.isoformat())\
                            .lte("sale_date", end_date.isoformat())\
                            .range(page * page_size, (page + 1) * page_size - 1)\
@@ -424,26 +424,51 @@ def fetch_sales_summary(start_date, end_date, suffix=""):
         df = pd.DataFrame(all_data)
         df["sale_date"] = pd.to_datetime(df["sale_date"])
 
-        # 先按日期+店铺聚合（因为同一店铺同一天可能有多条商品记录）
-        df = df.groupby(["sale_date", "shop_name"], as_index=False).agg({
+        # ===== 提取主播（仅当 suffix == "_all" 时需要） =====
+        if suffix == "_all":
+            df["anchor"] = df["remark"].apply(extract_anchor).fillna("NONE")
+        else:
+            df["anchor"] = "NONE"
+
+        # ===== 关键步骤：按 (日期, 店铺, 主播) 分组聚合 =====
+        df = df.groupby(["sale_date", "shop_name", "anchor"], as_index=False).agg({
             "ship_amount": "sum",
             "return_amount": "sum",
             "net_amount": "sum"
         })
 
-        # 如果是全部数据，需要关联组织/部门，并合并线下收入
         if suffix == "_all":
-            # 加载映射表
+            # 1. 加载映射表（shop_name + anchor_name -> org/dept）
             mapping_df = load_dimension_mapping()
             if not mapping_df.empty:
-                df = df.merge(mapping_df[["shop_name", "org_name", "dept"]], on="shop_name", how="left")
+                # 确保 anchor_name 列存在且填充 NONE
+                mapping_df["anchor_name"] = mapping_df["anchor_name"].fillna("NONE")
+                
+                # 主关联：按 (shop_name, anchor) 精确匹配
+                df = df.merge(
+                    mapping_df[["shop_name", "anchor_name", "org_name", "dept"]],
+                    left_on=["shop_name", "anchor"],
+                    right_on=["shop_name", "anchor_name"],
+                    how="left"
+                )
+                # 如果精确匹配失败（例如映射表中没有该主播），尝试仅按店铺匹配（取第一个）
+                null_mask = df["org_name"].isna()
+                if null_mask.any():
+                    # 对映射表按店铺去重，保留第一个组织/部门
+                    fallback_map = mapping_df.drop_duplicates(subset=["shop_name"], keep="first")[["shop_name", "org_name", "dept"]]
+                    fallback_map = fallback_map.rename(columns={"org_name": "org_fallback", "dept": "dept_fallback"})
+                    df = df.merge(fallback_map, on="shop_name", how="left")
+                    df.loc[null_mask, "org_name"] = df.loc[null_mask, "org_fallback"]
+                    df.loc[null_mask, "dept"] = df.loc[null_mask, "dept_fallback"]
+                    df = df.drop(columns=["org_fallback", "dept_fallback"])
+                
                 df["org_name"] = df["org_name"].fillna("未分配组织")
                 df["dept"] = df["dept"].fillna("未分配部门")
             else:
                 df["org_name"] = "未分配组织"
                 df["dept"] = "未分配部门"
 
-            # 合并线下收入（也要先聚合日期+店铺）
+            # ===== 合并线下收入（线下无主播，anchor 统一为 "NONE"） =====
             offline_resp = supabase.table("offline_sales_all")\
                                    .select("sale_date, shop_name, ship_amount, return_amount, net_amount")\
                                    .gte("sale_date", start_date.isoformat())\
@@ -452,64 +477,51 @@ def fetch_sales_summary(start_date, end_date, suffix=""):
             if offline_resp.data:
                 offline_df = pd.DataFrame(offline_resp.data)
                 offline_df["sale_date"] = pd.to_datetime(offline_df["sale_date"])
-                # 线下数据先聚合（虽然可能每个店铺每天只有一条，但为了统一）
-                offline_df = offline_df.groupby(["sale_date", "shop_name"], as_index=False).agg({
+                offline_df["anchor"] = "NONE"  # 线下统一标记
+                offline_df = offline_df.groupby(["sale_date", "shop_name", "anchor"], as_index=False).agg({
                     "ship_amount": "sum",
                     "return_amount": "sum",
                     "net_amount": "sum"
                 })
-                offline_df["org_name"] = "线下"
-                offline_df["dept"] = "线下"
-                # 合并，注意避免重复：如果线下店铺与线上店铺同名，需要区分？但线下表本身是单独的，不会与 product_sales 重叠
+                # 为线下数据匹配组织/部门（同样先精确匹配，不行则用店铺回退）
+                if not mapping_df.empty:
+                    offline_df = offline_df.merge(
+                        mapping_df[["shop_name", "anchor_name", "org_name", "dept"]],
+                        left_on=["shop_name", "anchor"],
+                        right_on=["shop_name", "anchor_name"],
+                        how="left"
+                    )
+                    null_mask_off = offline_df["org_name"].isna()
+                    if null_mask_off.any():
+                        fallback_map = mapping_df.drop_duplicates(subset=["shop_name"], keep="first")[["shop_name", "org_name", "dept"]]
+                        fallback_map = fallback_map.rename(columns={"org_name": "org_fallback", "dept": "dept_fallback"})
+                        offline_df = offline_df.merge(fallback_map, on="shop_name", how="left")
+                        offline_df.loc[null_mask_off, "org_name"] = offline_df.loc[null_mask_off, "org_fallback"]
+                        offline_df.loc[null_mask_off, "dept"] = offline_df.loc[null_mask_off, "dept_fallback"]
+                        offline_df = offline_df.drop(columns=["org_fallback", "dept_fallback"])
+                    offline_df["org_name"] = offline_df["org_name"].fillna("未分配组织")
+                    offline_df["dept"] = offline_df["dept"].fillna("未分配部门")
+                else:
+                    offline_df["org_name"] = "未分配组织"
+                    offline_df["dept"] = "未分配部门"
+                # 合并线上和线下
                 df = pd.concat([df, offline_df], ignore_index=True)
         else:
+            # 非 _all 数据，不需要组织/部门
             df["org_name"] = None
             df["dept"] = None
 
-        # 现在 df 已经是按 (sale_date, shop_name, org_name, dept) 聚合的数据
-        # 重命名列
+        # 重命名列，保持与原 RPC 返回一致
         df = df.rename(columns={
             "ship_amount": "total_ship",
             "return_amount": "total_return",
             "net_amount": "total_net"
         })
+        # 最终输出列（为了兼容页面后续代码，保留 shop_name）
         return df[["sale_date", "org_name", "dept", "shop_name", "total_ship", "total_return", "total_net"]]
 
     except Exception as e:
         st.error(f"聚合数据加载失败：{e}")
-        return pd.DataFrame()
-# ========== 数据加载函数 ==========
-@st.cache_data(ttl=300)
-def load_daily_sales(suffix=None, apply_filter=True):
-    if supabase is None:
-        return pd.DataFrame()
-    try:
-        table_name = get_table_name("daily_sales", suffix)
-        all_data = []
-        page = 0
-        page_size = 1000
-        query_columns = "id, sale_date, shop_name, amount, cumulative_amount"
-        while True:
-            resp = supabase.table(table_name)\
-                           .select(query_columns)\
-                           .range(page * page_size, (page + 1) * page_size - 1)\
-                           .execute()
-            if not resp.data:
-                break
-            all_data.extend(resp.data)
-            if len(resp.data) < page_size:
-                break
-            page += 1
-        if all_data:
-            df = pd.DataFrame(all_data)
-            df["sale_date"] = pd.to_datetime(df["sale_date"])
-            if apply_filter:
-                df = apply_data_permission(df)
-            return df
-        else:
-            return pd.DataFrame()
-    except Exception as e:
-        st.error(f"加载店铺业绩失败：{e}")
         return pd.DataFrame()
 
 def save_daily_sales(records, suffix=None):
