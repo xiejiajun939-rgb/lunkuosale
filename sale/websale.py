@@ -399,28 +399,70 @@ def fetch_sales_summary(start_date, end_date, suffix=""):
     if supabase is None:
         return pd.DataFrame()
     try:
-        response = supabase.rpc('get_sales_summary', {
-            'start_date': start_date.isoformat(),
-            'end_date': end_date.isoformat(),
-            'table_suffix': suffix
-        }).execute()
-        if response.data:
-            return pd.DataFrame(response.data)
-        else:
+        product_table = get_table_name("product_sales", suffix)
+        # 从 product_sales 获取数据（分页查询，避免内存溢出）
+        all_data = []
+        page = 0
+        page_size = 1000
+        while True:
+            resp = supabase.table(product_table)\
+                           .select("sale_date, shop_name, ship_amount, return_amount, net_amount")\
+                           .gte("sale_date", start_date.isoformat())\
+                           .lte("sale_date", end_date.isoformat())\
+                           .range(page * page_size, (page + 1) * page_size - 1)\
+                           .execute()
+            if not resp.data:
+                break
+            all_data.extend(resp.data)
+            if len(resp.data) < page_size:
+                break
+            page += 1
+
+        if not all_data:
             return pd.DataFrame()
+
+        df = pd.DataFrame(all_data)
+        df["sale_date"] = pd.to_datetime(df["sale_date"])
+
+        # 如果是全部数据，需要关联组织/部门，并合并线下收入
+        if suffix == "_all":
+            # 加载映射表
+            mapping_df = load_dimension_mapping()
+            if not mapping_df.empty:
+                df = df.merge(mapping_df[["shop_name", "org_name", "dept"]], on="shop_name", how="left")
+                df["org_name"] = df["org_name"].fillna("未分配组织")
+                df["dept"] = df["dept"].fillna("未分配部门")
+            else:
+                df["org_name"] = "未分配组织"
+                df["dept"] = "未分配部门"
+
+            # 合并线下收入
+            offline_resp = supabase.table("offline_sales_all")\
+                                   .select("sale_date, shop_name, ship_amount, return_amount, net_amount")\
+                                   .gte("sale_date", start_date.isoformat())\
+                                   .lte("sale_date", end_date.isoformat())\
+                                   .execute()
+            if offline_resp.data:
+                offline_df = pd.DataFrame(offline_resp.data)
+                offline_df["sale_date"] = pd.to_datetime(offline_df["sale_date"])
+                offline_df["org_name"] = "线下"   # 可自定义
+                offline_df["dept"] = "线下"
+                df = pd.concat([df, offline_df], ignore_index=True)
+        else:
+            df["org_name"] = None
+            df["dept"] = None
+
+        # 重命名列，保持与原 RPC 返回结构一致（供后续代码使用）
+        df = df.rename(columns={
+            "ship_amount": "total_ship",
+            "return_amount": "total_return",
+            "net_amount": "total_net"
+        })
+        return df[["sale_date", "org_name", "dept", "shop_name", "total_ship", "total_return", "total_net"]]
+
     except Exception as e:
         st.error(f"聚合数据加载失败：{e}")
         return pd.DataFrame()
-
-def refresh_materialized_view(suffix=""):
-    """刷新物化视图"""
-    if supabase is None:
-        return
-    try:
-        supabase.rpc('refresh_mv', {'suffix': suffix}).execute()
-    except Exception as e:
-        st.warning(f"物化视图刷新失败（不影响数据入库）：{e}")
-
 # ========== 数据加载函数 ==========
 @st.cache_data(ttl=300)
 def load_daily_sales(suffix=None, apply_filter=True):
