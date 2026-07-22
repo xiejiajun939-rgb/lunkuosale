@@ -400,7 +400,7 @@ def fetch_sales_summary(start_date, end_date, suffix=""):
         return pd.DataFrame()
     try:
         product_table = get_table_name("product_sales", suffix)
-        # 从 product_sales 获取数据（分页查询，避免内存溢出）
+        # 从 product_sales 获取数据（分页查询）
         all_data = []
         page = 0
         page_size = 1000
@@ -424,6 +424,13 @@ def fetch_sales_summary(start_date, end_date, suffix=""):
         df = pd.DataFrame(all_data)
         df["sale_date"] = pd.to_datetime(df["sale_date"])
 
+        # 先按日期+店铺聚合（因为同一店铺同一天可能有多条商品记录）
+        df = df.groupby(["sale_date", "shop_name"], as_index=False).agg({
+            "ship_amount": "sum",
+            "return_amount": "sum",
+            "net_amount": "sum"
+        })
+
         # 如果是全部数据，需要关联组织/部门，并合并线下收入
         if suffix == "_all":
             # 加载映射表
@@ -436,7 +443,7 @@ def fetch_sales_summary(start_date, end_date, suffix=""):
                 df["org_name"] = "未分配组织"
                 df["dept"] = "未分配部门"
 
-            # 合并线下收入
+            # 合并线下收入（也要先聚合日期+店铺）
             offline_resp = supabase.table("offline_sales_all")\
                                    .select("sale_date, shop_name, ship_amount, return_amount, net_amount")\
                                    .gte("sale_date", start_date.isoformat())\
@@ -445,14 +452,22 @@ def fetch_sales_summary(start_date, end_date, suffix=""):
             if offline_resp.data:
                 offline_df = pd.DataFrame(offline_resp.data)
                 offline_df["sale_date"] = pd.to_datetime(offline_df["sale_date"])
-                offline_df["org_name"] = "线下"   # 可自定义
+                # 线下数据先聚合（虽然可能每个店铺每天只有一条，但为了统一）
+                offline_df = offline_df.groupby(["sale_date", "shop_name"], as_index=False).agg({
+                    "ship_amount": "sum",
+                    "return_amount": "sum",
+                    "net_amount": "sum"
+                })
+                offline_df["org_name"] = "线下"
                 offline_df["dept"] = "线下"
+                # 合并，注意避免重复：如果线下店铺与线上店铺同名，需要区分？但线下表本身是单独的，不会与 product_sales 重叠
                 df = pd.concat([df, offline_df], ignore_index=True)
         else:
             df["org_name"] = None
             df["dept"] = None
 
-        # 重命名列，保持与原 RPC 返回结构一致（供后续代码使用）
+        # 现在 df 已经是按 (sale_date, shop_name, org_name, dept) 聚合的数据
+        # 重命名列
         df = df.rename(columns={
             "ship_amount": "total_ship",
             "return_amount": "total_return",
