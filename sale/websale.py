@@ -2573,10 +2573,147 @@ if idx_product is not None:
             col6.write(f"{row['净销售金额']:,.2f}")
             col7.write(row["退款率"])
             col8.write("✅" if row.get("has_newbie_coupon") else "❌")
+            # ---------- 详情按钮 ----------
             if col9.button("📊", key=f"detail_btn_{row['货号']}_{idx}"):
-                st.info(f"货号 {row['货号']} 的详细销售明细可查看日明细或导出数据。")
+                st.session_state.show_dialog = True
+                st.session_state.dialog_style_code = row["货号"]
+                st.rerun()
+            # ---------- 趋势按钮 ----------
             if col10.button("📈", key=f"trend_btn_{row['货号']}_{idx}"):
-                st.info(f"货号 {row['货号']} 的销售趋势可在日明细中查看。")
+                st.session_state.show_trend_dialog = True
+                st.session_state.trend_style_code = row["货号"]
+                st.rerun()
+
+        # ================================================================
+        # 销售明细弹窗（当 show_dialog 为 True 时显示）
+        # ================================================================
+        if st.session_state.get("show_dialog", False):
+            style_code = st.session_state.dialog_style_code
+            st.markdown("---")
+            st.subheader(f"📋 货号 {style_code} 的销售明细")
+
+            # 从原始 prod_df（未聚合）中获取该货号的明细记录
+            # 注意：prod_df 是汇总表（按货号聚合），明细需要从原始 product_sales 表中获取
+            # 因此我们需要重新加载明细数据（可以复用 load_product_sales 但只针对该货号）
+            # 或者我们可以从 filtered 中获取，但 filtered 是汇总数据，没有明细。
+            # 所以我们重新查询该货号在日期范围内的明细数据。
+            with st.spinner("加载明细数据..."):
+                detail_df = load_product_sales(
+                    suffix=st.session_state.table_suffix,
+                    apply_filter=False,
+                    start_date=start_date,
+                    end_date=end_date
+                )
+                if not detail_df.empty:
+                    # 筛选该货号
+                    detail_df = detail_df[detail_df["style_code"] == style_code]
+                    if detail_df.empty:
+                        st.warning("该货号在所选日期范围内无明细数据。")
+                    else:
+                        # 按日期和主播（如果有）汇总
+                        if "anchor" in detail_df.columns:
+                            detail_agg = detail_df.groupby(["sale_date", "anchor"]).agg(
+                                发货=("ship_amount", "sum"),
+                                退货=("return_amount", "sum"),
+                                净额=("net_amount", "sum")
+                            ).reset_index()
+                            detail_agg.rename(columns={"anchor": "主播"}, inplace=True)
+                        else:
+                            detail_agg = detail_df.groupby(["sale_date", "shop_name"]).agg(
+                                发货=("ship_amount", "sum"),
+                                退货=("return_amount", "sum"),
+                                净额=("net_amount", "sum")
+                            ).reset_index()
+                            detail_agg.rename(columns={"shop_name": "店铺"}, inplace=True)
+                        detail_agg["退货率"] = detail_agg.apply(
+                            lambda r: (r["退货"] / r["发货"] * 100) if r["发货"] != 0 else 0.0, axis=1
+                        )
+                        detail_agg = detail_agg.sort_values(["sale_date"])
+                        st.dataframe(detail_agg, use_container_width=True, hide_index=True)
+
+                        # 汇总
+                        total_ship = detail_agg["发货"].sum()
+                        total_return = detail_agg["退货"].sum()
+                        total_net = detail_agg["净额"].sum()
+                        st.metric("合计", f"净额 ¥{total_net:,.2f}", delta=f"发货 ¥{total_ship:,.2f} / 退货 ¥{total_return:,.2f}")
+
+                        # 导出
+                        output_detail = io.BytesIO()
+                        with pd.ExcelWriter(output_detail, engine='openpyxl') as writer:
+                            detail_agg.to_excel(writer, index=False)
+                        st.download_button(
+                            "💾 导出明细",
+                            data=output_detail.getvalue(),
+                            file_name=f"明细_{style_code}_{start_date}_{end_date}.xlsx",
+                            key="export_detail"
+                        )
+                else:
+                    st.warning("无法加载明细数据，请检查数据连接。")
+
+            if st.button("关闭明细", key="close_detail"):
+                st.session_state.show_dialog = False
+                st.session_state.dialog_style_code = None
+                st.rerun()
+
+        # ================================================================
+        # 销售趋势弹窗（当 show_trend_dialog 为 True 时显示）
+        # ================================================================
+        if st.session_state.get("show_trend_dialog", False):
+            style_code = st.session_state.trend_style_code
+            st.markdown("---")
+            st.subheader(f"📈 货号 {style_code} 的每日销售趋势")
+
+            # 同样需要明细数据
+            with st.spinner("加载趋势数据..."):
+                trend_df = load_product_sales(
+                    suffix=st.session_state.table_suffix,
+                    apply_filter=False,
+                    start_date=start_date,
+                    end_date=end_date
+                )
+                if not trend_df.empty:
+                    trend_df = trend_df[trend_df["style_code"] == style_code]
+                    if trend_df.empty:
+                        st.warning("该货号在所选日期范围内无销售数据。")
+                    else:
+                        daily_trend = trend_df.groupby("sale_date")["net_amount"].sum().reset_index()
+                        daily_trend = daily_trend.sort_values("sale_date")
+                        fig = px.line(
+                            daily_trend,
+                            x="sale_date",
+                            y="net_amount",
+                            title=f"{style_code} 每日净销售额趋势",
+                            labels={"sale_date": "日期", "net_amount": "净销售额 (¥)"},
+                            markers=True
+                        )
+                        fig.update_layout(
+                            height=400,
+                            hovermode="x unified",
+                            margin=dict(l=0, r=0, t=40, b=0)
+                        )
+                        st.plotly_chart(fig, use_container_width=True)
+
+                        # 显示数据表格
+                        daily_trend["净销售额"] = daily_trend["net_amount"].apply(lambda x: f"¥{x:,.2f}")
+                        st.dataframe(daily_trend[["sale_date", "净销售额"]], hide_index=True, use_container_width=True)
+
+                        # 导出
+                        output_trend = io.BytesIO()
+                        with pd.ExcelWriter(output_trend, engine='openpyxl') as writer:
+                            daily_trend.to_excel(writer, index=False)
+                        st.download_button(
+                            "💾 导出趋势数据",
+                            data=output_trend.getvalue(),
+                            file_name=f"趋势_{style_code}_{start_date}_{end_date}.xlsx",
+                            key="export_trend"
+                        )
+                else:
+                    st.warning("无法加载趋势数据。")
+
+            if st.button("关闭趋势", key="close_trend"):
+                st.session_state.show_trend_dialog = False
+                st.session_state.trend_style_code = None
+                st.rerun()
 
 
 # ========== 销售对比（主播/店铺维度） ==========
