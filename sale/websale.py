@@ -3217,9 +3217,9 @@ if idx_distribution is not None:
                 else:
                     st.info("当前筛选条件下无首单礼金商品")
 
-# ========== 组织与部门分析（仅 _all） ==========
 if idx_org is not None:
     with tabs[idx_org]:
+        # ========== 辅助函数：获取日期范围 ==========
         @st.cache_data(ttl=600)
         def get_date_range(suffix):
             if supabase is None:
@@ -3263,68 +3263,52 @@ if idx_org is not None:
         )
         st.caption(f"当前数据日期范围：{min_date} ~ {max_date}，您可以选择任意日期查看对应数据。")
 
-        # ========== 核心缓存逻辑 ==========
-        # 用于缓存所有加载的数据，key 为日期+周期组合
-        cache_key = f"org_data_{base_date}_{suffix}"
+        # ========== 1. 核心大盘 KPI ==========
+        st.markdown("---")
+        st.markdown("#### 📊 营销中心整体销售")
+        latest_date = base_date
+        month_start = latest_date.replace(day=1)
 
-        # 如果缓存不存在或日期变化，则加载全部数据
-        if "org_all_data" not in st.session_state or st.session_state.get("org_cache_key") != cache_key:
-            with st.spinner("正在加载全部数据..."):
-                # 预计算各周期数据
-                latest_date = base_date
-                month_start = latest_date.replace(day=1)
+        # ---------- 加载目标 ----------
+        if suffix == "_all":
+            org_targets = load_org_targets("_all")
+            total_target = sum(org_targets.values()) if org_targets else 0
+        else:
+            total_target = sum(st.session_state.target_dict.values())
+
+        # ---------- 数据加载与缓存 ----------
+        # 使用 session_state 缓存所有聚合结果，避免重复计算
+        cache_key = f"org_data_{base_date}_{suffix}"
+        if cache_key not in st.session_state:
+            with st.spinner("加载数据..."):
+                # 加载今日和月累计数据
+                df_today = fetch_sales_summary(latest_date, latest_date, suffix)
+                df_mtd = fetch_sales_summary(month_start, latest_date, suffix)
+                # 近7天与前7天
                 period_start = base_date - timedelta(days=6)
                 prev_period_start = base_date - timedelta(days=13)
                 prev_period_end = base_date - timedelta(days=7)
-
-                # 加载目标
-                org_targets = load_org_targets("_all") if suffix == "_all" else {}
-                total_target = sum(org_targets.values()) if org_targets else 0
-
-                # 加载 KPI 数据
-                df_today = fetch_sales_summary(latest_date, latest_date, suffix)
-                df_mtd = fetch_sales_summary(month_start, latest_date, suffix)
                 df_7d = fetch_sales_summary(period_start, base_date, suffix)
                 df_prev = fetch_sales_summary(prev_period_start, prev_period_end, suffix)
-
-                # 存储到 session_state
-                st.session_state.org_all_data = {
+                # 对于组织与部门分布，需要根据用户选择的周期动态计算，但我们会单独缓存周期数据
+                # 先暂存基础数据
+                st.session_state[cache_key] = {
                     "df_today": df_today,
                     "df_mtd": df_mtd,
                     "df_7d": df_7d,
                     "df_prev": df_prev,
-                    "org_targets": org_targets,
-                    "total_target": total_target,
-                    "latest_date": latest_date,
-                    "month_start": month_start,
-                    "period_start": period_start,
-                    "prev_period_start": prev_period_start,
-                    "prev_period_end": prev_period_end,
+                    "base_date": base_date
                 }
-                st.session_state.org_cache_key = cache_key
         else:
-            # 从缓存读取
-            cached = st.session_state.org_all_data
+            cached = st.session_state[cache_key]
             df_today = cached["df_today"]
             df_mtd = cached["df_mtd"]
             df_7d = cached["df_7d"]
             df_prev = cached["df_prev"]
-            org_targets = cached["org_targets"]
-            total_target = cached["total_target"]
-            latest_date = cached["latest_date"]
-            month_start = cached["month_start"]
-            period_start = cached["period_start"]
-            prev_period_start = cached["prev_period_start"]
-            prev_period_end = cached["prev_period_end"]
 
-        # 从缓存中计算各周期数据（这部分在切换时不会重新加载，除非缓存 key 变化）
-        # 但需要根据用户选择的周期动态提取，我们在这里单独处理，但数据源已缓存。
-
-        st.markdown("---")
-        st.markdown("#### 📊 营销中心整体销售")
-
-        # 计算指标（直接从缓存数据得出）
+        # ---------- 计算 KPI ----------
         if df_today.empty:
+            st.warning(f"所选日期 {latest_date} 无销售数据，以下显示月累计数据。")
             today_ship = 0
             today_return = 0
             today_net = 0
@@ -3375,6 +3359,7 @@ if idx_org is not None:
             </div>
             """, unsafe_allow_html=True)
 
+        # ========== 2. 趋势分析（近7天 vs 前7天） ==========
         st.markdown("---")
         st.markdown("#### 📈 趋势分析：近7天 vs 前7天")
 
@@ -3435,10 +3420,11 @@ if idx_org is not None:
         else:
             st.info("无足够数据绘制趋势图（需同时拥有近7天和前7天数据）。")
 
+        # ========== 3. 组织与部门拆解 ==========
         st.markdown("---")
         st.markdown("#### 🏆 阿米巴组织与部门业绩拆解")
 
-        # ---------- 组织与部门分布 ----------
+        # ---------- 3.1 组织饼图 + 部门排行 ----------
         st.markdown("##### 组织与部门分布")
         time_mode_main = st.radio(
             "查看周期",
@@ -3460,12 +3446,14 @@ if idx_org is not None:
             end_date = base_date
             period_label = f"月累计（{base_date.strftime('%Y-%m')}）"
 
-        # 直接从缓存中取对应周期的数据（但需重新聚合）
-        # 为了更高效，我们可以在这里使用 fetch_sales_summary 但会被缓存，但为了演示，我们用缓存数据手动过滤
-        # 由于缓存的是整个日期范围的数据，我们动态聚合
-        # 但为了简单，我们重新调用 fetch_sales_summary（因为它本身有缓存）
-        with st.spinner(f"加载 {period_label} 数据..."):
-            df_period_main = fetch_sales_summary(start_date, end_date, suffix)
+        # 缓存周期数据
+        period_cache_key = f"org_period_{start_date}_{end_date}_{suffix}"
+        if period_cache_key not in st.session_state:
+            with st.spinner(f"加载 {period_label} 数据..."):
+                df_period_main = fetch_sales_summary(start_date, end_date, suffix)
+                st.session_state[period_cache_key] = df_period_main
+        else:
+            df_period_main = st.session_state[period_cache_key]
 
         if not df_period_main.empty:
             col_org, col_dept = st.columns(2)
@@ -3499,7 +3487,7 @@ if idx_org is not None:
         else:
             st.warning(f"{period_label} 无数据，无法显示阿米巴/渠道分布。")
 
-        # ---------- 退货率警告线 ----------
+        # ---------- 3.2 退货率警告线 ----------
         st.markdown("#### 退货率警告线")
         time_mode_return = st.radio(
             "查看周期",
@@ -3522,8 +3510,13 @@ if idx_org is not None:
             end_date_r = base_date
             period_label_r = f"月累计（{base_date.strftime('%Y-%m')}）"
 
-        with st.spinner(f"加载退货率数据（{period_label_r}）..."):
-            df_return = fetch_sales_summary(start_date_r, end_date_r, suffix)
+        return_cache_key = f"org_return_{start_date_r}_{end_date_r}_{suffix}"
+        if return_cache_key not in st.session_state:
+            with st.spinner(f"加载退货率数据（{period_label_r}）..."):
+                df_return = fetch_sales_summary(start_date_r, end_date_r, suffix)
+                st.session_state[return_cache_key] = df_return
+        else:
+            df_return = st.session_state[return_cache_key]
 
         if not df_return.empty:
             dept_return = df_return.groupby('dept').agg(
@@ -3539,16 +3532,16 @@ if idx_org is not None:
                                     labels={'dept': '部门', '退货率': '退货率 (%)'},
                                     color=top_return['退货率'], color_continuous_scale='RdYlGn_r',
                                     text=top_return['退货率'].apply(lambda x: f'{x:.1f}%'))
-                fig_return.update_traces(textposition='outside')
                 fig_return.add_hline(y=50, line_dash="dash", line_color="red", annotation_text="警戒线 50%")
                 fig_return.add_hline(y=30, line_dash="dash", line_color="orange", annotation_text="注意线 30%")
+                fig_return.update_traces(textposition='outside')
                 st.plotly_chart(fig_return, use_container_width=True)
             else:
                 st.info("无有效渠道数据")
         else:
             st.warning(f"{period_label_r} 无数据，无法显示退货率。")
 
-        # ---------- 多维透视 ----------
+        # ---------- 3.3 多维透视 ----------
         st.markdown("#### 🔍 多维透视（渠道 → 平台 → 店铺）")
         time_mode_pivot = st.radio(
             "查看周期",
@@ -3571,8 +3564,13 @@ if idx_org is not None:
             end_date_p = base_date
             period_label_p = f"月累计（{base_date.strftime('%Y-%m')}）"
 
-        with st.spinner(f"加载透视数据（{period_label_p}）..."):
-            df_pivot = fetch_sales_summary(start_date_p, end_date_p, suffix)
+        pivot_cache_key = f"org_pivot_{start_date_p}_{end_date_p}_{suffix}"
+        if pivot_cache_key not in st.session_state:
+            with st.spinner(f"加载透视数据（{period_label_p}）..."):
+                df_pivot = fetch_sales_summary(start_date_p, end_date_p, suffix)
+                st.session_state[pivot_cache_key] = df_pivot
+        else:
+            df_pivot = st.session_state[pivot_cache_key]
 
         if not df_pivot.empty:
             df_pivot['platform'] = df_pivot['shop_name'].apply(
@@ -3606,110 +3604,6 @@ if idx_org is not None:
         else:
             st.warning(f"{period_label_p} 无数据，无法显示透视表。")
 
-        # ---------- 异常预警 ----------
-        st.markdown("---")
-        st.markdown("#### ⚠️ 异常决策预警")
-        if not df_period_main.empty:
-            alert_df = df_period_main.groupby(['org_name', 'dept', 'shop_name']).agg(
-                ship=('total_ship', 'sum'),
-                return_amt=('total_return', 'sum'),
-                net=('total_net', 'sum')
-            ).reset_index()
-            alert_df['退货率'] = (alert_df['return_amt'] / (alert_df['ship'] + 1e-5) * 100)
-            alert_negative = alert_df[alert_df['net'] < 0]
-            alert_high_return = alert_df[alert_df['退货率'] > 65]
-
-            if not alert_negative.empty:
-                for _, row in alert_negative.iterrows():
-                    st.error(f"🚨 净销售额为负：{row['org_name']} -> {row['dept']} -> {row['shop_name']}，净额 ¥{row['net']:,.2f}")
-            if not alert_high_return.empty:
-                for _, row in alert_high_return.iterrows():
-                    st.warning(f"⚠️ 退货率异常偏高（>{65}%）：{row['org_name']} -> {row['dept']} -> {row['shop_name']}，退货率 {row['退货率']:.1f}%")
-            if alert_negative.empty and alert_high_return.empty:
-                st.success("🎉 所有部门/店铺运营正常，无重大异常。")
-        else:
-            st.info("当前周期无数据，无法预警。")
-
-        # ---------- AI 智能总结 ----------
-        st.markdown("---")
-        st.markdown("#### 🤖 AI 智能总结")
-
-        model_options = {
-            "DeepSeek-V3": "deepseek-ai/DeepSeek-V3",
-            "DeepSeek-R1": "deepseek-ai/DeepSeek-R1",
-            "Qwen2.5-72B": "Qwen/Qwen2.5-72B-Instruct",
-            "Qwen2.5-7B": "Qwen/Qwen2.5-7B-Instruct",
-            "GLM-4-9B": "glm-4-9b-chat"
-        }
-        selected_model_name = st.selectbox(
-            "选择 AI 模型",
-            options=list(model_options.keys()),
-            index=1,
-            key="org_ai_model_select"
-        )
-        selected_model = model_options[selected_model_name]
-
-        if st.button("🚀 生成智能总结", key="org_generate_ai_summary"):
-            total_net = mtd_net if not df_mtd.empty else 0
-            return_rate = mtd_return_rate if not df_mtd.empty else 0
-            if not df_7d.empty and not df_prev.empty:
-                total_7d = df_7d['total_net'].sum()
-                total_prev = df_prev['total_net'].sum() if not df_prev.empty else 0
-                change_7d = ((total_7d - total_prev) / (total_prev + 1e-5) * 100) if total_prev != 0 else 0
-                net_7d = total_7d
-                net_prev = total_prev
-            else:
-                net_7d = 0
-                net_prev = 0
-                change_7d = 0
-
-            if not df_period_main.empty:
-                org_net = df_period_main.groupby('org_name')['total_net'].sum().sort_values(ascending=False).head(3)
-                org_text = "\n".join([f"{i+1}. {org}: ¥{amt:,.0f}" for i, (org, amt) in enumerate(org_net.items())]) if not org_net.empty else "暂无"
-            else:
-                org_text = "暂无"
-
-            if not df_period_main.empty:
-                dept_return_ai = df_period_main.groupby('dept').agg(ship=('total_ship', 'sum'), return_amt=('total_return', 'sum')).reset_index()
-                dept_return_ai['退货率'] = (dept_return_ai['return_amt'] / (dept_return_ai['ship'] + 1e-5) * 100)
-                dept_return_ai = dept_return_ai.sort_values('退货率', ascending=False).head(3)
-                dept_text = "\n".join([f"{row['dept']}: {row['退货率']:.1f}%" for _, row in dept_return_ai.iterrows()]) if not dept_return_ai.empty else "暂无"
-            else:
-                dept_text = "暂无"
-
-            context = f"""
-            分析期间（月累计）：{month_start} 至 {latest_date}
-            总净销售额：¥{total_net:,.2f}
-            综合退货率：{return_rate:.2f}%
-            近7天净销售额：¥{net_7d:,.2f}（前7天：¥{net_prev:,.2f}，变化 {change_7d:+.1f}%）
-            净销售额 TOP3 阿米巴：
-            {org_text}
-            退货率 TOP3 渠道：
-            {dept_text}
-            """
-
-            prompt = """
-            你是一位资深的电商运营总监。请根据以上数据，用一段专业、简洁的中文总结当前组织与部门的经营状况。
-            要求：
-            1. 突出表现最好的阿米巴和最需要关注的渠道。
-            2. 结合近7天趋势，给出短期策略建议。
-            3. 若发现异常（如退货率极高、净额下滑），明确指出来。
-            """
-
-            with st.spinner("🤖 AI 正在分析，请稍候..."):
-                ai_summary = get_ai_summary(prompt, context, selected_model)
-
-            st.session_state.org_ai_summary = ai_summary
-            st.rerun()
-
-        if st.session_state.get("org_ai_summary"):
-            st.markdown(f"""
-            <div style="background:rgba(34,197,94,0.08);border:1px solid rgba(34,197,94,0.2);border-radius:12px;padding:16px 20px;margin-top:10px;">
-                <div style="color:#1e293b;font-size:14px;line-height:1.7;">{st.session_state.org_ai_summary}</div>
-            </div>
-            """, unsafe_allow_html=True)
-        else:
-            st.info("点击上方按钮生成 AI 智能总结。")
 
 # ========== 系统设置 ==========
 if idx_system is not None:
