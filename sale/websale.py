@@ -3263,23 +3263,68 @@ if idx_org is not None:
         )
         st.caption(f"当前数据日期范围：{min_date} ~ {max_date}，您可以选择任意日期查看对应数据。")
 
+        # ========== 核心缓存逻辑 ==========
+        # 用于缓存所有加载的数据，key 为日期+周期组合
+        cache_key = f"org_data_{base_date}_{suffix}"
+
+        # 如果缓存不存在或日期变化，则加载全部数据
+        if "org_all_data" not in st.session_state or st.session_state.get("org_cache_key") != cache_key:
+            with st.spinner("正在加载全部数据..."):
+                # 预计算各周期数据
+                latest_date = base_date
+                month_start = latest_date.replace(day=1)
+                period_start = base_date - timedelta(days=6)
+                prev_period_start = base_date - timedelta(days=13)
+                prev_period_end = base_date - timedelta(days=7)
+
+                # 加载目标
+                org_targets = load_org_targets("_all") if suffix == "_all" else {}
+                total_target = sum(org_targets.values()) if org_targets else 0
+
+                # 加载 KPI 数据
+                df_today = fetch_sales_summary(latest_date, latest_date, suffix)
+                df_mtd = fetch_sales_summary(month_start, latest_date, suffix)
+                df_7d = fetch_sales_summary(period_start, base_date, suffix)
+                df_prev = fetch_sales_summary(prev_period_start, prev_period_end, suffix)
+
+                # 存储到 session_state
+                st.session_state.org_all_data = {
+                    "df_today": df_today,
+                    "df_mtd": df_mtd,
+                    "df_7d": df_7d,
+                    "df_prev": df_prev,
+                    "org_targets": org_targets,
+                    "total_target": total_target,
+                    "latest_date": latest_date,
+                    "month_start": month_start,
+                    "period_start": period_start,
+                    "prev_period_start": prev_period_start,
+                    "prev_period_end": prev_period_end,
+                }
+                st.session_state.org_cache_key = cache_key
+        else:
+            # 从缓存读取
+            cached = st.session_state.org_all_data
+            df_today = cached["df_today"]
+            df_mtd = cached["df_mtd"]
+            df_7d = cached["df_7d"]
+            df_prev = cached["df_prev"]
+            org_targets = cached["org_targets"]
+            total_target = cached["total_target"]
+            latest_date = cached["latest_date"]
+            month_start = cached["month_start"]
+            period_start = cached["period_start"]
+            prev_period_start = cached["prev_period_start"]
+            prev_period_end = cached["prev_period_end"]
+
+        # 从缓存中计算各周期数据（这部分在切换时不会重新加载，除非缓存 key 变化）
+        # 但需要根据用户选择的周期动态提取，我们在这里单独处理，但数据源已缓存。
+
         st.markdown("---")
         st.markdown("#### 📊 营销中心整体销售")
-        latest_date = base_date
-        month_start = latest_date.replace(day=1)
 
-        if suffix == "_all":
-            org_targets = load_org_targets("_all")
-            total_target = sum(org_targets.values()) if org_targets else 0
-        else:
-            total_target = sum(st.session_state.target_dict.values())
-
-        with st.spinner("加载 KPI 数据..."):
-            df_today = fetch_sales_summary(latest_date, latest_date, suffix)
-            df_mtd = fetch_sales_summary(month_start, latest_date, suffix)
-
+        # 计算指标（直接从缓存数据得出）
         if df_today.empty:
-            st.warning(f"所选日期 {latest_date} 无销售数据，以下显示月累计数据。")
             today_ship = 0
             today_return = 0
             today_net = 0
@@ -3332,14 +3377,6 @@ if idx_org is not None:
 
         st.markdown("---")
         st.markdown("#### 📈 趋势分析：近7天 vs 前7天")
-
-        period_start = base_date - timedelta(days=6)
-        prev_period_start = base_date - timedelta(days=13)
-        prev_period_end = base_date - timedelta(days=7)
-
-        with st.spinner("加载趋势数据..."):
-            df_7d = fetch_sales_summary(period_start, base_date, suffix)
-            df_prev = fetch_sales_summary(prev_period_start, prev_period_end, suffix)
 
         st.markdown("##### 汇总统计")
         if not df_7d.empty and 'total_net' in df_7d.columns:
@@ -3401,6 +3438,7 @@ if idx_org is not None:
         st.markdown("---")
         st.markdown("#### 🏆 阿米巴组织与部门业绩拆解")
 
+        # ---------- 组织与部门分布 ----------
         st.markdown("##### 组织与部门分布")
         time_mode_main = st.radio(
             "查看周期",
@@ -3422,6 +3460,10 @@ if idx_org is not None:
             end_date = base_date
             period_label = f"月累计（{base_date.strftime('%Y-%m')}）"
 
+        # 直接从缓存中取对应周期的数据（但需重新聚合）
+        # 为了更高效，我们可以在这里使用 fetch_sales_summary 但会被缓存，但为了演示，我们用缓存数据手动过滤
+        # 由于缓存的是整个日期范围的数据，我们动态聚合
+        # 但为了简单，我们重新调用 fetch_sales_summary（因为它本身有缓存）
         with st.spinner(f"加载 {period_label} 数据..."):
             df_period_main = fetch_sales_summary(start_date, end_date, suffix)
 
@@ -3448,8 +3490,8 @@ if idx_org is not None:
                                       title=f'部门净销售额排行（TOP10，{period_label}）',
                                       labels={'total_net': '净销售额', 'dept': '渠道'},
                                       color='total_net', color_continuous_scale='Blues',
-                                      text=top10['total_net'].apply(lambda x: f'¥{x:,.0f}'))  # 添加这一行
-                    fig_dept.update_traces(textposition='outside')  # 标签显示在柱外
+                                      text=top10['total_net'].apply(lambda x: f'¥{x:,.0f}'))
+                    fig_dept.update_traces(textposition='outside')
                     fig_dept.update_layout(yaxis={'categoryorder': 'total ascending'})
                     st.plotly_chart(fig_dept, use_container_width=True)
                 else:
@@ -3457,6 +3499,7 @@ if idx_org is not None:
         else:
             st.warning(f"{period_label} 无数据，无法显示阿米巴/渠道分布。")
 
+        # ---------- 退货率警告线 ----------
         st.markdown("#### 退货率警告线")
         time_mode_return = st.radio(
             "查看周期",
@@ -3494,7 +3537,9 @@ if idx_org is not None:
                 fig_return = px.bar(top_return, x='dept', y='退货率',
                                     title=f'退货率 TOP10 部门（{period_label_r}）',
                                     labels={'dept': '部门', '退货率': '退货率 (%)'},
-                                    color=top_return['退货率'], color_continuous_scale='RdYlGn_r')
+                                    color=top_return['退货率'], color_continuous_scale='RdYlGn_r',
+                                    text=top_return['退货率'].apply(lambda x: f'{x:.1f}%'))
+                fig_return.update_traces(textposition='outside')
                 fig_return.add_hline(y=50, line_dash="dash", line_color="red", annotation_text="警戒线 50%")
                 fig_return.add_hline(y=30, line_dash="dash", line_color="orange", annotation_text="注意线 30%")
                 st.plotly_chart(fig_return, use_container_width=True)
@@ -3503,6 +3548,7 @@ if idx_org is not None:
         else:
             st.warning(f"{period_label_r} 无数据，无法显示退货率。")
 
+        # ---------- 多维透视 ----------
         st.markdown("#### 🔍 多维透视（渠道 → 平台 → 店铺）")
         time_mode_pivot = st.radio(
             "查看周期",
@@ -3560,8 +3606,31 @@ if idx_org is not None:
         else:
             st.warning(f"{period_label_p} 无数据，无法显示透视表。")
 
+        # ---------- 异常预警 ----------
         st.markdown("---")
-        
+        st.markdown("#### ⚠️ 异常决策预警")
+        if not df_period_main.empty:
+            alert_df = df_period_main.groupby(['org_name', 'dept', 'shop_name']).agg(
+                ship=('total_ship', 'sum'),
+                return_amt=('total_return', 'sum'),
+                net=('total_net', 'sum')
+            ).reset_index()
+            alert_df['退货率'] = (alert_df['return_amt'] / (alert_df['ship'] + 1e-5) * 100)
+            alert_negative = alert_df[alert_df['net'] < 0]
+            alert_high_return = alert_df[alert_df['退货率'] > 65]
+
+            if not alert_negative.empty:
+                for _, row in alert_negative.iterrows():
+                    st.error(f"🚨 净销售额为负：{row['org_name']} -> {row['dept']} -> {row['shop_name']}，净额 ¥{row['net']:,.2f}")
+            if not alert_high_return.empty:
+                for _, row in alert_high_return.iterrows():
+                    st.warning(f"⚠️ 退货率异常偏高（>{65}%）：{row['org_name']} -> {row['dept']} -> {row['shop_name']}，退货率 {row['退货率']:.1f}%")
+            if alert_negative.empty and alert_high_return.empty:
+                st.success("🎉 所有部门/店铺运营正常，无重大异常。")
+        else:
+            st.info("当前周期无数据，无法预警。")
+
+        # ---------- AI 智能总结 ----------
         st.markdown("---")
         st.markdown("#### 🤖 AI 智能总结")
 
