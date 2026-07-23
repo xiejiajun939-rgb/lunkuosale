@@ -3434,7 +3434,7 @@ if idx_org is not None:
                     fig_org = px.pie(positive_org, names='org_name', values='total_net',
                                      title=f'各阿米巴净销售额占比（{period_label}）',
                                      hole=0.4, color_discrete_sequence=px.colors.qualitative.Pastel)
-                    fig_org.update_traces(textposition='inside', textinfo='percent+label')
+                    fig_org.update_traces(textposition='inside', textinfo='label+value', texttemplate='%{label}<br>¥%{value:,.0f}')
                     st.plotly_chart(fig_org, use_container_width=True)
                 else:
                     st.info("无盈利阿米巴")
@@ -3447,7 +3447,9 @@ if idx_org is not None:
                     fig_dept = px.bar(top10, x='total_net', y='dept', orientation='h',
                                       title=f'部门净销售额排行（TOP10，{period_label}）',
                                       labels={'total_net': '净销售额', 'dept': '渠道'},
-                                      color='total_net', color_continuous_scale='Blues')
+                                      color='total_net', color_continuous_scale='Blues',
+                                      text=top10['total_net'].apply(lambda x: f'¥{x:,.0f}'))  # 添加这一行
+                    fig_dept.update_traces(textposition='outside')  # 标签显示在柱外
                     fig_dept.update_layout(yaxis={'categoryorder': 'total ascending'})
                     st.plotly_chart(fig_dept, use_container_width=True)
                 else:
