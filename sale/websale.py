@@ -3561,28 +3561,7 @@ if idx_org is not None:
             st.warning(f"{period_label_p} 无数据，无法显示透视表。")
 
         st.markdown("---")
-        st.markdown("#### ⚠️ 异常决策预警")
-        if not df_period_main.empty:
-            alert_df = df_period_main.groupby(['org_name', 'dept', 'shop_name']).agg(
-                ship=('total_ship', 'sum'),
-                return_amt=('total_return', 'sum'),
-                net=('total_net', 'sum')
-            ).reset_index()
-            alert_df['退货率'] = (alert_df['return_amt'] / (alert_df['ship'] + 1e-5) * 100)
-            alert_negative = alert_df[alert_df['net'] < 0]
-            alert_high_return = alert_df[alert_df['退货率'] > 65]
-
-            if not alert_negative.empty:
-                for _, row in alert_negative.iterrows():
-                    st.error(f"🚨 净销售额为负：{row['org_name']} -> {row['dept']} -> {row['shop_name']}，净额 ¥{row['net']:,.2f}")
-            if not alert_high_return.empty:
-                for _, row in alert_high_return.iterrows():
-                    st.warning(f"⚠️ 退货率异常偏高（>{65}%）：{row['org_name']} -> {row['dept']} -> {row['shop_name']}，退货率 {row['退货率']:.1f}%")
-            if alert_negative.empty and alert_high_return.empty:
-                st.success("🎉 所有部门/店铺运营正常，无重大异常。")
-        else:
-            st.info("当前周期无数据，无法预警。")
-
+        
         st.markdown("---")
         st.markdown("#### 🤖 AI 智能总结")
 
