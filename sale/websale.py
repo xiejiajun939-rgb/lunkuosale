@@ -3404,16 +3404,20 @@ if idx_org is not None:
         st.markdown("##### 组织与部门分布")
         time_mode_main = st.radio(
             "查看周期",
-            options=["近7天", "月累计"],
+            options=["最新日", "近7天", "月累计"],
             index=0,
             horizontal=True,
             key="org_dept_main_mode"
         )
-        if time_mode_main == "近7天":
+        if time_mode_main == "最新日":
+            start_date = base_date
+            end_date = base_date
+            period_label = f"最新日（{base_date.strftime('%Y-%m-%d')}）"
+        elif time_mode_main == "近7天":
             start_date = base_date - timedelta(days=6)
             end_date = base_date
             period_label = "近7天"
-        else:
+        else:  # 月累计
             start_date = base_date.replace(day=1)
             end_date = base_date
             period_label = f"月累计（{base_date.strftime('%Y-%m')}）"
@@ -3454,13 +3458,17 @@ if idx_org is not None:
         st.markdown("#### 退货率警告线")
         time_mode_return = st.radio(
             "查看周期",
-            options=["近7天", "月累计"],
+            options=["最新日", "近7天", "月累计"],
             index=0,
             horizontal=True,
             key="org_dept_return_mode",
             label_visibility="collapsed"
         )
-        if time_mode_return == "近7天":
+        if time_mode_return == "最新日":
+            start_date_r = base_date
+            end_date_r = base_date
+            period_label_r = f"最新日（{base_date.strftime('%Y-%m-%d')}）"
+        elif time_mode_return == "近7天":
             start_date_r = base_date - timedelta(days=6)
             end_date_r = base_date
             period_label_r = "近7天"
@@ -3496,13 +3504,17 @@ if idx_org is not None:
         st.markdown("#### 🔍 多维透视（渠道 → 平台 → 店铺）")
         time_mode_pivot = st.radio(
             "查看周期",
-            options=["近7天", "月累计"],
+            options=["最新日", "近7天", "月累计"],
             index=0,
             horizontal=True,
             key="org_dept_pivot_mode",
             label_visibility="collapsed"
         )
-        if time_mode_pivot == "近7天":
+        if time_mode_pivot == "最新日":
+            start_date_p = base_date
+            end_date_p = base_date
+            period_label_p = f"最新日（{base_date.strftime('%Y-%m-%d')}）"
+        elif time_mode_pivot == "近7天":
             start_date_p = base_date - timedelta(days=6)
             end_date_p = base_date
             period_label_p = "近7天"
