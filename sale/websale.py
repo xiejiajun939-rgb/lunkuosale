@@ -1873,7 +1873,7 @@ if idx_dashboard is not None:
 if idx_daily is not None:
     with tabs[idx_daily]:
         st.subheader("📋 每日明细查询")
-        st.info("此处展示最新日销售明细，并支持按日期查询任意一天的销售情况。")
+        st.info("此处展示最新日销售明细，并支持按日期区间查询每日汇总。")
 
         with st.spinner("加载数据..."):
             prod_df = load_product_sales(st.session_state.table_suffix, apply_filter=False)
@@ -1916,6 +1916,7 @@ if idx_daily is not None:
                 ).reset_index().rename(columns={group_col: dim_label})
                 return agg
 
+            # ======================== 最新日明细（不变） ========================
             st.markdown("#### 📅 最新日明细")
             source_names = {"": "非直播数据", "_all": "全部数据"}
             current_source = source_names.get(st.session_state.table_suffix, "未知")
@@ -2021,92 +2022,91 @@ if idx_daily is not None:
 
             st.markdown("---")
 
-            st.markdown("#### 🔍 日期查询")
-            if st.button("📅 今日", key="query_today_daily"):
-                st.session_state["query_date_daily"] = date.today()
-                st.rerun()
-            query_date = st.date_input(
-                "查询日期",
-                value=st.session_state.get("query_date_daily", date.today()),
-                key="query_date_daily"
+            # ======================== 新增：区间查询 ========================
+            st.markdown("#### 🔍 区间查询")
+            # 获取数据日期范围
+            min_date = prod_df["sale_date"].min().date()
+            max_date = prod_df["sale_date"].max().date()
+
+            # 使用快捷按钮 + 日期输入（复用 date_quick_buttons）
+            date_quick_buttons(
+                "q_start", "q_end",
+                default_start=max_date - timedelta(days=6),
+                default_end=max_date,
+                min_date=min_date,
+                max_date=max_date
             )
-            if st.button("查询", key="query_btn_daily"):
-                mask_query = prod_df["sale_date"].dt.date == query_date
-                query_data = prod_df[mask_query]
-                if query_data.empty:
-                    st.warning("该日期无数据")
-                else:
-                    query_agg = aggregate_dim(query_data, group_col, dim_label)
-                    month_start_q = query_date.replace(day=1)
-                    mask_month_q = (prod_df["sale_date"].dt.date >= month_start_q) & (prod_df["sale_date"].dt.date <= query_date)
-                    month_data_q = prod_df[mask_month_q]
-                    month_agg_q = aggregate_dim(month_data_q, group_col, dim_label)
+            start_date = st.session_state.get("q_start", max_date - timedelta(days=6))
+            end_date = st.session_state.get("q_end", max_date)
 
-                    df_query = pd.merge(query_agg, month_agg_q, on=dim_label, suffixes=("_日", "_月"), how="outer").fillna(0)
-                    df_query["日退货率_数值"] = df_query.apply(
-                        lambda r: (r['退货金额_日'] / r['发货金额_日'] * 100) if r['发货金额_日'] != 0 else 0.0, axis=1
-                    )
-                    df_query["月累计退货率_数值"] = df_query.apply(
-                        lambda r: (r['退货金额_月'] / r['发货金额_月'] * 100) if r['发货金额_月'] != 0 else 0.0, axis=1
-                    )
-                    df_query = df_query.sort_values(dim_label)
+            # 过滤数据
+            mask_interval = (prod_df["sale_date"] >= pd.to_datetime(start_date)) & (prod_df["sale_date"] <= pd.to_datetime(end_date))
+            interval_df = prod_df[mask_interval].copy()
 
-                    display_cols_q = [
-                        dim_label,
-                        "发货金额_日", "退货金额_日", "净销售金额_日", "日退货率_数值",
-                        "发货金额_月", "退货金额_月", "净销售金额_月", "月累计退货率_数值"
-                    ]
-                    rename_map_q = {
-                        dim_label: dim_label,
-                        "发货金额_日": "当日发货",
-                        "退货金额_日": "当日退货",
-                        "净销售金额_日": "当日净额",
-                        "日退货率_数值": "日退货率",
-                        "发货金额_月": "月累计发货",
-                        "退货金额_月": "月累计退货",
-                        "净销售金额_月": "月累计净额",
-                        "月累计退货率_数值": "月累计退货率"
-                    }
-                    display_q = df_query[display_cols_q].rename(columns=rename_map_q)
+            if interval_df.empty:
+                st.warning("所选区间无销售数据")
+            else:
+                # 按日期汇总（每日总合计）
+                daily_summary = interval_df.groupby(interval_df["sale_date"].dt.date).agg(
+                    发货金额=("ship_amount", "sum"),
+                    退货金额=("return_amount", "sum"),
+                    净销售金额=("net_amount", "sum")
+                ).reset_index().rename(columns={"sale_date": "日期"})
+                daily_summary["退货率"] = daily_summary.apply(
+                    lambda r: (r["退货金额"] / r["发货金额"] * 100) if r["发货金额"] != 0 else 0.0, axis=1
+                ).round(2)
 
-                    column_config_q = {
-                        dim_label: st.column_config.TextColumn(dim_label),
-                        "当日发货": st.column_config.NumberColumn("当日发货", format="%.2f"),
-                        "当日退货": st.column_config.NumberColumn("当日退货", format="%.2f"),
-                        "当日净额": st.column_config.NumberColumn("当日净额", format="%.2f"),
-                        "日退货率": st.column_config.NumberColumn("日退货率", format="%.2f%%"),
-                        "月累计发货": st.column_config.NumberColumn("月累计发货", format="%.2f"),
-                        "月累计退货": st.column_config.NumberColumn("月累计退货", format="%.2f"),
-                        "月累计净额": st.column_config.NumberColumn("月累计净额", format="%.2f"),
-                        "月累计退货率": st.column_config.NumberColumn("月累计退货率", format="%.2f%%")
-                    }
-                    st.dataframe(display_q, column_config=column_config_q, use_container_width=True, hide_index=True)
+                # 显示每日汇总表
+                st.dataframe(
+                    daily_summary,
+                    column_config={
+                        "日期": st.column_config.DateColumn("日期"),
+                        "发货金额": st.column_config.NumberColumn("发货金额(¥)", format="%.2f"),
+                        "退货金额": st.column_config.NumberColumn("退货金额(¥)", format="%.2f"),
+                        "净销售金额": st.column_config.NumberColumn("净销售金额(¥)", format="%.2f"),
+                        "退货率": st.column_config.NumberColumn("退货率(%)", format="%.2f%%")
+                    },
+                    hide_index=True,
+                    use_container_width=True
+                )
 
-                    total_q_ship = df_query["发货金额_日"].sum()
-                    total_q_return = df_query["退货金额_日"].sum()
-                    total_q_net = df_query["净销售金额_日"].sum()
-                    total_q_month_ship = df_query["发货金额_月"].sum()
-                    total_q_month_return = df_query["退货金额_月"].sum()
-                    total_q_month_net = df_query["净销售金额_月"].sum()
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        st.metric("📊 当日合计", f"净额: ¥{total_q_net:,.2f}", delta=f"发货 ¥{total_q_ship:,.2f} / 退货 ¥{total_q_return:,.2f}")
-                    with col2:
-                        st.metric("📆 截止当日月累计", f"净额: ¥{total_q_month_net:,.2f}", delta=f"发货 ¥{total_q_month_ship:,.2f} / 退货 ¥{total_q_month_return:,.2f}")
+                # 汇总合计
+                total_ship = daily_summary["发货金额"].sum()
+                total_return = daily_summary["退货金额"].sum()
+                total_net = daily_summary["净销售金额"].sum()
+                total_return_rate = (total_return / total_ship * 100) if total_ship != 0 else 0.0
+                st.metric(
+                    "区间合计",
+                    f"净额: ¥{total_net:,.2f}",
+                    delta=f"发货 ¥{total_ship:,.2f} / 退货 ¥{total_return:,.2f} | 退货率 {total_return_rate:.2f}%"
+                )
 
-                    output_q = io.BytesIO()
-                    with pd.ExcelWriter(output_q, engine='openpyxl') as writer:
-                        export_q = display_q.copy()
-                        for col in ['日退货率', '月累计退货率']:
-                            if col in export_q.columns:
-                                export_q[col] = export_q[col].apply(lambda x: f"{x:.2f}%")
-                        export_q.to_excel(writer, index=False)
-                    st.download_button(
-                        "💾 导出查询结果",
-                        data=output_q.getvalue(),
-                        file_name=f"查询_{query_date}.xlsx",
-                        key="export_query_result_daily"
-                    )
+                # 趋势图
+                fig = px.line(
+                    daily_summary,
+                    x="日期",
+                    y="净销售金额",
+                    title="区间每日净销售趋势",
+                    markers=True,
+                    template="plotly_white"
+                )
+                fig.update_layout(
+                    height=300,
+                    margin=dict(l=0, r=0, t=30, b=0),
+                    hovermode="x unified"
+                )
+                st.plotly_chart(fig, use_container_width=True)
+
+                # 导出
+                output_interval = io.BytesIO()
+                with pd.ExcelWriter(output_interval, engine='openpyxl') as writer:
+                    daily_summary.to_excel(writer, index=False)
+                st.download_button(
+                    "💾 导出区间数据",
+                    data=output_interval.getvalue(),
+                    file_name=f"区间明细_{start_date.strftime('%Y%m%d')}_{end_date.strftime('%Y%m%d')}.xlsx",
+                    key="export_interval"
+                )
 
 # ========== 发货退货明细（已弃用，保留占位） ==========
 if idx_ship_return is not None:
