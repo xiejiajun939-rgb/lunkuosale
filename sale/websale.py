@@ -1873,7 +1873,7 @@ if idx_dashboard is not None:
 if idx_daily is not None:
     with tabs[idx_daily]:
         st.subheader("📋 每日明细查询")
-        st.info("此处展示最新日销售明细，并支持按日期区间查询每日汇总。")
+        st.info("此处展示最新日销售明细，并支持按日期区间查询维度汇总。")
 
         with st.spinner("加载数据..."):
             prod_df = load_product_sales(st.session_state.table_suffix, apply_filter=False)
@@ -1916,7 +1916,7 @@ if idx_daily is not None:
                 ).reset_index().rename(columns={group_col: dim_label})
                 return agg
 
-            # ======================== 最新日明细（不变） ========================
+            # ======================== 最新日明细 ========================
             st.markdown("#### 📅 最新日明细")
             source_names = {"": "非直播数据", "_all": "全部数据"}
             current_source = source_names.get(st.session_state.table_suffix, "未知")
@@ -2022,13 +2022,12 @@ if idx_daily is not None:
 
             st.markdown("---")
 
-            # ======================== 新增：区间查询 ========================
+            # ======================== 区间查询（按维度汇总） ========================
             st.markdown("#### 🔍 区间查询")
             # 获取数据日期范围
             min_date = prod_df["sale_date"].min().date()
             max_date = prod_df["sale_date"].max().date()
 
-            # 使用快捷按钮 + 日期输入（复用 date_quick_buttons）
             date_quick_buttons(
                 "q_start", "q_end",
                 default_start=max_date - timedelta(days=6),
@@ -2039,28 +2038,43 @@ if idx_daily is not None:
             start_date = st.session_state.get("q_start", max_date - timedelta(days=6))
             end_date = st.session_state.get("q_end", max_date)
 
-            # 过滤数据
             mask_interval = (prod_df["sale_date"] >= pd.to_datetime(start_date)) & (prod_df["sale_date"] <= pd.to_datetime(end_date))
             interval_df = prod_df[mask_interval].copy()
 
             if interval_df.empty:
                 st.warning("所选区间无销售数据")
             else:
-                # 按日期汇总（每日总合计）
-                daily_summary = interval_df.groupby(interval_df["sale_date"].dt.date).agg(
+                # 按维度分组汇总（非直播：店铺；全部：组织/部门）
+                if is_all:
+                    # 使用已选的维度
+                    if selected_dim == "阿米巴组织":
+                        group_col_interval = "org_name"
+                        dim_label_interval = "组织"
+                    else:
+                        group_col_interval = "dept"
+                        dim_label_interval = "部门"
+                else:
+                    group_col_interval = "shop_name"
+                    dim_label_interval = "店铺名称"
+
+                interval_agg = interval_df.groupby(group_col_interval).agg(
                     发货金额=("ship_amount", "sum"),
                     退货金额=("return_amount", "sum"),
                     净销售金额=("net_amount", "sum")
-                ).reset_index().rename(columns={"sale_date": "日期"})
-                daily_summary["退货率"] = daily_summary.apply(
+                ).reset_index().rename(columns={group_col_interval: dim_label_interval})
+
+                # 计算退货率
+                interval_agg["退货率"] = interval_agg.apply(
                     lambda r: (r["退货金额"] / r["发货金额"] * 100) if r["发货金额"] != 0 else 0.0, axis=1
                 ).round(2)
 
-                # 显示每日汇总表
+                interval_agg = interval_agg.sort_values("净销售金额", ascending=False)
+
+                # 显示表格
                 st.dataframe(
-                    daily_summary,
+                    interval_agg,
                     column_config={
-                        "日期": st.column_config.DateColumn("日期"),
+                        dim_label_interval: st.column_config.TextColumn(dim_label_interval),
                         "发货金额": st.column_config.NumberColumn("发货金额(¥)", format="%.2f"),
                         "退货金额": st.column_config.NumberColumn("退货金额(¥)", format="%.2f"),
                         "净销售金额": st.column_config.NumberColumn("净销售金额(¥)", format="%.2f"),
@@ -2071,9 +2085,9 @@ if idx_daily is not None:
                 )
 
                 # 汇总合计
-                total_ship = daily_summary["发货金额"].sum()
-                total_return = daily_summary["退货金额"].sum()
-                total_net = daily_summary["净销售金额"].sum()
+                total_ship = interval_agg["发货金额"].sum()
+                total_return = interval_agg["退货金额"].sum()
+                total_net = interval_agg["净销售金额"].sum()
                 total_return_rate = (total_return / total_ship * 100) if total_ship != 0 else 0.0
                 st.metric(
                     "区间合计",
@@ -2081,30 +2095,35 @@ if idx_daily is not None:
                     delta=f"发货 ¥{total_ship:,.2f} / 退货 ¥{total_return:,.2f} | 退货率 {total_return_rate:.2f}%"
                 )
 
-                # 趋势图
-                fig = px.line(
-                    daily_summary,
-                    x="日期",
-                    y="净销售金额",
-                    title="区间每日净销售趋势",
-                    markers=True,
-                    template="plotly_white"
-                )
-                fig.update_layout(
-                    height=300,
-                    margin=dict(l=0, r=0, t=30, b=0),
-                    hovermode="x unified"
-                )
-                st.plotly_chart(fig, use_container_width=True)
+                # 每日总趋势图（不区分维度）
+                daily_total = interval_df.groupby(interval_df["sale_date"].dt.date).agg(
+                    净销售金额=("net_amount", "sum")
+                ).reset_index().rename(columns={"sale_date": "日期"})
 
-                # 导出
+                if not daily_total.empty:
+                    fig = px.line(
+                        daily_total,
+                        x="日期",
+                        y="净销售金额",
+                        title="区间每日净销售趋势（全维度合计）",
+                        markers=True,
+                        template="plotly_white"
+                    )
+                    fig.update_layout(
+                        height=300,
+                        margin=dict(l=0, r=0, t=30, b=0),
+                        hovermode="x unified"
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+
+                # 导出区间汇总
                 output_interval = io.BytesIO()
                 with pd.ExcelWriter(output_interval, engine='openpyxl') as writer:
-                    daily_summary.to_excel(writer, index=False)
+                    interval_agg.to_excel(writer, index=False)
                 st.download_button(
-                    "💾 导出区间数据",
+                    "💾 导出区间汇总数据",
                     data=output_interval.getvalue(),
-                    file_name=f"区间明细_{start_date.strftime('%Y%m%d')}_{end_date.strftime('%Y%m%d')}.xlsx",
+                    file_name=f"区间汇总_{start_date.strftime('%Y%m%d')}_{end_date.strftime('%Y%m%d')}.xlsx",
                     key="export_interval"
                 )
 
